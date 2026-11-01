@@ -1,7 +1,10 @@
-# Authentication and Users: shared contract proposal
+# Authentication and Users: shared contract
 
-Status: proposed for team review. This document does not approve shared schema
-changes or start implementation.
+Status: accepted baseline for ACC-01 implementation. On 2026-11-01, after
+reviewing PR #1, the team leader confirmed agreement with the shared User fields
+and naming and authorized implementation one requirement at a time. Session
+settings and cross-module details listed below are deferred to their respective
+features; they do not block registration.
 
 Scope: Person 1, Authentication and Users, for Milestone 1. The official reviewed
 requirements workbook defines functional rules; the project PDF defines the
@@ -41,26 +44,28 @@ features. They are outside the initial mandatory implementation.
   meaningful tests, and the shared AI prompt log.
 - Keep secrets in local `.env` files and commit only credential-free examples.
 
-## Proposed shared data contract: requires agreement
+## Accepted shared data contract
 
-These field names and structures are proposals, not established team decisions.
+The shared User field names and naming conventions below are the accepted
+baseline. ACC-01 implements the fields needed for registration. Fields and
+behavior for later requirements are added with those features.
 
 ### User
 
-| Field | Proposed meaning |
+| Field | Agreed meaning |
 | --- | --- |
 | `_id` | MongoDB identity; expose its string value as `userId` in API responses without storing a second identifier. |
 | `name` | User's display name. |
-| `email` | Trimmed, consistently normalized email with database-enforced uniqueness. Proposed uniqueness is case-insensitive. |
+| `email` | Trimmed, lowercase email with database-enforced uniqueness. Uniqueness is case-insensitive after normalization. |
 | `passwordHash` | Salted password hash; never returned in API responses. |
-| `phoneNumber` | Profile phone number; exact validation and optionality remain to be agreed. |
+| `phoneNumber` | Profile phone number; exact validation and optionality are deferred to ACC-09. |
 | `preferredCurrency` | Code from the shared supported-currency reference data. |
-| `role` | One value from the shared role enum. A single role per account is proposed. |
+| `role` | One value from the shared role enum; each account has a single role. |
 | `status` | One value from the shared account-status enum. |
 | `mustChangePassword` | Restricts accounts using administrator-set temporary passwords until they change the password. |
 | `failedLoginAttempts` | Consecutive failed-login counter; never returned publicly. |
 | `lockedUntil` | Temporary login lockout expiry; distinct from account status. |
-| `termsAcceptedAt` | Proposed record of registration consent; exact consent/version fields require agreement. |
+| `termsAcceptedAt` | Timestamp recording acceptance of the mandatory terms-and-privacy consent during registration. |
 | `createdAt`, `updatedAt` | Mongoose timestamps. |
 
 Public registration creates `USER` accounts. Registration and profile DTOs must
@@ -69,32 +74,34 @@ responses must allowlist their fields and exclude password/session information.
 
 ### ModeratorAssignment
 
-Proposed fields: `_id`, `moderatorId`, `airlineId` or `hotelId`, `createdAt`,
-`updatedAt`.
+Shared naming for the moderator feature: `_id`, `moderatorId`, `airlineId` or
+`hotelId`, `createdAt`, `updatedAt`.
 
 - `moderatorId` references a User account.
 - Exactly one provider reference is present and matches the moderator role.
 - Each moderator has exactly one assignment. The requirements do not establish
   a limit of one moderator per provider.
-- Provider owners and Administration must agree validation and reassignment
-  behavior before implementation.
+- Provider validation and reassignment behavior are deferred to the moderator
+  and provider features with the affected owners.
 
 ### Authenticated identity and guards
 
-Proposed identity available to feature controllers: `userId` and `role`, with a
+Shared identity available to feature controllers: `userId` and `role`, with a
 validated provider assignment available when moderator scope is needed.
 
 Person 1 supplies reusable authentication and role checks. Each module owner
 enforces resource ownership and provider restrictions on that module's queries
 and operations. Client-provided identifiers are not proof of ownership.
 
-Forced-password-change restrictions must be enforced on the backend. The team
-must agree which endpoints remain available while this restriction applies.
+Forced-password-change restrictions must be enforced on the backend. The exact
+endpoints available under this restriction are deferred to the temporary-password
+and login features.
 
-## Session decisions to agree
+## Session settings deferred to login and session features
 
 The requirements mandate access and refresh cookies, refresh-token revocation,
-and 30-minute inactivity expiry. Before implementation, agree:
+and 30-minute inactivity expiry. Finalize these settings when implementing the
+relevant login and session features:
 
 1. Access-token lifetime, refresh-token lifetime, and refresh endpoint/behavior.
 2. Server-side session representation, refresh rotation, and replay handling.
@@ -106,12 +113,12 @@ and 30-minute inactivity expiry. Before implementation, agree:
 6. Cookie names, SameSite value, CSRF protection, frontend origin/CORS rules, and
    local HTTPS configuration for the required Secure cookies.
 
-No new environment-variable names are introduced by this proposal. Any additions
+No new environment-variable names are introduced by this contract. Any additions
 must follow the team's agreement process.
 
-## Cross-module interfaces to agree
+## Cross-module details deferred to their respective features
 
-| Concern | Required agreement |
+| Concern | Coordination for the relevant feature |
 | --- | --- |
 | Upcoming bookings | Flight and hotel booking owners provide checks for upcoming Confirmed bookings. Define ongoing hotel stays and the exact date/time boundary. Coordinate concurrent booking confirmation and account deactivation. |
 | Deactivated authors | Blog, itinerary, comment, and review owners consistently hide or anonymize content as ACC-12 requires. Agree whether to derive visibility from account status or persist a reversible visibility change. |
@@ -129,21 +136,23 @@ content follows ACC-12.
 
 - GEN-11 requires Pending Payment -> Confirmed -> Completed, with Pending Payment
   -> Expired and Confirmed -> Cancelled as the other allowed booking transitions.
-  The current three-value booking enum needs a coordinated update. Agree whether
-  `PENDING` represents Pending Payment or is renamed; also agree `COMPLETED` and
-  `EXPIRED` once for both booking modules.
+  The current three-value booking enum needs a coordinated update when the
+  booking features are implemented. Booking owners will finalize whether
+  `PENDING` represents Pending Payment or is renamed, and define `COMPLETED` and
+  `EXPIRED` once for both booking modules. This does not affect ACC-01.
 - ACC-03 is referenced by the PDF registration endpoint table but absent from the
   reviewed workbook. Do not invent its meaning.
 
-## Review and implementation gate
+## Approval and incremental implementation
 
-Before coding, the team leader and affected owners must agree the proposed
-fields, identity shape, session contract, module interfaces, and enum changes.
-Record the decisions in this document through the PR before treating it as the
-shared contract. Approval of this document does not assign Person 1 every
+The team leader approved the shared User fields and naming on 2026-11-01 after
+reviewing PR #1: "i reviewed the PR, and we agree on them lets implement one by
+one together". ACC-01 registration is the first implementation step. The remaining
+session settings and cross-module details are addressed with their respective
+features rather than blocking this step. Approval does not assign Person 1 every
 Administration or supporting-service feature.
 
-Implementation then proceeds in coherent feature branches from the latest
+Implementation proceeds in coherent feature branches from the latest
 `develop`, with tests, Swagger documentation, requirement references, and updates
 to `AI_PROMPTS.txt`. Synchronize by merging updated `develop` before opening a PR.
 All changes go through PR review into `develop`; stable milestones reach `main`
