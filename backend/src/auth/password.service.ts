@@ -1,0 +1,18 @@
+import { Injectable } from '@nestjs/common';
+import { randomBytes, scrypt } from 'node:crypto';
+
+@Injectable()
+export class PasswordService {
+  async hash(password: string): Promise<string> {
+    const salt = randomBytes(16);
+    const key = await new Promise<Buffer>((resolve, reject) => {
+      // OWASP scrypt configuration: N=2^15, r=8, p=3 (32 MiB memory).
+      scrypt(password, salt, 64, { N: 32768, r: 8, p: 3, maxmem: 64 * 1024 * 1024 }, (error, derived) => {
+        if (error) reject(error);
+        else resolve(derived);
+      });
+    });
+    // Store parameters with the salt for subsequent password verification.
+    return `scrypt$32768$8$3$${salt.toString('hex')}$${key.toString('hex')}`;
+  }
+}

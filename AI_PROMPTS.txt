@@ -24,3 +24,31 @@ contract proposal on a documentation branch from the latest develop branch.
 The proposal is for review before implementation. No authentication code has
 been generated or integrated at this stage. Local secret values were not read.
 ================================================
+
+Date: 2026-11-01
+Student: Team leader / Person 1
+Tool: Codex
+Related Requirements: ACC-01, GEN-13
+
+Prompt:
+"i reviewed the PR, and we agree on them lets implement one by one together"
+
+How the output was used:
+Recorded the team leader's approval after PR #1 and accepted the shared User
+fields and naming as the baseline for ACC-01. Used the approval to implement the
+first feature, registration: NestJS backend setup, the User schema and shared
+role/account-status enums, DTO validation with literal-true terms consent,
+asynchronous salted scrypt password hashing, normalized emails with MongoDB
+unique enforcement, safe public responses, Swagger documentation, and isolated
+MongoDB tests. Documentation explains setup, the request flow, and manual checks.
+Test results are not claimed in this entry. Login and session management are the
+next feature; their remaining settings and cross-module details are deferred to
+the respective implementation steps. Local secret values were not read.
+================================================
+
+Validation for ACC-01:
+- Production TypeScript build passed.
+- All 13 automated tests passed against an isolated local MongoDB instance.
+- Compiled application startup, registration, and Swagger smoke checks passed.
+- Final dependency installation reported zero known vulnerabilities.
+- The shared Atlas database and local secret file were not used by these checks.
