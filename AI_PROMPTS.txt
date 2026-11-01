@@ -1,0 +1,26 @@
+================================================
+Date: 2026-11-01
+Student: Team leader / Person 1
+Tool: Codex
+Related Requirements: ACC-01, ACC-04, ACC-05, ACC-06, ACC-07a, ACC-08,
+ACC-09, ACC-10, ACC-11, ACC-12, ACC-13, ACC-14, ACC-15, ACC-16,
+ACC-17, ACC-18, ACC-19, GEN-11, GEN-13
+
+Important prompt excerpts and conversation context:
+"i need you to analyze it very well."
+"Before coding, we should first agree on the shared database structure and naming."
+"never work on the main directly as well as never force push always create PR requests."
+"Also please do as you are asked and nothing more"
+
+The student supplied the Person 1 Authentication & Users assignment, the team
+workflow and naming rules, the project description PDF, and the reviewed
+requirements workbook. The next prompt was: "should we start".
+
+How the output was used:
+Reviewed the project requirements and identified exact authentication rules,
+cross-module dependencies, shared enum gaps, and decisions requiring team
+agreement. Inspected the repository and prepared an Authentication and Users
+contract proposal on a documentation branch from the latest develop branch.
+The proposal is for review before implementation. No authentication code has
+been generated or integrated at this stage. Local secret values were not read.
+================================================
