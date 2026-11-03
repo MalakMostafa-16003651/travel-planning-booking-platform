@@ -1,16 +1,22 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { scrypt, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { after, before, beforeEach, describe, it } from 'node:test';
-import { INestApplication } from '@nestjs/common';
+import { Controller, Get, INestApplication, Module, Req, UseGuards } from '@nestjs/common';
+import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import { JwtService, JwtSignOptions } from '@nestjs/jwt';
 import { getModelToken, MongooseModule } from '@nestjs/mongoose';
 import { Test } from '@nestjs/testing';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import { Model } from 'mongoose';
 import request, { Response } from 'supertest';
 import { AuthModule } from '../src/auth/auth.module';
+import { AuthenticatedRequest, AuthGuard } from '../src/auth/auth.guard';
+import { AuthService } from '../src/auth/auth.service';
+import { AuthSession } from '../src/auth/schemas/auth-session.schema';
 import { AccountStatus } from '../src/common/enums/account-status.enum';
 import { UserRole } from '../src/common/enums/user-role.enum';
 import { configureApplication } from '../src/configure-application';
@@ -75,6 +81,71 @@ function assertValidationError(response: Response, field: string) {
   assert.ok(response.body.errors[field].length > 0);
 }
 
+function assertNoAuthCookies(response: Response) {
+  assert.ok(response.headers['set-cookie'] === undefined, 'This response must not issue cookies');
+}
+
+function assertPublicAccount(response: Response) {
+  assert.deepEqual(Object.keys(response.body).sort(), [
+    'createdAt', 'email', 'name', 'role', 'status', 'updatedAt', 'userId',
+  ].sort());
+  assert.match(response.body.userId, /^[a-f\d]{24}$/i);
+  assert.equal(response.headers['cache-control'], 'no-store');
+}
+
+function readAuthCookies(response: Response) {
+  const headers = response.headers['set-cookie'];
+  assert.ok(Array.isArray(headers), 'Login must return authentication cookies');
+  const raw = headers as string[];
+  const access = raw.find((cookie) => cookie.startsWith('__Host-accessToken='));
+  const refresh = raw.find((cookie) => cookie.startsWith('__Host-refreshToken='));
+  assert.ok(access, 'An access cookie is required');
+  assert.ok(refresh, 'A refresh cookie is required');
+  const accessPair = access.split(';', 1)[0];
+  const refreshPair = refresh.split(';', 1)[0];
+  return {
+    raw,
+    access,
+    refresh,
+    accessPair,
+    refreshPair,
+    accessToken: decodeURIComponent(accessPair.slice('__Host-accessToken='.length)),
+    refreshToken: decodeURIComponent(refreshPair.slice('__Host-refreshToken='.length)),
+    cookieHeader: `${accessPair}; ${refreshPair}`,
+  };
+}
+
+function assertInvalidSession(response: Response) {
+  assert.equal(response.status, 401);
+  assert.ok(response.body.message === 'Invalid or expired session');
+  assertNoAuthCookies(response);
+}
+
+interface AccessClaims {
+  sub: string;
+  sid: string;
+  tokenUse: string;
+  iat: number;
+  exp: number;
+  iss: string;
+  aud: string;
+}
+
+@Controller('test-feature')
+class FeatureFixtureController {
+  @Get('guarded')
+  @UseGuards(AuthGuard)
+  guarded(@Req() authenticatedRequest: AuthenticatedRequest) {
+    return authenticatedRequest.user;
+  }
+}
+
+@Module({
+  imports: [AuthModule],
+  controllers: [FeatureFixtureController],
+})
+class FeatureFixtureModule {}
+
 async function independentlyVerifyHash(password: string, encodedHash: string) {
   const parts = encodedHash.split('$');
   assert.equal(parts.length, 6);
@@ -112,10 +183,46 @@ async function independentlyVerifyHash(password: string, encodedHash: string) {
   assert.ok(timingSafeEqual(derivedHash, expectedHash));
 }
 
-describe('ACC-01 registration', { concurrency: false }, () => {
+describe('ACC-01 registration and ACC-04 login', { concurrency: false }, () => {
   let memoryMongo: MongoMemoryServer;
   let app: INestApplication;
   let users: Model<UserDocument>;
+  let sessions: Model<AuthSession>;
+
+  async function registerAndLogin(email = 'traveler@example.com') {
+    const registered = await request(app.getHttpServer())
+      .post('/api/auth/register')
+      .send(registration({ email }))
+      .expect(201);
+    const response = await request(app.getHttpServer())
+      .post('/api/auth/login')
+      .set('Sec-Fetch-Site', 'same-origin')
+      .send({ email, password: 'Travel123' })
+      .expect(200);
+    const cookies = readAuthCookies(response);
+    const claims = app.get(JwtService).decode<AccessClaims>(cookies.accessToken);
+    assert.ok(claims && typeof claims === 'object');
+    return { registered, response, cookies, claims };
+  }
+
+  function signedAccessToken(
+    claims: AccessClaims,
+    payloadChanges: Record<string, unknown> = {},
+    optionChanges: JwtSignOptions = {},
+  ) {
+    return app.get(JwtService).sign({
+      sub: claims.sub,
+      sid: claims.sid,
+      tokenUse: 'access',
+      ...payloadChanges,
+    }, {
+      algorithm: 'HS256',
+      issuer: 'travel-planning-booking-platform',
+      audience: 'travel-platform-api',
+      expiresIn: 900,
+      ...optionChanges,
+    });
+  }
 
   before(async () => {
     memoryMongo = await MongoMemoryServer.create({
@@ -124,17 +231,30 @@ describe('ACC-01 registration', { concurrency: false }, () => {
     });
 
     const moduleRef = await Test.createTestingModule({
-      imports: [MongooseModule.forRoot(memoryMongo.getUri()), AuthModule],
+      imports: [
+        ConfigModule.forRoot({
+          isGlobal: true,
+          ignoreEnvFile: true,
+          skipProcessEnv: true,
+          load: [() => ({ JWT_SECRET: randomBytes(48).toString('hex') })],
+        }),
+        MongooseModule.forRoot(memoryMongo.getUri()),
+        AuthModule,
+        FeatureFixtureModule,
+      ],
     }).compile();
     app = moduleRef.createNestApplication();
     configureApplication(app);
     await app.init();
 
     users = moduleRef.get<Model<UserDocument>>(getModelToken(User.name));
+    sessions = moduleRef.get<Model<AuthSession>>(getModelToken(AuthSession.name));
     await users.init();
+    await sessions.init();
   }, { timeout: 30 * 60_000 });
 
   beforeEach(async () => {
+    await sessions.deleteMany({}).exec();
     await users.deleteMany({}).exec();
   });
 
@@ -163,7 +283,7 @@ describe('ACC-01 registration', { concurrency: false }, () => {
     assert.equal(response.body.status, AccountStatus.ACTIVE);
     assert.ok(Number.isFinite(Date.parse(response.body.createdAt)));
     assert.ok(Number.isFinite(Date.parse(response.body.updatedAt)));
-    assert.equal(response.headers['set-cookie'], undefined);
+    assertNoAuthCookies(response);
 
     const stored = await users.findOne({ email: 'traveler@example.com' })
       .select('+failedLoginAttempts +mustChangePassword +lockedUntil +termsAcceptedAt')
@@ -314,7 +434,7 @@ describe('ACC-01 registration', { concurrency: false }, () => {
       assert.deepEqual(Object.keys(response.body).sort(), [
         'createdAt', 'email', 'name', 'role', 'status', 'updatedAt', 'userId',
       ].sort());
-      assert.equal(response.headers['set-cookie'], undefined);
+      assertNoAuthCookies(response);
     }
 
     const stored = await users.find({}).select('+passwordHash').lean().exec();
@@ -343,5 +463,361 @@ describe('ACC-01 registration', { concurrency: false }, () => {
       .expect('Content-Type', /text\/html/)
       .expect(200);
     assert.match(ui.text, /swagger-ui/i);
+  });
+
+  it('verifies existing credentials for each agreed role without exposing security fields in normal queries', async () => {
+    const auth = app.get(AuthService);
+    for (const role of Object.values(UserRole)) {
+      const email = `${role.toLowerCase()}@example.com`;
+      await request(app.getHttpServer()).post('/api/auth/register')
+        .send(registration({ email })).expect(201);
+      // Controlled local fixtures exercise login for roles whose creation is a later feature.
+      await users.updateOne({ email }, { $set: { role } }).exec();
+      const verified = await auth.verifyCredentials({ email: `  ${email.toUpperCase()}  `, password: 'Travel123' });
+      assert.equal(verified.role, role);
+      assert.equal(verified.email, email);
+      assert.ok(typeof verified.passwordHash === 'string');
+      const ordinaryQuery = await users.findOne({ email }).lean().exec();
+      assert.ok(ordinaryQuery);
+      for (const field of ['passwordHash', 'mustChangePassword', 'failedLoginAttempts', 'lockedUntil']) {
+        assert.equal(Object.hasOwn(ordinaryQuery, field), false);
+      }
+    }
+  });
+
+  it('returns identical credential errors for wrong passwords and unknown emails', async () => {
+    await request(app.getHttpServer()).post('/api/auth/register').send(registration()).expect(201);
+    const auth = app.get(AuthService);
+    for (const input of [
+      { email: 'traveler@example.com', password: 'Wrong123' },
+      { email: 'unknown@example.com', password: 'Travel123' },
+    ]) {
+      await assert.rejects(auth.verifyCredentials(input), (error: unknown) =>
+        error instanceof UnauthorizedException && error.message === 'Invalid email or password');
+    }
+  });
+
+  it('reveals suspension only after verifying the correct password', async () => {
+    await request(app.getHttpServer()).post('/api/auth/register').send(registration()).expect(201);
+    await users.updateOne({ email: 'traveler@example.com' }, { $set: { status: AccountStatus.SUSPENDED } }).exec();
+    const auth = app.get(AuthService);
+    await assert.rejects(auth.verifyCredentials({ email: 'traveler@example.com', password: 'Wrong123' }),
+      (error: unknown) => error instanceof UnauthorizedException && error.message === 'Invalid email or password');
+    await assert.rejects(auth.verifyCredentials({ email: 'traveler@example.com', password: 'Travel123' }),
+      (error: unknown) => error instanceof ForbiddenException && error.message === 'Account is suspended');
+  });
+
+  it('denies a deactivated account even with a correct password', async () => {
+    await request(app.getHttpServer()).post('/api/auth/register').send(registration()).expect(201);
+    await users.updateOne({ email: 'traveler@example.com' }, { $set: { status: AccountStatus.DEACTIVATED } }).exec();
+    await assert.rejects(app.get(AuthService).verifyCredentials({ email: 'traveler@example.com', password: 'Travel123' }),
+      (error: unknown) => error instanceof UnauthorizedException && error.message === 'Invalid email or password');
+  });
+
+  it('does not grant unrestricted authentication when a password change is mandatory', async () => {
+    await request(app.getHttpServer()).post('/api/auth/register').send(registration()).expect(201);
+    await users.updateOne({ email: 'traveler@example.com' }, { $set: { mustChangePassword: true } }).exec();
+    await assert.rejects(app.get(AuthService).verifyCredentials({ email: 'traveler@example.com', password: 'Travel123' }),
+      (error: unknown) => error instanceof ForbiddenException && error.message === 'Password change is required');
+  });
+
+  it('preserves the exact password during credential verification', async () => {
+    await request(app.getHttpServer()).post('/api/auth/register')
+      .send(registration({ password: ' Travel123 ' })).expect(201);
+    const auth = app.get(AuthService);
+    const verified = await auth.verifyCredentials({ email: 'traveler@example.com', password: ' Travel123 ' });
+    assert.equal(verified.email, 'traveler@example.com');
+    await assert.rejects(auth.verifyCredentials({ email: 'traveler@example.com', password: 'Travel123' }),
+      (error: unknown) => error instanceof UnauthorizedException);
+  });
+
+  it('logs in every agreed role and returns only the public current-user shape', async () => {
+    for (const role of Object.values(UserRole)) {
+      const email = `api-${role.toLowerCase()}@example.com`;
+      const registered = await request(app.getHttpServer())
+        .post('/api/auth/register').send(registration({ email })).expect(201);
+      await users.updateOne({ email }, { $set: { role } }).exec();
+
+      const login = await request(app.getHttpServer())
+        .post('/api/auth/login')
+        .set('Sec-Fetch-Site', 'same-origin')
+        .send({ email: `  ${email.toUpperCase()}  `, password: 'Travel123' })
+        .expect(200);
+      assertPublicAccount(login);
+      assert.equal(login.body.userId, registered.body.userId);
+      assert.equal(login.body.email, email);
+      assert.equal(login.body.role, role);
+      assert.equal(login.body.status, AccountStatus.ACTIVE);
+
+      const currentUser = await request(app.getHttpServer())
+        .get('/api/auth/me')
+        .set('Cookie', readAuthCookies(login).cookieHeader)
+        .expect(200);
+      assertPublicAccount(currentUser);
+      assert.equal(currentUser.body.userId, registered.body.userId);
+      assert.equal(currentUser.body.email, email);
+      assert.equal(currentUser.body.role, role);
+      assertNoAuthCookies(currentUser);
+    }
+    assert.equal(await sessions.countDocuments(), Object.values(UserRole).length);
+  });
+
+  it('reuses the exported guard from an independent feature module', async () => {
+    const { response, cookies } = await registerAndLogin();
+    const protectedResponse = await request(app.getHttpServer())
+      .get('/api/test-feature/guarded')
+      .set('Cookie', cookies.cookieHeader)
+      .expect(200);
+    assert.deepEqual(protectedResponse.body, {
+      userId: response.body.userId,
+      role: UserRole.USER,
+    });
+    assertInvalidSession(await request(app.getHttpServer()).get('/api/test-feature/guarded'));
+  });
+
+  it('returns the same API credential error for unknown email and wrong password without creating a session', async () => {
+    await request(app.getHttpServer()).post('/api/auth/register').send(registration()).expect(201);
+    const responses = [];
+    for (const input of [
+      { email: 'traveler@example.com', password: 'Wrong123' },
+      { email: 'unknown@example.com', password: 'Travel123' },
+    ]) {
+      const response = await request(app.getHttpServer())
+        .post('/api/auth/login').send(input);
+      assert.equal(response.status, 401);
+      assert.ok(response.body.message === 'Invalid email or password');
+      assertNoAuthCookies(response);
+      responses.push(response.body);
+    }
+    assert.deepEqual(responses[0], responses[1]);
+    assert.equal(await sessions.countDocuments(), 0);
+  });
+
+  it('rejects invalid login fields and client-controlled privilege fields before session creation', async () => {
+    const invalidInputs: Array<{ changes: Record<string, unknown>; field: string }> = [
+      { changes: { email: undefined }, field: 'email' },
+      { changes: { email: 'not-an-email' }, field: 'email' },
+      { changes: { email: { address: 'traveler@example.com' } }, field: 'email' },
+      { changes: { password: undefined }, field: 'password' },
+      { changes: { password: '' }, field: 'password' },
+      { changes: { password: 12345678 }, field: 'password' },
+      { changes: { password: null }, field: 'password' },
+      { changes: { role: UserRole.ADMIN }, field: 'role' },
+      { changes: { status: AccountStatus.ACTIVE }, field: 'status' },
+    ];
+    for (const { changes, field } of invalidInputs) {
+      const response = await request(app.getHttpServer())
+        .post('/api/auth/login')
+        .send({ email: 'traveler@example.com', password: 'Travel123', ...changes });
+      assertValidationError(response, field);
+      assertNoAuthCookies(response);
+    }
+    assert.equal(await sessions.countDocuments(), 0);
+  });
+
+  it('blocks suspended, deactivated, and mandatory-password-change accounts through the login API', async () => {
+    const cases = [
+      { email: 'suspended@example.com', fields: { status: AccountStatus.SUSPENDED }, status: 403, message: 'Account is suspended' },
+      { email: 'deactivated@example.com', fields: { status: AccountStatus.DEACTIVATED }, status: 401, message: 'Invalid email or password' },
+      { email: 'temporary@example.com', fields: { mustChangePassword: true }, status: 403, message: 'Password change is required' },
+    ];
+    for (const entry of cases) {
+      await request(app.getHttpServer()).post('/api/auth/register')
+        .send(registration({ email: entry.email })).expect(201);
+      await users.updateOne({ email: entry.email }, { $set: entry.fields }).exec();
+
+      const incorrect = await request(app.getHttpServer()).post('/api/auth/login')
+        .send({ email: entry.email, password: 'Wrong123' });
+      assert.equal(incorrect.status, 401);
+      assert.ok(incorrect.body.message === 'Invalid email or password');
+      assertNoAuthCookies(incorrect);
+
+      const correct = await request(app.getHttpServer()).post('/api/auth/login')
+        .send({ email: entry.email, password: 'Travel123' });
+      assert.equal(correct.status, entry.status);
+      assert.ok(correct.body.message === entry.message);
+      assertNoAuthCookies(correct);
+    }
+    assert.equal(await sessions.countDocuments(), 0);
+  });
+
+  it('issues bounded Secure host-only cookies and persists only the refresh digest', async () => {
+    const startedAt = Date.now();
+    const { response, cookies, claims } = await registerAndLogin();
+    assertPublicAccount(response);
+    assert.equal(cookies.raw.length, 2);
+    for (const cookie of cookies.raw) {
+      // Boolean assertions avoid printing cookie values if a check fails.
+      assert.ok(/;\s*HttpOnly(?:;|$)/i.test(cookie), 'Authentication cookies must be HttpOnly');
+      assert.ok(/;\s*Secure(?:;|$)/i.test(cookie), 'Authentication cookies must be Secure');
+      assert.ok(/;\s*SameSite=Lax(?:;|$)/i.test(cookie), 'Authentication cookies must use SameSite=Lax');
+      assert.ok(/;\s*Path=\/(?:;|$)/i.test(cookie), 'Host cookies require Path=/');
+      assert.ok(!/;\s*Domain=/i.test(cookie), 'Host cookies must not specify Domain');
+    }
+    assert.ok(/;\s*Max-Age=900(?:;|$)/i.test(cookies.access));
+    assert.ok(/;\s*Max-Age=604800(?:;|$)/i.test(cookies.refresh));
+    assert.equal(claims.sub, response.body.userId);
+    assert.equal(claims.tokenUse, 'access');
+    assert.equal(claims.iss, 'travel-planning-booking-platform');
+    assert.equal(claims.aud, 'travel-platform-api');
+    assert.equal(claims.exp - claims.iat, 900);
+
+    const stored = await sessions.findById(claims.sid)
+      .select('+refreshTokenHash').orFail().lean().exec();
+    assert.equal(stored.userId.toString(), response.body.userId);
+    assert.equal(typeof stored.refreshTokenHash, 'string');
+    assert.ok(stored.refreshTokenHash !== cookies.refreshToken);
+    const expectedDigest = createHash('sha256').update(cookies.refreshToken).digest('hex');
+    assert.ok(stored.refreshTokenHash === expectedDigest, 'Persist the refresh digest, not its plaintext');
+    assert.ok(stored.lastActivityAt instanceof Date);
+    assert.ok(stored.lastActivityAt.getTime() >= startedAt);
+    assert.ok(stored.expiresAt instanceof Date);
+    assert.ok(stored.expiresAt.getTime() >= startedAt + 7 * 24 * 60 * 60_000 - 1_000);
+    assert.ok(stored.expiresAt.getTime() <= Date.now() + 7 * 24 * 60 * 60_000);
+    assert.equal(stored.revokedAt, null);
+    assert.ok(stored.createdAt instanceof Date);
+    assert.ok(stored.updatedAt instanceof Date);
+
+    const ordinary = await sessions.findById(claims.sid).orFail().lean().exec();
+    assert.equal(Object.hasOwn(ordinary, 'refreshTokenHash'), false);
+  });
+
+  it('requires the access cookie and rejects bearer-only, refresh-only, and tampered credentials', async () => {
+    const { cookies } = await registerAndLogin();
+    assertInvalidSession(await request(app.getHttpServer()).get('/api/auth/me'));
+    assertInvalidSession(await request(app.getHttpServer()).get('/api/auth/me')
+      .set('Authorization', `Bearer ${cookies.accessToken}`));
+    assertInvalidSession(await request(app.getHttpServer()).get('/api/auth/me')
+      .set('Cookie', cookies.refreshPair));
+
+    const segments = cookies.accessToken.split('.');
+    segments[2] = `${segments[2][0] === 'a' ? 'b' : 'a'}${segments[2].slice(1)}`;
+    const tampered = segments.join('.');
+    assertInvalidSession(await request(app.getHttpServer()).get('/api/auth/me')
+      .set('Cookie', `__Host-accessToken=${tampered}`));
+    assertInvalidSession(await request(app.getHttpServer()).get('/api/auth/me')
+      .set('Cookie', '__Host-accessToken=not-a-jwt'));
+  });
+
+  it('rejects signed but expired or incorrectly scoped access tokens', async () => {
+    const { claims } = await registerAndLogin();
+    const invalidTokens = [
+      signedAccessToken(claims, {}, { expiresIn: -1 }),
+      signedAccessToken(claims, { tokenUse: 'refresh' }),
+      signedAccessToken(claims, {}, { algorithm: 'HS384' }),
+      signedAccessToken(claims, {}, { issuer: 'another-platform' }),
+      signedAccessToken(claims, {}, { audience: 'another-api' }),
+      signedAccessToken(claims, { sid: 'not-an-object-id' }),
+      signedAccessToken(claims, { sub: 'not-an-object-id' }),
+    ];
+    const beforeRequest = await sessions.findById(claims.sid).orFail().lean().exec();
+    for (const token of invalidTokens) {
+      assertInvalidSession(await request(app.getHttpServer()).get('/api/auth/me')
+        .set('Cookie', `__Host-accessToken=${token}`));
+    }
+    const afterRequest = await sessions.findById(claims.sid).orFail().lean().exec();
+    assert.equal(afterRequest.lastActivityAt.getTime(), beforeRequest.lastActivityAt.getTime());
+  });
+
+  it('rejects a correctly signed token whose user does not own the referenced session', async () => {
+    const { claims } = await registerAndLogin();
+    const other = await request(app.getHttpServer()).post('/api/auth/register')
+      .send(registration({ email: 'other@example.com' })).expect(201);
+    const mismatched = signedAccessToken(claims, { sub: other.body.userId });
+    assertInvalidSession(await request(app.getHttpServer()).get('/api/auth/me')
+      .set('Cookie', `__Host-accessToken=${mismatched}`));
+  });
+
+  it('rejects revoked, absolutely expired, idle-expired, and missing sessions', async () => {
+    const changes = [
+      { revokedAt: new Date() },
+      { expiresAt: new Date(Date.now() - 1_000) },
+      { lastActivityAt: new Date(Date.now() - 30 * 60_000 - 1_000) },
+    ];
+    for (let index = 0; index < changes.length; index++) {
+      const { claims, cookies } = await registerAndLogin(`session-${index}@example.com`);
+      await sessions.updateOne({ _id: claims.sid }, { $set: changes[index] }).exec();
+      assertInvalidSession(await request(app.getHttpServer()).get('/api/auth/me')
+        .set('Cookie', cookies.cookieHeader));
+    }
+    const missing = await registerAndLogin('missing-session@example.com');
+    await sessions.deleteOne({ _id: missing.claims.sid }).exec();
+    assertInvalidSession(await request(app.getHttpServer()).get('/api/auth/me')
+      .set('Cookie', missing.cookies.cookieHeader));
+  });
+
+  it('rechecks live account status and temporary-password restrictions for issued sessions', async () => {
+    const changes = [
+      { status: AccountStatus.SUSPENDED },
+      { status: AccountStatus.DEACTIVATED },
+      { mustChangePassword: true },
+    ];
+    for (let index = 0; index < changes.length; index++) {
+      const { claims, cookies } = await registerAndLogin(`changed-user-${index}@example.com`);
+      await users.updateOne({ _id: claims.sub }, { $set: changes[index] }).exec();
+      assertInvalidSession(await request(app.getHttpServer()).get('/api/auth/me')
+        .set('Cookie', cookies.cookieHeader));
+    }
+    const removed = await registerAndLogin('removed-user@example.com');
+    await users.deleteOne({ _id: removed.claims.sub }).exec();
+    assertInvalidSession(await request(app.getHttpServer()).get('/api/auth/me')
+      .set('Cookie', removed.cookies.cookieHeader));
+  });
+
+  it('uses the current account role instead of stale authorization information', async () => {
+    const { response, claims, cookies } = await registerAndLogin();
+    assert.equal(response.body.role, UserRole.USER);
+    await users.updateOne({ _id: claims.sub }, { $set: { role: UserRole.ADMIN } }).exec();
+    const currentUser = await request(app.getHttpServer()).get('/api/auth/me')
+      .set('Cookie', cookies.cookieHeader).expect(200);
+    assertPublicAccount(currentUser);
+    assert.equal(currentUser.body.role, UserRole.ADMIN);
+  });
+
+  it('records authenticated activity without extending the absolute session lifetime', async () => {
+    const { claims, cookies } = await registerAndLogin();
+    const earlierActivity = new Date(Date.now() - 10 * 60_000);
+    await sessions.updateOne({ _id: claims.sid }, { $set: { lastActivityAt: earlierActivity } }).exec();
+    const beforeRequest = await sessions.findById(claims.sid).orFail().lean().exec();
+    const startedAt = Date.now();
+    const response = await request(app.getHttpServer()).get('/api/auth/me')
+      .set('Cookie', cookies.cookieHeader).expect(200);
+    assertPublicAccount(response);
+    const afterRequest = await sessions.findById(claims.sid).orFail().lean().exec();
+    assert.ok(afterRequest.lastActivityAt.getTime() >= startedAt);
+    assert.ok(afterRequest.lastActivityAt.getTime() <= Date.now());
+    assert.equal(afterRequest.expiresAt.getTime(), beforeRequest.expiresAt.getTime());
+  });
+
+  it('blocks cross-site browser login attempts without issuing cookies or sessions', async () => {
+    await request(app.getHttpServer()).post('/api/auth/register').send(registration()).expect(201);
+    const crossSite = await request(app.getHttpServer()).post('/api/auth/login')
+      .set('Sec-Fetch-Site', 'cross-site')
+      .send({ email: 'traveler@example.com', password: 'Travel123' });
+    assert.equal(crossSite.status, 403);
+    assertNoAuthCookies(crossSite);
+
+    const foreignOrigin = await request(app.getHttpServer()).post('/api/auth/login')
+      .set('Origin', 'https://attacker.invalid')
+      .send({ email: 'traveler@example.com', password: 'Travel123' });
+    assert.equal(foreignOrigin.status, 403);
+    assertNoAuthCookies(foreignOrigin);
+    assert.equal(await sessions.countDocuments(), 0);
+  });
+
+  it('documents login and current-user access without exposing deferred session routes', async () => {
+    const specification = await request(app.getHttpServer()).get('/api/docs-json').expect(200);
+    const login = specification.body.paths?.['/api/auth/login']?.post;
+    const me = specification.body.paths?.['/api/auth/me']?.get;
+    assert.ok(login);
+    assert.ok(login.responses?.['200']);
+    assert.ok(login.responses?.['400']);
+    assert.ok(login.responses?.['401']);
+    assert.ok(login.responses?.['403']);
+    assert.ok(me);
+    assert.ok(me.responses?.['200']);
+    assert.ok(me.responses?.['401']);
+    assert.equal(specification.body.paths?.['/api/auth/refresh'], undefined);
+    assert.equal(specification.body.paths?.['/api/auth/logout'], undefined);
   });
 });

@@ -21,6 +21,17 @@ export class UsersService implements OnModuleInit {
     await this.users.init();
   }
 
+  async findForAuthentication(email: string): Promise<UserDocument | null> {
+    // Sensitive fields are loaded only for the authentication service, never an API response.
+    return this.users.findOne({ email: email.trim().toLowerCase() })
+      .select('+passwordHash +mustChangePassword +failedLoginAttempts +lockedUntil')
+      .exec();
+  }
+
+  async findByIdForAuthentication(userId: string): Promise<UserDocument | null> {
+    return this.users.findById(userId).select('+mustChangePassword').exec();
+  }
+
   async createRegisteredUser(input: CreateRegisteredUser): Promise<UserDocument> {
     try {
       return await this.users.create({

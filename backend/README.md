@@ -1,6 +1,6 @@
-# Backend: ACC-01 user registration
+# Backend: registration and login
 
-This NestJS 12 backend implements the registration part of Accounts & Users. It uses TypeScript, Mongoose, and the team's MongoDB Atlas database. Registration creates a normal account; it does not log the user in or issue authentication cookies. Login and session management belong to later requirements.
+This NestJS 12 backend implements ACC-01 registration and ACC-04 login using TypeScript, Mongoose and MongoDB Atlas. Registration creates a normal account without logging it in. Login issues protected cookies; `/api/auth/me` returns the current public identity through a reusable authentication guard. Refresh and logout endpoints, failed-login counting/lockout, profile changes and password-management features are later steps.
 
 ## Run locally
 
@@ -9,9 +9,10 @@ Install Node.js 24 LTS with npm. Create the repository-root `.env` using the roo
 | Variable | Purpose |
 | --- | --- |
 | `MONGODB_URI` | Required connection string for the team's MongoDB Atlas database. |
+| `JWT_SECRET` | Required private signing secret: at least 32 bytes, generated randomly. Placeholders and trivial repeated values are rejected; never reuse a database password or share this value in prompts. |
 | `PORT` | Optional HTTP port; defaults to `3000`. |
 
-When launched from `backend/`, the application reads the repository-root file at `../.env`. Registration does not require a JWT secret.
+When launched from `backend/`, the application reads the repository-root file at `../.env`. Startup validates both the database configuration and JWT signing secret. Only the credential-free `.env.example` belongs in Git.
 
 Run these commands in a terminal whose current directory is `backend/`:
 
@@ -35,7 +36,7 @@ With the default port, open:
 - Swagger UI: <http://localhost:3000/api/docs>
 - OpenAPI JSON: <http://localhost:3000/api/docs-json>
 
-Use the configured port in both URLs if `PORT` is changed. Startup requires a working MongoDB connection.
+Use the configured port in both URLs if `PORT` is changed. Startup requires a working MongoDB connection and valid JWT_SECRET.
 
 ## Registration API
 
@@ -90,6 +91,40 @@ Invalid input returns **400 Bad Request**, with `statusCode: 400`, `error: "Bad 
 
 Email uniqueness applies after normalization, so `Travel.Tester@example.com` and ` travel.tester@example.com ` refer to the same email.
 
+## Login and current identity
+
+`POST /api/auth/login` accepts only:
+
+```json
+{
+  "email": "travel.tester@example.com",
+  "password": "Travel2026"
+}
+```
+
+Email is trimmed/lowercased; the password is checked exactly as supplied against the existing salted scrypt hash. All four agreed roles can log in. Success returns **200** with the same public user fields as registration, and sets two cookies. Neither token nor any credential/session field appears in JSON. Both successful login and `/api/auth/me` return `Cache-Control: no-store`.
+
+| Cookie | Lifetime and protections |
+| --- | --- |
+| `__Host-accessToken` | Signed HS256 access JWT; 15 minutes. HttpOnly, Secure, SameSite=Lax, Path=/, no Domain. |
+| `__Host-refreshToken` | Random 256-bit opaque token; maximum seven days. The same cookie protections apply; only its SHA-256 hash is stored in the private AuthSession record. |
+
+`GET /api/auth/me` accepts the access cookie and returns **200** with the public identity. It verifies JWT signature/algorithm/issuer/audience/claims/expiry, reloads the current account role/status, and checks the associated session's user, revocation, seven-day absolute expiry and 30-minute inactivity boundary. Successful authenticated checks update activity atomically. MongoDB TTL cleanup is housekeeping; authorization checks expiry directly.
+
+**Incremental feature boundary:** the refresh cookie/storage foundation is ready, but `/api/auth/refresh` and logout do not exist yet. There is no automatic renewal in this step: when the access token expires after 15 minutes, log in again until the refresh feature is implemented. This PR does not complete ACC-05, ACC-06 or all of ACC-19.
+
+Wrong password, unknown email and deactivated accounts receive the same **401** message: `Invalid email or password`. Valid suspended-account credentials receive **403**, `Account is suspended`; the status is not disclosed for a wrong password. An account requiring a password change receives **403**, `Password change is required`, and no unrestricted session while that future flow is absent. Invalid DTO fields receive **400**. Missing/invalid/expired/revoked/inactive or newly ineligible sessions receive **401**, `Invalid or expired session`.
+
+The approved deployment assumption is a same-origin frontend/API. NestJS CSRF protection rejects browser requests reported as cross-origin on state-changing routes, including login/registration; CORS is not opened. Do not weaken Secure cookies for a LAN HTTP address. Use HTTPS outside local development. Nest documents browser support for Secure cookies on localhost; verify the browser you use. Frontend requests send cookies with the appropriate credentials setting and obtain identity from `/api/auth/me`, not by reading tokens into JavaScript storage.
+
+For manual checks in Swagger, register a distinct agreed test account, call login, then call `/api/auth/me` in the same browser. The browser manages HttpOnly cookies; do not paste tokens into Swagger's authorization field or this log. A Swagger security scheme documents the access cookie but does not make it JavaScript-readable. Confirm unknown/wrong credentials fail, successful JSON contains only public fields, and requests without the cookie are rejected. Shared Atlas checks require agreed test records and cleanup; automated tests use a temporary local database instead.
+
+The implementation uses the official [NestJS cookie guidance](https://docs.nestjs.com/http/cookies), [NestJS CSRF protection](https://docs.nestjs.com/security/csrf), [Nest JWT package](https://github.com/nestjs/jwt) and [OWASP session guidance](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html).
+
+## Reusing authentication in other modules
+
+Import `AuthModule` into the feature module and apply its exported `AuthGuard` with `@UseGuards(AuthGuard)` to protected controllers/routes. The guard supplies `request.user = { userId, role }` using the current database account; `AuthenticatedRequest` describes the request type. The guard does not grant access to another user's records: each module owner must scope queries to the authenticated user/provider and implement the required role/ownership policy. The general roles guard and moderator assignment checks are not implemented by this step.
+
 ## How a request reaches MongoDB
 
 1. `RegisterDto` describes the accepted input. Nest's validation pipeline normalizes the name and email, checks each field, and rejects unknown properties before the request reaches the service.
@@ -126,4 +161,4 @@ From `backend/`, run:
 npm.cmd test
 ```
 
-The tests use an isolated local MongoDB instance and never connect to the team's Atlas database. On Windows, the test helper first checks for an installed MongoDB server executable and starts a separate instance with a fresh temporary database directory. If no installed executable is found, it downloads and caches a test binary; the first uncached download may take time. This verifies registration without creating or deleting records in the shared database.
+The tests use an isolated local MongoDB instance and a generated test-only signing secret; they never read the local `.env` or connect to the team's Atlas database. On Windows, the helper first checks for an installed MongoDB server executable and starts a separate instance with a fresh temporary database directory. Otherwise it downloads/caches a test binary. Tests verify registration, credentials, login/cookie/session behavior, current-account checks and rejection cases. They manually forward Secure cookies in the in-memory HTTP client; this is not a browser-cookie policy test. Do not print cookie/token/hash values when diagnosing a failure.
