@@ -20,3 +20,9 @@ MongoDB tests.
 The [Authentication and Users shared contract](docs/requirements/authentication-contract-proposal.md)
 records the accepted User fields and naming, along with details deferred to later
 features.
+
+## Contributing
+
+Follow the [team development workflow](CONTRIBUTING.md) for branches, task records,
+AI attribution, verification, and human review. Start each meaningful task with
+the [work-log template](docs/work-logs/TEMPLATE.md).

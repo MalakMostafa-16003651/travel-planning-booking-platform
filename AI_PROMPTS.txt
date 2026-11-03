@@ -52,3 +52,30 @@ Validation for ACC-01:
 - Compiled application startup, registration, and Swagger smoke checks passed.
 - Final dependency installation reported zero known vulnerabilities.
 - The shared Atlas database and local secret file were not used by these checks.
+
+================================================
+Date: 2026-11-03
+Student: Team leader / Person 1
+Student ID: 16003651 (confirmed by student)
+Tool: Codex
+Model: Not disclosed
+Related Requirement: Project description section 11; team workflow logging policy
+Workflow Log: docs/work-logs/16003651/ai-workflow-logging.md
+
+Important prompts:
+The student supplied a specification for student-owned workflow records, truthful
+AI attribution, verification results, review status, and privacy safeguards.
+"okay lets continue and work in the next step and implement the AI workflow i told you about"
+Student ID confirmation: the student explicitly confirmed 16003651.
+
+How the output was used:
+Used the authorized scope to add a central contribution policy, concise AGENTS.md
+instructions, common work-log and PR templates, an actual record for this task,
+and README links. AI assisted with drafting and review; the responsible student
+retains ownership and must review and understand the resulting policy. No
+additional authentication, database, schema, or environment changes are included.
+
+Verification, failed attempts/corrections, remaining checks, and actual Git
+references are recorded in the linked workflow log. Final human review remains
+PENDING until confirmed. Existing prompt entries are preserved.
+================================================
