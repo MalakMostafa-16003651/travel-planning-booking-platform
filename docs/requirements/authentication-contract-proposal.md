@@ -97,24 +97,35 @@ Forced-password-change restrictions must be enforced on the backend. The exact
 endpoints available under this restriction are deferred to the temporary-password
 and login features.
 
-## Session settings deferred to login and session features
+## Session settings agreed for ACC-04
 
-The requirements mandate access and refresh cookies, refresh-token revocation,
-and 30-minute inactivity expiry. Finalize these settings when implementing the
-relevant login and session features:
+On 2026-11-03, after an explanation, the student selected "Use these settings":
+15-minute access tokens, seven-day maximum refresh tokens, 30-minute inactivity
+expiry, private AuthSession storage with only a refresh-token hash, HttpOnly/Secure/
+SameSite=Lax cookies named `__Host-accessToken` and `__Host-refreshToken`, the
+existing JWT_SECRET name, and a same-origin frontend/API. Refresh and logout
+behavior remain separate implementation steps, as stated in the proposal.
 
-1. Access-token lifetime, refresh-token lifetime, and refresh endpoint/behavior.
-2. Server-side session representation, refresh rotation, and replay handling.
-3. How authenticated activity updates inactivity expiry and whether a background
-   refresh counts as activity.
-4. Whether logout revokes the current session or every session.
-5. Session revocation following password changes, resets, suspension, and
-   deactivation.
-6. Cookie names, SameSite value, CSRF protection, frontend origin/CORS rules, and
-   local HTTPS configuration for the required Secure cookies.
+The private AuthSession uses `_id`, `userId`, `refreshTokenHash`, `lastActivityAt`,
+`expiresAt`, `revokedAt`, `createdAt`, `updatedAt`. The refresh token is random and
+opaque; its SHA-256 hash is stored with a unique index. `expiresAt` is an absolute
+seven-day maximum. Cookie Path=/ and no Domain enforce the `__Host-` convention.
+Authenticated requests verify access JWTs and the session, reload the account's
+current role/status, and atomically advance activity. TTL cleanup does not replace
+expiry checks. Same-origin CSRF protection applies to browser writes; CORS is not
+opened. HTTPS is required outside localhost development; Secure stays enabled.
 
-No new environment-variable names are introduced by this contract. Any additions
-must follow the team's agreement process.
+AuthGuard is exported by AuthModule and supplies `request.user = { userId, role }`.
+Each feature owner still enforces their resource's role/ownership restrictions.
+No unrestricted session is granted to an account with mustChangePassword set
+while the required password-change flow is absent.
+
+Remaining decisions for the respective steps: refresh endpoint/rotation/replay
+handling and whether background refresh counts as activity; current-session versus
+all-session logout; coordinated revocation after account/password changes; and
+any future cross-origin deployment. Until refresh exists, an expired access token
+requires another login. ACC-05/ACC-06 and full ACC-19 are not claimed complete.
+No new environment-variable name is introduced; JWT_SECRET was already agreed.
 
 ## Cross-module details deferred to their respective features
 
