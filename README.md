@@ -13,7 +13,8 @@ accepts name, email, password, and terms-and-privacy consent; creates a `USER`
 account with `ACTIVE` status; stores a salted password hash; and returns only
 public account fields. ACC-04 adds login for the agreed roles, protected access and
 refresh cookies, and `/api/auth/me` with server-side session/account checks.
-Automatic refresh, logout and failed-login lockout remain later steps; access
+ACC-05 locks new logins for 15 minutes after five consecutive failures and resets
+the counter after successful login. Automatic refresh and logout remain later steps; access
 tokens currently expire after 15 minutes and require logging in again.
 
 See [backend setup and authentication API documentation](backend/README.md) for

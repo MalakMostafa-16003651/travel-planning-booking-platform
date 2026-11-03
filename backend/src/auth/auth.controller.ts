@@ -32,12 +32,12 @@ export class AuthController {
   @HttpCode(200)
   @Header('Cache-Control', 'no-store')
   @ApiOperation({
-    summary: 'ACC-04: log in with email and password',
-    description: 'Issues HttpOnly, Secure, SameSite=Lax access/refresh cookies. Tokens are excluded from JSON. Access expires in 15 minutes; token renewal and logout are separate steps.',
+    summary: 'ACC-04/ACC-05: log in with email and password',
+    description: 'Five consecutive failed logins lock new login attempts for 15 minutes and return a lockout message. An eligible successful login resets the counter. Issues HttpOnly, Secure, SameSite=Lax access/refresh cookies; tokens are excluded from JSON. Access expires in 15 minutes; token renewal and logout are separate steps.',
   })
   @ApiOkResponse({ type: AuthenticatedUserDto, description: 'Current public user; authentication cookies are set separately.' })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'Invalid fields or unknown properties.' })
-  @ApiUnauthorizedResponse({ type: ApiErrorDto, description: 'Invalid email or password; deactivated account.' })
+  @ApiUnauthorizedResponse({ type: ApiErrorDto, description: 'Invalid email/password, deactivated account, or temporary lockout. Locked accounts receive: Account temporarily locked. Try again later.' })
   @ApiForbiddenResponse({ type: ApiErrorDto, description: 'Suspended account, mandatory password change, or cross-origin request.' })
   async login(@Body() input: LoginDto, @Res({ passthrough: true }) response: Response): Promise<AuthenticatedUserDto> {
     const user = await this.auth.verifyCredentials(input);

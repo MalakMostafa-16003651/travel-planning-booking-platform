@@ -1,6 +1,6 @@
 # Backend: registration and login
 
-This NestJS 12 backend implements ACC-01 registration and ACC-04 login using TypeScript, Mongoose and MongoDB Atlas. Registration creates a normal account without logging it in. Login issues protected cookies; `/api/auth/me` returns the current public identity through a reusable authentication guard. Refresh and logout endpoints, failed-login counting/lockout, profile changes and password-management features are later steps.
+This NestJS 12 backend implements ACC-01 registration, ACC-04 login and ACC-05 failed-login lockout using TypeScript, Mongoose and MongoDB Atlas. Registration creates a normal account without logging it in. Login issues protected cookies; `/api/auth/me` returns the current public identity through a reusable authentication guard. Refresh/logout endpoints, profile changes and password-management features are later steps.
 
 ## Run locally
 
@@ -111,9 +111,25 @@ Email is trimmed/lowercased; the password is checked exactly as supplied against
 
 `GET /api/auth/me` accepts the access cookie and returns **200** with the public identity. It verifies JWT signature/algorithm/issuer/audience/claims/expiry, reloads the current account role/status, and checks the associated session's user, revocation, seven-day absolute expiry and 30-minute inactivity boundary. Successful authenticated checks update activity atomically. MongoDB TTL cleanup is housekeeping; authorization checks expiry directly.
 
-**Incremental feature boundary:** the refresh cookie/storage foundation is ready, but `/api/auth/refresh` and logout do not exist yet. There is no automatic renewal in this step: when the access token expires after 15 minutes, log in again until the refresh feature is implemented. This PR does not complete ACC-05, ACC-06 or all of ACC-19.
+**Incremental feature boundary:** the refresh cookie/storage foundation is ready, but `/api/auth/refresh` and logout do not exist yet. There is no automatic renewal in this step: when the access token expires after 15 minutes, log in again until the refresh feature is implemented. ACC-06 and full ACC-19 are not complete.
 
-Wrong password, unknown email and deactivated accounts receive the same **401** message: `Invalid email or password`. Valid suspended-account credentials receive **403**, `Account is suspended`; the status is not disclosed for a wrong password. An account requiring a password change receives **403**, `Password change is required`, and no unrestricted session while that future flow is absent. Invalid DTO fields receive **400**. Missing/invalid/expired/revoked/inactive or newly ineligible sessions receive **401**, `Invalid or expired session`.
+Ordinary wrong passwords, unknown emails and deactivated accounts receive the same **401** message: `Invalid email or password`; temporary lockout has the explicit message below. Valid suspended-account credentials receive **403**, `Account is suspended`; the status is not disclosed for a wrong password. An unlocked account requiring a password change receives **403**, `Password change is required`, and no unrestricted session while that future flow is absent. Invalid DTO fields receive **400**. Missing/invalid/expired/revoked/inactive or newly ineligible sessions receive **401**, `Invalid or expired session`.
+
+## Failed-login lockout (ACC-05)
+
+The reviewed workbook (`Mandatory!D4`) requires five consecutive failed logins, a 15-minute lock and a lockout message. The same rule applies to all four roles and normalized versions of the same email. It uses the existing private User fields `failedLoginAttempts` and `lockedUntil`; account status remains ACTIVE during a temporary lock, distinct from SUSPENDED.
+
+- Failures one through four return the ordinary **401** credential error and increment the account's streak.
+- The fifth failure starts the 15-minute lock and returns **401**, `Account temporarily locked. Try again later.` Further wrong or correct passwords return that lockout message without clearing or extending the active lock. No new cookies/session are issued.
+- A successful eligible login before the threshold resets the counter to zero. After a lock expires, a correct password can log in and clear the lock; an incorrect password starts a fresh streak at one. No background unlock job is needed.
+- Unknown emails do not create accounts or lock records. Invalid DTOs are rejected before credential handling. Suspension/deactivation restrictions still apply; a required password change never grants unrestricted login.
+- Lockout prevents new logins; it does not revoke already issued sessions. Existing authenticated access remains subject to the usual session/account checks. Refresh and logout behavior are unchanged.
+
+MongoDB atomically evaluates the current password hash, account eligibility and lock deadline when incrementing/resetting. Database time (`$$NOW`) sets and checks the deadline. Active locks are excluded from updates; expired locks start a fresh streak. A correct-password request that began earlier cannot clear a lock committed by the concurrent fifth failure. If the successful reset wins first, later failures begin a new streak. The API never includes the stored counter, lock timestamp or password hash as response fields. The required lockout message is intentionally distinct from ordinary generic credential errors.
+
+For a manual Swagger check using an agreed test account: make four wrong-password requests, then a fifth; verify the fifth shows the lockout message and a correct password is also blocked. After 15 minutes, verify a correct password succeeds. Automated tests simulate expiry in their own temporary database and exercise concurrent request ordering, avoiding a real 15-minute wait or shared Atlas changes.
+
+The database implementation follows [MongoDB single-document atomicity](https://www.mongodb.com/docs/manual/core/write-operations-atomicity/) and [update pipelines](https://www.mongodb.com/docs/manual/tutorial/update-documents-with-aggregation-pipeline/). Ordinary credential errors remain generic as described in [OWASP authentication guidance](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html); the explicit lockout message follows the reviewed ACC-05 requirement.
 
 The approved deployment assumption is a same-origin frontend/API. NestJS CSRF protection rejects browser requests reported as cross-origin on state-changing routes, including login/registration; CORS is not opened. Do not weaken Secure cookies for a LAN HTTP address. Use HTTPS outside local development. Nest documents browser support for Secure cookies on localhost; verify the browser you use. Frontend requests send cookies with the appropriate credentials setting and obtain identity from `/api/auth/me`, not by reading tokens into JavaScript storage.
 
@@ -161,4 +177,4 @@ From `backend/`, run:
 npm.cmd test
 ```
 
-The tests use an isolated local MongoDB instance and a generated test-only signing secret; they never read the local `.env` or connect to the team's Atlas database. On Windows, the helper first checks for an installed MongoDB server executable and starts a separate instance with a fresh temporary database directory. Otherwise it downloads/caches a test binary. Tests verify registration, credentials, login/cookie/session behavior, current-account checks and rejection cases. They manually forward Secure cookies in the in-memory HTTP client; this is not a browser-cookie policy test. Do not print cookie/token/hash values when diagnosing a failure.
+The tests use an isolated local MongoDB instance and a generated test-only signing secret; they never read the local `.env` or connect to the team's Atlas database. On Windows, the helper first checks for an installed MongoDB server executable and starts a separate instance with a fresh temporary database directory. Otherwise it downloads/caches a test binary. Tests verify registration, credentials, login/cookie/session behavior, account lockout/concurrent ordering, current-account checks and rejection cases. They manually forward Secure cookies in the in-memory HTTP client; this is not a browser-cookie policy test. Do not print cookie/token/hash values when diagnosing a failure.

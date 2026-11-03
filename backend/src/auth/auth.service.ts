@@ -8,6 +8,8 @@ import { RegisterDto } from './dto/register.dto';
 import { RegisteredUserDto } from './dto/registered-user.dto';
 import { PasswordService } from './password.service';
 
+const LOCKOUT_MESSAGE = 'Account temporarily locked. Try again later.';
+
 @Injectable()
 export class AuthService implements OnModuleInit {
   private dummyPasswordHash!: string;
@@ -25,8 +27,12 @@ export class AuthService implements OnModuleInit {
   async verifyCredentials(input: LoginDto): Promise<UserDocument> {
     const user = await this.users.findForAuthentication(input.email);
     const validPassword = await this.passwords.verify(input.password, user?.passwordHash ?? this.dummyPasswordHash);
-    if (!user || !validPassword) {
+    if (!user) {
       throw new UnauthorizedException('Invalid email or password');
+    }
+    if (!validPassword) {
+      const locked = await this.users.recordFailedLogin(user._id.toString(), user.passwordHash);
+      throw new UnauthorizedException(locked ? LOCKOUT_MESSAGE : 'Invalid email or password');
     }
     // Only verified credentials can reveal an account's suspension status.
     if (user.status === AccountStatus.SUSPENDED) {
@@ -37,9 +43,19 @@ export class AuthService implements OnModuleInit {
     }
     // No unrestricted session is permitted before the temporary-password flow exists.
     if (user.mustChangePassword) {
+      if (await this.users.isLoginLocked(user._id.toString(), user.passwordHash)) {
+        throw new UnauthorizedException(LOCKOUT_MESSAGE);
+      }
       throw new ForbiddenException('Password change is required');
     }
-    return user;
+    // This conditional write is the successful-login ordering point. A concurrent
+    // fifth failure that locked first prevents a stale verifier from clearing it.
+    const authenticated = await this.users.resetFailedLoginAttempts(user._id.toString(), user.passwordHash);
+    if (!authenticated) {
+      const locked = await this.users.isLoginLocked(user._id.toString(), user.passwordHash);
+      throw new UnauthorizedException(locked ? LOCKOUT_MESSAGE : 'Invalid email or password');
+    }
+    return authenticated;
   }
 
   async register(input: RegisterDto): Promise<RegisteredUserDto> {
