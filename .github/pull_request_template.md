@@ -4,7 +4,7 @@ in the rendered PR; paths relative to this template can break in a PR body.
 
 ## Responsible student and scope
 
-- Student name / ID: <actual responsible student>.
+- Student name / ID: <actual responsible student(s)>.
 - Team role / module: <role and owned module>.
 - Requirement IDs / policy references: <applicable IDs and policy sections>.
 - Related issue: <actual link or none>.
@@ -26,8 +26,15 @@ Do not claim checks were run without evidence.>
 
 ## Workflow and AI records
 
-- Same-PR workflow entry: <actual branch/commit URL for
-  `docs/work-logs/<student-id>/<task>.md`; check the link in this PR>.
+Update each responsible student's existing continuous log in this PR. Use
+`docs/work-logs/<student-id>.md` and link the relevant dated entry or continuation;
+do not create another file for this task. For multiple authors, provide each
+student's own log URL and relevant entry.
+
+| Student name / ID | Continuous log: actual branch/commit URL | Relevant entry date / anchor |
+| --- | --- | --- |
+| <actual responsible student> | <actual branch/commit URL for this student's log> | <date/title or direct entry URL> |
+
 - AI prompt log: <actual branch/commit URL for root `AI_PROMPTS.txt`, with the
   relevant entry date or heading>.
 - AI output use: <briefly identify accepted, modified, rejected, or pending output;
@@ -41,6 +48,8 @@ Do not claim checks were run without evidence.>
 
 Keep PENDING until explicitly confirmed by a human reviewer. Authoring this PR,
 AI review, and passing automated checks do not establish human review or approval.
+Record which dated entries and changes were reviewed; earlier log-entry approval
+does not approve new entries automatically.
 
 ## Actual references
 

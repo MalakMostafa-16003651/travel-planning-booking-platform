@@ -10,11 +10,13 @@ Read the relevant requirement documents and approved shared contracts as well.
 - Explain the plan before implementation. Check the repository, remote, working
   tree, current branch, and current remote refs. Follow CONTRIBUTING.md to keep
   local `main` current and branch from current `develop`. Preserve existing work.
-- Each meaningful task needs a student-owned workflow record based on
-  [the common template](docs/work-logs/TEMPLATE.md). Keep it current at meaningful
-  checkpoints and include it in the same PR as the work. Attribute AI assistance.
+- Maintain one continuous workflow log per student at
+  `docs/work-logs/<student-id>.md`. Initialize it once from
+  [the common template](docs/work-logs/TEMPLATE.md), then append dated entries and
+  continuations for that student's work. Include the relevant log update in the
+  same PR. Attribute AI assistance; do not create a file per task or requirement.
 - Preserve existing `AI_PROMPTS.txt` entries. Append important sanitized prompts,
-  their actual use, and the corresponding workflow-record path.
+  their actual use, and the student's continuous-log path and relevant entry date.
 - Record observable actions and concise reasons. Never invent results, approvals,
   student contributions, model names, timestamps, or Git references. Keep final
   human review `PENDING` until the student confirms it. Clearly label any

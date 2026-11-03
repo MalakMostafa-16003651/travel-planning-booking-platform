@@ -60,7 +60,7 @@ Student ID: 16003651 (confirmed by student)
 Tool: Codex
 Model: Not disclosed
 Related Requirement: Project description section 11; team workflow logging policy
-Workflow Log: docs/work-logs/16003651/ai-workflow-logging.md
+Workflow Log: docs/work-logs/16003651.md (original setup entry, 2026-11-03)
 
 Important prompts:
 The student supplied a specification for student-owned workflow records, truthful
@@ -79,4 +79,28 @@ Verification, failed attempts/corrections, remaining checks, and actual Git
 references are recorded in the linked workflow log. Final human review remains
 PENDING until confirmed. Existing prompt entries are preserved.
 PR: https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/pull/3
+================================================
+
+================================================
+Date: 2026-11-03
+Student: Team leader / Person 1
+Student ID: 16003651
+Tool: Codex
+Model: Not disclosed
+Related Requirement: Team workflow logging structure
+Workflow Log: docs/work-logs/16003651.md
+Entry: 2026-11-03 - Revision to one continuous log per student
+PR: https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/pull/3
+
+Important prompts:
+"okay 1st whatd id you do abt the log i dont want per requirment i want per student or wven maybe a joint one for all of us not one task"
+Confirmed preference: "One continuous file per student (recommended)".
+
+How the output was used:
+Changed the proposed workflow to one continuous file per student for the whole
+project. Moved the existing record into docs/work-logs/16003651.md, preserved its
+history, and appended a dated revision entry. Updated the policy, AI instructions,
+templates, README, and the earlier entry's canonical log path. Future work appends
+dated entries rather than creating new task or requirement files. The structure
+choice is confirmed; final review of the resulting documentation remains PENDING.
 ================================================

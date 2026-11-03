@@ -23,6 +23,7 @@ features.
 
 ## Contributing
 
-Follow the [team development workflow](CONTRIBUTING.md) for branches, task records,
-AI attribution, verification, and human review. Start each meaningful task with
-the [work-log template](docs/work-logs/TEMPLATE.md).
+Follow the [team development workflow](CONTRIBUTING.md) for branches, continuous
+student logs, AI attribution, verification, and human review. Create each student's
+log once from the [template](docs/work-logs/TEMPLATE.md), then append dated entries
+to the same file throughout the project.

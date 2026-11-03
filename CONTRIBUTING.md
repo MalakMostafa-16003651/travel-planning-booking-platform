@@ -51,18 +51,25 @@ If a fetch or other operation fails, record the real failure. Do not claim that
 refs are current or an operation succeeded until verified. Retry or use reliable
 evidence to check the state, and hold dependent edits when the base is uncertain.
 
-## Student-owned workflow records
+## One continuous workflow log per student
 
-Every feature or fix PR must include an updated record by its responsible
-student. Meaningful documentation tasks also use a record. Copy
-[TEMPLATE.md](docs/work-logs/TEMPLATE.md) to
-`docs/work-logs/<student-id>/<task>.md` using the student's confirmed ID and a
-short task name. Do not guess identities or overwrite another student's record.
+Each student maintains one continuous file for the whole project:
+`docs/work-logs/<student-id>.md`. Initialize it once from
+[TEMPLATE.md](docs/work-logs/TEMPLATE.md) using the student's confirmed ID. For
+Person 1, the file is `docs/work-logs/16003651.md`. Do not guess identities or
+overwrite another student's history.
 
-Use one record per meaningful task. Add dated continuation sections when work
-continues; do not create a separate record for every day or trivial tool call.
-If several students contribute, link their relevant records from the PR. Each
-student owns the accuracy of their record even when AI helps draft it.
+Append dated entries and continuations as work progresses. An entry may describe
+a work session or a coherent group of related changes; requirement IDs are
+references within entries, not reasons to create more files. Do not create
+separate log files for tasks, requirements, days, or PRs.
+
+Every feature or fix PR updates its responsible student's existing log and links
+the relevant dated entry. Meaningful documentation work follows the same rule.
+If several students contribute, link each contributor's continuous log and entry.
+Each student owns the accuracy of their log even when AI helps draft it. Preserve
+earlier entries and results; append dated corrections rather than replacing
+history. Keep human-review status scoped to each entry and its actual changes.
 
 At the planning, implementation, verification, and review checkpoints, record:
 
@@ -86,8 +93,8 @@ fabricate tests, timestamps, approvals, contributions, model names, commits, PRs
 or results. Use `Not disclosed`, `Not provided`, `None`, or `Not yet created` when
 appropriate rather than filling gaps with guesses.
 
-Final human review starts as `PENDING`. Implementation authorization, an AI
-review, a passing test suite, and the student's final review are separate facts.
+Each entry's final human review starts as `PENDING`. Implementation authorization,
+an AI review, a passing test suite, and the student's final review are separate facts.
 Mark human review confirmed only when the student explicitly confirms it, with
 the actual reviewer and evidence. Review readiness is not final approval.
 
@@ -100,12 +107,14 @@ merged PRs had workflow records.
 
 Keep the course-required root file and preserve its existing history. Append the
 important sanitized prompts that materially contributed to a task, how the output
-was actually used, requirement IDs or policy references, and the task-record
-path. Multi-turn work can use a short chronological summary with key excerpts.
+was actually used, requirement IDs or policy references, and the student's
+continuous-log path and relevant entry date. Multi-turn work can use a short
+chronological summary with key excerpts.
 
-Use the task record for the detailed process; use `AI_PROMPTS.txt` for the prompt
-and its use. Link the two instead of copying the whole workflow into both files.
-If a task uses no AI, state that in its task record rather than inventing prompts.
+Use dated student-log entries for the detailed process and `AI_PROMPTS.txt` for
+the important prompts and their use. Link the two instead of copying the whole
+workflow into both files. If work uses no AI, state that in the corresponding
+student-log entry rather than inventing prompts.
 
 ## Verification, privacy, and shared data
 
@@ -133,8 +142,8 @@ links, AI attribution, and human-review status. Complete it truthfully.
 
 A task is ready for review when its agreed behavior is implemented, appropriate
 checks have been performed and limitations disclosed, Swagger is current where
-needed, the diff is scoped and free of secrets, and the task record and important
-prompt entries are current. The student must be able to explain the implementation
+needed, the diff is scoped and free of secrets, and the student-log entry and
+important prompt entries are current. The student must be able to explain the implementation
 and its decisions during evaluation.
 
 These are documented contribution and review requirements. This setup does not
