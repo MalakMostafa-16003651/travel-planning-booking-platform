@@ -20,3 +20,9 @@ MongoDB tests.
 The [Authentication and Users shared contract](docs/requirements/authentication-contract-proposal.md)
 records the accepted User fields and naming, along with details deferred to later
 features.
+
+## Student workflow record
+
+The [Person 1 workflow record](docs/work-logs/16003651.md) contains the agreed rules,
+requirements, AI collaboration history, verification, learning checks, and reusable
+team prompt. Each student keeps one continuous file named with their confirmed ID.

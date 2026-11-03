@@ -154,6 +154,9 @@ Administration or supporting-service feature.
 
 Implementation proceeds in coherent feature branches from the latest
 `develop`, with tests, Swagger documentation, requirement references, and updates
-to `AI_PROMPTS.txt`. Synchronize by merging updated `develop` before opening a PR.
+to the [continuous student workflow record](../work-logs/16003651.md). That record
+documents the requested prompt-log consolidation and the course filename
+requirement awaiting TA confirmation. Synchronize by merging updated `develop`
+before opening a PR.
 All changes go through PR review into `develop`; stable milestones reach `main`
 through a release PR. Never force-push.
