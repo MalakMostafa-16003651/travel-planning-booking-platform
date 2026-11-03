@@ -78,4 +78,5 @@ additional authentication, database, schema, or environment changes are included
 Verification, failed attempts/corrections, remaining checks, and actual Git
 references are recorded in the linked workflow log. Final human review remains
 PENDING until confirmed. Existing prompt entries are preserved.
+PR: https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/pull/3
 ================================================
