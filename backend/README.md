@@ -1,6 +1,6 @@
 # Backend: registration and login
 
-This NestJS 12 backend implements ACC-01 registration, ACC-04 login and ACC-05 failed-login lockout using TypeScript, Mongoose and MongoDB Atlas. Registration creates a normal account without logging it in. Login issues protected cookies; `/api/auth/me` returns the current public identity through a reusable authentication guard. Refresh/logout endpoints, profile changes and password-management features are later steps.
+This NestJS 12 backend implements ACC-01 registration, ACC-04 login, ACC-05 failed-login lockout and ACC-06 logout/inactivity using TypeScript, Mongoose and MongoDB Atlas. Registration creates a normal account without logging it in. Login issues protected cookies; `/api/auth/me` returns the current public identity through a reusable authentication guard. Profile/password-management features and optional token renewal are later work.
 
 ## Run locally
 
@@ -111,7 +111,7 @@ Email is trimmed/lowercased; the password is checked exactly as supplied against
 
 `GET /api/auth/me` accepts the access cookie and returns **200** with the public identity. It verifies JWT signature/algorithm/issuer/audience/claims/expiry, reloads the current account role/status, and checks the associated session's user, revocation, seven-day absolute expiry and 30-minute inactivity boundary. Successful authenticated checks update activity atomically. MongoDB TTL cleanup is housekeeping; authorization checks expiry directly.
 
-**Incremental feature boundary:** the refresh cookie/storage foundation is ready, but `/api/auth/refresh` and logout do not exist yet. There is no automatic renewal in this step: when the access token expires after 15 minutes, log in again until the refresh feature is implemented. ACC-06 and full ACC-19 are not complete.
+**Token-renewal boundary:** the refresh cookie/storage foundation supports server-side revocation, but `/api/auth/refresh` is not implemented. Neither reviewed ACC-06 nor ACC-19 mandates that endpoint or a rotation policy. There is no automatic renewal: an expired 15-minute access token requires login again. The agreed seven-day session maximum does not override access expiry or 30-minute inactivity. Frontend integration and JavaScript-storage verification belong to Milestone 2.
 
 Ordinary wrong passwords, unknown emails and deactivated accounts receive the same **401** message: `Invalid email or password`; temporary lockout has the explicit message below. Valid suspended-account credentials receive **403**, `Account is suspended`; the status is not disclosed for a wrong password. An unlocked account requiring a password change receives **403**, `Password change is required`, and no unrestricted session while that future flow is absent. Invalid DTO fields receive **400**. Missing/invalid/expired/revoked/inactive or newly ineligible sessions receive **401**, `Invalid or expired session`.
 
@@ -136,6 +136,22 @@ The approved deployment assumption is a same-origin frontend/API. NestJS CSRF pr
 For manual checks in Swagger, register a distinct agreed test account, call login, then call `/api/auth/me` in the same browser. The browser manages HttpOnly cookies; do not paste tokens into Swagger's authorization field or this log. A Swagger security scheme documents the access cookie but does not make it JavaScript-readable. Confirm unknown/wrong credentials fail, successful JSON contains only public fields, and requests without the cookie are rejected. Shared Atlas checks require agreed test records and cleanup; automated tests use a temporary local database instead.
 
 The implementation uses the official [NestJS cookie guidance](https://docs.nestjs.com/http/cookies), [NestJS CSRF protection](https://docs.nestjs.com/security/csrf), [Nest JWT package](https://github.com/nestjs/jwt) and [OWASP session guidance](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html).
+
+## Logout and inactivity (ACC-06)
+
+`POST /api/auth/logout` takes its session credentials from the browser's authentication cookies; no JSON body or user/session ID is required. A successful request returns **204 No Content**, `Cache-Control: no-store`, and expires both cookies using the same HttpOnly/Secure/SameSite=Lax/Path=/ settings with no Domain. Cookie settings are shared with login so clearing cannot drift from issuance.
+
+The default action is current-browser logout. The server matches the opaque refresh cookie by its SHA-256 hash, and independently validates the access JWT before using its exact session/user claims. Only matching sessions are revoked; a request cannot select another account through body/query IDs. If the two cookies identify different valid sessions, both represented sessions are revoked. Other sessions without a presented credential remain intact.
+
+Logout uses the refresh cookie even when access has expired or the account is suspended, deactivated or deleted. Missing/malformed credentials and repeated logout are idempotent: cookies are cleared and the endpoint returns 204 without revealing whether a session existed. Repeating logout preserves the original revocation timestamp and never advances activity or session expiry.
+
+Server revocation completes before cookie clearing. A database error returns the standard generic **500** response and preserves cookies for retry. Revocation is atomic per matching document; a multi-document failure may partially revoke the represented sessions, so a retry completes the monotonic operation. Successful logout does not claim a rollback or require a transaction. Same-origin CSRF checks reject foreign browser writes with **403** before changing session state or cookies.
+
+The guard enforces **30 minutes without an authenticated request**, not a fixed 30-minute lifetime. It checks the idle/absolute deadline and revocation and advances activity atomically using database time (`$$NOW`). A failed/expired/revoked request cannot revive a session; TTL deletion is only housekeeping. After expiry, protected routes return 401 and require a new login. The actual frontend login redirect is Milestone 2; no frontend is required for Milestone 1.
+
+For a manual Swagger check with an agreed test account: log in, call `/api/auth/me`, call logout, then confirm `/api/auth/me` returns 401. Log in again to establish a fresh session. Automated tests additionally prove that replaying the old access cookie fails after server revocation, that the old refresh hash is marked revoked, and that an unrelated login remains valid. Do not paste token values into the log or Swagger authorization fields.
+
+The logout implementation follows [Express cookie-clearing behavior](https://expressjs.com/en/guide/migrating-5/) and [OWASP server-side session invalidation](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html). Current-browser scope and the 204/idempotent/error policy are implementation choices; the reviewed sheet requires cookie clearing, server refresh-token revocation and 30-minute inactivity expiry.
 
 ## Reusing authentication in other modules
 
@@ -177,4 +193,4 @@ From `backend/`, run:
 npm.cmd test
 ```
 
-The tests use an isolated local MongoDB instance and a generated test-only signing secret; they never read the local `.env` or connect to the team's Atlas database. On Windows, the helper first checks for an installed MongoDB server executable and starts a separate instance with a fresh temporary database directory. Otherwise it downloads/caches a test binary. Tests verify registration, credentials, login/cookie/session behavior, account lockout/concurrent ordering, current-account checks and rejection cases. They manually forward Secure cookies in the in-memory HTTP client; this is not a browser-cookie policy test. Do not print cookie/token/hash values when diagnosing a failure.
+The tests use an isolated local MongoDB instance and a generated test-only signing secret; they never read the local `.env` or connect to the team's Atlas database. On Windows, the helper first checks for an installed MongoDB server executable and starts a separate instance with a fresh temporary database directory. Otherwise it downloads/caches a test binary. Tests verify registration, credentials, login/cookie/session behavior, logout/revocation/inactivity, lockout/concurrent ordering, current-account checks and rejection cases. They manually forward Secure cookies in the in-memory HTTP client; this is not a browser-cookie policy test. Do not print cookie/token/hash values when diagnosing a failure.

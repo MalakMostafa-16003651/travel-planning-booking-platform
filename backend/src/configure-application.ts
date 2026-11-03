@@ -28,7 +28,7 @@ export function configureApplication(app: INestApplication): void {
 
   const config = new DocumentBuilder()
     .setTitle('Travel Planning and Booking Platform API')
-    .setDescription('Milestone 1. ACC-01 registration, ACC-04 login, and the ACC-19 current-user/session foundation.')
+    .setDescription('Milestone 1. ACC-01 registration, ACC-04 login, ACC-05 lockout, ACC-06 logout/inactivity, and ACC-19 cookie/current-user controls.')
     .addCookieAuth(ACCESS_TOKEN_COOKIE, { type: 'apiKey', in: 'cookie' }, 'accessToken')
     .setVersion('0.1.0')
     .build();

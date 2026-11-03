@@ -73,23 +73,57 @@ export class AuthSessionsService implements OnModuleInit {
       throw invalidSession();
     }
 
-    const now = new Date();
     // Validate and touch together. $max prevents an older concurrent request
-    // from moving lastActivityAt backwards. TTL deletion is only housekeeping.
+    // from moving lastActivityAt backwards. Database time controls inactivity;
+    // TTL deletion is only housekeeping, not authorization.
     const session = await this.sessions.findOneAndUpdate(
       {
         _id: new Types.ObjectId(sessionId),
         userId: new Types.ObjectId(userId),
         revokedAt: null,
-        expiresAt: { $gt: now },
-        lastActivityAt: { $gt: new Date(now.getTime() - SESSION_IDLE_TIMEOUT_MS) },
+        $expr: {
+          $and: [
+            { $gt: ['$expiresAt', '$$NOW'] },
+            { $gt: ['$lastActivityAt', { $subtract: ['$$NOW', SESSION_IDLE_TIMEOUT_MS] }] },
+          ],
+        },
       },
-      { $max: { lastActivityAt: now } },
-      { returnDocument: 'after' },
+      [{ $set: { lastActivityAt: { $max: ['$lastActivityAt', '$$NOW'] }, updatedAt: '$$NOW' } }],
+      { updatePipeline: true, timestamps: false, returnDocument: 'after' },
     ).exec();
     if (!session) throw invalidSession();
 
     return user;
+  }
+
+  async logout(accessToken?: string, refreshToken?: string): Promise<void> {
+    const targets: Array<
+      { refreshTokenHash: string } | { _id: Types.ObjectId; userId: Types.ObjectId }
+    > = [];
+
+    // Opaque refresh credentials can identify a session even after access expiry.
+    // Bound input before hashing; user IDs from request bodies are never accepted.
+    if (typeof refreshToken === 'string' && /^[A-Za-z0-9_-]{43}$/.test(refreshToken)) {
+      targets.push({ refreshTokenHash: createHash('sha256').update(refreshToken).digest('hex') });
+    }
+    if (typeof accessToken === 'string' && accessToken.length > 0) {
+      try {
+        const { userId, sessionId } = await this.readAccessClaims(accessToken);
+        targets.push({ _id: new Types.ObjectId(sessionId), userId: new Types.ObjectId(userId) });
+      } catch (error) {
+        if (!(error instanceof UnauthorizedException)) throw error;
+        // Invalid/expired cookies still get cleared; they cannot target another session.
+      }
+    }
+    if (targets.length === 0) return;
+
+    // Each exact match is revoked atomically. An idempotent retry handles a partial
+    // multi-document failure; never report success or clear cookies on a DB error.
+    await this.sessions.updateMany(
+      { revokedAt: null, $or: targets },
+      { $currentDate: { revokedAt: true, updatedAt: true } },
+      { timestamps: false, upsert: false },
+    ).exec();
   }
 
   private async readAccessClaims(accessToken: string): Promise<{ userId: string; sessionId: string }> {
