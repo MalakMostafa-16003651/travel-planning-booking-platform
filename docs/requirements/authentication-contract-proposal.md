@@ -120,11 +120,28 @@ Each feature owner still enforces their resource's role/ownership restrictions.
 No unrestricted session is granted to an account with mustChangePassword set
 while the required password-change flow is absent.
 
-Remaining decisions for the respective steps: refresh endpoint/rotation/replay
-handling and whether background refresh counts as activity; current-session versus
-all-session logout; coordinated revocation after account/password changes; and
-any future cross-origin deployment. Until refresh exists, an expired access token
-requires another login. ACC-06 and full ACC-19 are not claimed complete.
+### ACC-06 current-browser logout and inactivity
+
+ACC-06 uses current-browser logout as a documented implementation choice; the
+reviewed sheet does not require all-device logout. The endpoint is POST /api/auth/logout,
+with no JSON input. It revokes only sessions identified by the presented refresh
+hash and/or verified access JWT session/user claims, then clears both cookies with
+matching attributes and returns 204. It also works with an expired access cookie
+when the refresh cookie is present, and allows cleanup of an inactive account.
+Missing/malformed/repeated credentials are idempotent. Database failure returns
+a generic error and preserves cookies for retry; revocation is atomic per document.
+
+The guard's 30-minute idle check and activity update use database time atomically;
+rejected requests cannot keep an expired/revoked session alive. Authenticated
+activity does not extend the absolute seven-day maximum. Frontend redirection and
+storage integration are Milestone 2 work.
+
+Remaining choices for any later token-renewal work: refresh endpoint/rotation/replay
+handling and whether background refresh counts as activity; coordinated revocation
+after account/password changes; and any future cross-origin deployment. Neither
+ACC-06 nor ACC-19 prescribes a refresh endpoint. Until renewal is implemented, an
+expired access token requires another login. ACC-19 frontend integration is not
+claimed complete by this backend feature.
 No new environment-variable name is introduced; JWT_SECRET was already agreed.
 
 ## Cross-module details deferred to their respective features

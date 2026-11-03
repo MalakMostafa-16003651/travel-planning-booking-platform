@@ -22,6 +22,7 @@ import { AccountStatus } from '../src/common/enums/account-status.enum';
 import { UserRole } from '../src/common/enums/user-role.enum';
 import { configureApplication } from '../src/configure-application';
 import { User, UserDocument } from '../src/users/schemas/user.schema';
+import { UsersService } from '../src/users/users.service';
 
 function mongoBinaryOptions() {
   const fallback = {
@@ -136,6 +137,29 @@ function assertLockedLogin(response: Response) {
   assertNoAuthCookies(response);
 }
 
+function assertLogoutResponse(response: Response) {
+  assert.equal(response.status, 204);
+  assert.equal(response.text, '');
+  assert.equal(response.headers['cache-control'], 'no-store');
+  const cleared = readAuthCookies(response);
+  assert.equal(cleared.raw.length, 2);
+  assert.ok(cleared.accessToken === '', 'The access cookie must be cleared');
+  assert.ok(cleared.refreshToken === '', 'The refresh cookie must be cleared');
+  for (const cookie of cleared.raw) {
+    assert.ok(/;\s*HttpOnly(?:;|$)/i.test(cookie), 'Cleared cookies must remain HttpOnly');
+    assert.ok(/;\s*Secure(?:;|$)/i.test(cookie), 'Cleared cookies must remain Secure');
+    assert.ok(/;\s*SameSite=Lax(?:;|$)/i.test(cookie), 'Cleared cookies must retain SameSite=Lax');
+    assert.ok(/;\s*Path=\/(?:;|$)/i.test(cookie), 'Cleared cookies must retain Path=/');
+    assert.ok(!/;\s*Domain=/i.test(cookie), 'Host cookies must not specify Domain');
+    const maxAge = /;\s*Max-Age=([^;]+)/i.exec(cookie);
+    const expires = /;\s*Expires=([^;]+)/i.exec(cookie);
+    if (maxAge) assert.ok(Number(maxAge[1]) <= 0, 'Clearing must not extend cookie lifetime');
+    const immediatelyExpired = maxAge !== null && Number(maxAge[1]) <= 0;
+    const expiredDate = expires !== null && Date.parse(expires[1]) < Date.now();
+    assert.ok(immediatelyExpired || expiredDate, 'The browser must discard the cleared cookie');
+  }
+}
+
 function deferredSignal() {
   let resolveSignal!: () => void;
   const promise = new Promise<void>((resolve) => { resolveSignal = resolve; });
@@ -204,7 +228,7 @@ async function independentlyVerifyHash(password: string, encodedHash: string) {
   assert.ok(timingSafeEqual(derivedHash, expectedHash));
 }
 
-describe('ACC-01 registration, ACC-04 login, and ACC-05 lockout', { concurrency: false }, () => {
+describe('ACC-01 registration and ACC-04/05/06 authentication', { concurrency: false }, () => {
   let memoryMongo: MongoMemoryServer;
   let app: INestApplication;
   let users: Model<UserDocument>;
@@ -846,7 +870,7 @@ describe('ACC-01 registration, ACC-04 login, and ACC-05 lockout', { concurrency:
     assert.equal(await sessions.countDocuments(), 0);
   });
 
-  it('documents login and current-user access without exposing deferred session routes', async () => {
+  it('documents login, current-user access, and logout while keeping refresh deferred', async () => {
     const specification = await request(app.getHttpServer()).get('/api/docs-json').expect(200);
     const login = specification.body.paths?.['/api/auth/login']?.post;
     const me = specification.body.paths?.['/api/auth/me']?.get;
@@ -859,7 +883,11 @@ describe('ACC-01 registration, ACC-04 login, and ACC-05 lockout', { concurrency:
     assert.ok(me.responses?.['200']);
     assert.ok(me.responses?.['401']);
     assert.equal(specification.body.paths?.['/api/auth/refresh'], undefined);
-    assert.equal(specification.body.paths?.['/api/auth/logout'], undefined);
+    const logout = specification.body.paths?.['/api/auth/logout']?.post;
+    assert.ok(logout);
+    assert.ok(logout.responses?.['204']);
+    assert.ok(logout.responses?.['403']);
+    assert.ok(logout.responses?.['500']);
   });
 
   it('locks every role on its fifth consecutive failure across normalized email variants', async () => {
@@ -1115,5 +1143,320 @@ describe('ACC-01 registration, ACC-04 login, and ACC-05 lockout', { concurrency:
     assertPublicAccount(currentUser);
     assert.equal(currentUser.body.userId, login.body.userId);
     assert.equal(await sessions.countDocuments(), 1);
+  });
+
+  it('logs out every role, rejects cookie replay, and allows a separate new login', async () => {
+    for (const role of Object.values(UserRole)) {
+      const email = `logout-${role.toLowerCase()}@example.com`;
+      await request(app.getHttpServer()).post('/api/auth/register')
+        .send(registration({ email })).expect(201);
+      await users.updateOne({ email }, { $set: { role } }).exec();
+      const login = await request(app.getHttpServer()).post('/api/auth/login')
+        .send({ email, password: 'Travel123' }).expect(200);
+      const cookies = readAuthCookies(login);
+      const claims = app.get(JwtService).decode<AccessClaims>(cookies.accessToken);
+      await request(app.getHttpServer()).get('/api/auth/me')
+        .set('Cookie', cookies.cookieHeader).expect(200);
+      const beforeLogout = await sessions.findById(claims.sid).orFail().lean().exec();
+
+      const response = await request(app.getHttpServer()).post('/api/auth/logout')
+        .set('Sec-Fetch-Site', 'same-origin')
+        .set('Cookie', cookies.cookieHeader);
+      assertLogoutResponse(response);
+      const revoked = await sessions.findById(claims.sid).orFail().lean().exec();
+      assert.ok(revoked.revokedAt instanceof Date);
+      assert.equal(revoked.lastActivityAt.getTime(), beforeLogout.lastActivityAt.getTime());
+      assert.equal(revoked.expiresAt.getTime(), beforeLogout.expiresAt.getTime());
+      assertInvalidSession(await request(app.getHttpServer()).get('/api/auth/me')
+        .set('Cookie', cookies.cookieHeader));
+
+      const newLogin = await request(app.getHttpServer()).post('/api/auth/login')
+        .send({ email, password: 'Travel123' }).expect(200);
+      assertPublicAccount(newLogin);
+      assert.equal(newLogin.body.role, role);
+      const currentUser = await request(app.getHttpServer()).get('/api/auth/me')
+        .set('Cookie', readAuthCookies(newLogin).cookieHeader).expect(200);
+      assert.equal(currentUser.body.userId, login.body.userId);
+      assert.equal(currentUser.body.role, role);
+    }
+    assert.equal(await sessions.countDocuments({ revokedAt: { $ne: null } }), Object.values(UserRole).length);
+  });
+
+  it('revokes through either valid cookie even when its companion is missing or malformed', async () => {
+    const variants = ['access-only', 'refresh-only', 'bad-refresh', 'bad-access'] as const;
+    for (const variant of variants) {
+      const { claims, cookies } = await registerAndLogin(`${variant}@example.com`);
+      const cookieHeader = variant === 'access-only' ? cookies.accessPair
+        : variant === 'refresh-only' ? cookies.refreshPair
+          : variant === 'bad-refresh' ? `${cookies.accessPair}; __Host-refreshToken=malformed`
+            : `__Host-accessToken=not-a-jwt; ${cookies.refreshPair}`;
+      const response = await request(app.getHttpServer()).post('/api/auth/logout')
+        .set('Cookie', cookieHeader);
+      assertLogoutResponse(response);
+      const session = await sessions.findById(claims.sid).orFail().lean().exec();
+      assert.ok(session.revokedAt instanceof Date);
+      assertInvalidSession(await request(app.getHttpServer()).get('/api/auth/me')
+        .set('Cookie', cookies.cookieHeader));
+    }
+  });
+
+  it('revokes the refresh session when the access token has already expired', async () => {
+    const { claims, cookies } = await registerAndLogin();
+    const expiredAccess = signedAccessToken(claims, {}, { expiresIn: -1 });
+    const response = await request(app.getHttpServer()).post('/api/auth/logout')
+      .set('Cookie', `__Host-accessToken=${expiredAccess}; ${cookies.refreshPair}`);
+    assertLogoutResponse(response);
+    const session = await sessions.findById(claims.sid).orFail().lean().exec();
+    assert.ok(session.revokedAt instanceof Date);
+    assertInvalidSession(await request(app.getHttpServer()).get('/api/auth/me')
+      .set('Cookie', cookies.cookieHeader));
+  });
+
+  it('allows logout after suspension, deactivation, a password-change restriction, or account deletion', async () => {
+    const variants = ['suspended', 'deactivated', 'password-change', 'deleted'] as const;
+    for (const variant of variants) {
+      const { claims, cookies } = await registerAndLogin(`${variant}-logout@example.com`);
+      if (variant === 'deleted') {
+        await users.deleteOne({ _id: claims.sub }).exec();
+      } else {
+        const changes = variant === 'suspended' ? { status: AccountStatus.SUSPENDED }
+          : variant === 'deactivated' ? { status: AccountStatus.DEACTIVATED }
+            : { mustChangePassword: true };
+        await users.updateOne({ _id: claims.sub }, { $set: changes }).exec();
+      }
+      const response = await request(app.getHttpServer()).post('/api/auth/logout')
+        .set('Cookie', cookies.cookieHeader);
+      assertLogoutResponse(response);
+      const session = await sessions.findById(claims.sid).orFail().lean().exec();
+      assert.ok(session.revokedAt instanceof Date);
+    }
+  });
+
+  it('does not revive or touch idle-expired or absolutely expired sessions during logout', async () => {
+    for (const variant of ['idle', 'absolute'] as const) {
+      const { claims, cookies } = await registerAndLogin(`${variant}-logout@example.com`);
+      const changes = variant === 'idle'
+        ? { lastActivityAt: new Date('2000-01-01T00:00:00.000Z') }
+        : { expiresAt: new Date('2000-01-01T00:00:00.000Z') };
+      await sessions.updateOne({ _id: claims.sid }, { $set: changes }).exec();
+      const beforeLogout = await sessions.findById(claims.sid).lean().exec();
+      assertInvalidSession(await request(app.getHttpServer()).get('/api/auth/me')
+        .set('Cookie', cookies.cookieHeader));
+      const response = await request(app.getHttpServer()).post('/api/auth/logout')
+        .set('Cookie', cookies.cookieHeader);
+      assertLogoutResponse(response);
+      const afterLogout = await sessions.findById(claims.sid).lean().exec();
+      if (afterLogout) {
+        assert.ok(beforeLogout);
+        assert.ok(afterLogout.revokedAt instanceof Date);
+        assert.equal(afterLogout.lastActivityAt.getTime(), beforeLogout.lastActivityAt.getTime());
+        assert.equal(afterLogout.expiresAt.getTime(), beforeLogout.expiresAt.getTime());
+      } else {
+        // TTL deletion of an absolutely expired record also leaves it unusable.
+        assert.equal(variant, 'absolute');
+      }
+    }
+  });
+
+  it('clears missing or invalid cookies idempotently without revoking an unrelated session', async () => {
+    const { claims, cookies } = await registerAndLogin();
+    const beforeLogout = await sessions.findById(claims.sid).orFail().lean().exec();
+    const invalidHeaders: Array<string | undefined> = [
+      undefined,
+      'unrelated=value',
+      '__Host-accessToken=not-a-jwt; __Host-refreshToken=malformed',
+      '__Host-accessToken=%E0%A4%A; __Host-refreshToken=bad',
+      `__Host-refreshToken=${'x'.repeat(1_024)}`,
+      `__Host-refreshToken=${'A'.repeat(43)}`,
+      `__Host-accessToken=${signedAccessToken(claims, { tokenUse: 'refresh' })}`,
+      `__Host-accessToken=${signedAccessToken(claims, {}, { expiresIn: -1 })}`,
+    ];
+    for (const cookieHeader of invalidHeaders) {
+      const pending = request(app.getHttpServer()).post('/api/auth/logout');
+      if (cookieHeader !== undefined) pending.set('Cookie', cookieHeader);
+      assertLogoutResponse(await pending);
+      const unchanged = await sessions.findById(claims.sid).orFail().lean().exec();
+      assert.equal(unchanged.revokedAt, null);
+      assert.equal(unchanged.lastActivityAt.getTime(), beforeLogout.lastActivityAt.getTime());
+      assert.equal(unchanged.expiresAt.getTime(), beforeLogout.expiresAt.getTime());
+    }
+    await request(app.getHttpServer()).get('/api/auth/me')
+      .set('Cookie', cookies.cookieHeader).expect(200);
+    assert.equal(await sessions.countDocuments(), 1);
+  });
+
+  it('revokes both independently proven mixed sessions while preserving other browser logins', async () => {
+    const first = await registerAndLogin('first-browser@example.com');
+    const second = await registerAndLogin('second-browser@example.com');
+    const unaffectedLogin = await request(app.getHttpServer()).post('/api/auth/login')
+      .send({ email: 'first-browser@example.com', password: 'Travel123' }).expect(200);
+    const unaffectedCookies = readAuthCookies(unaffectedLogin);
+    const response = await request(app.getHttpServer()).post('/api/auth/logout')
+      .set('Cookie', `${first.cookies.accessPair}; ${second.cookies.refreshPair}`);
+    assertLogoutResponse(response);
+
+    for (const fixture of [first, second]) {
+      const revoked = await sessions.findById(fixture.claims.sid).orFail().lean().exec();
+      assert.ok(revoked.revokedAt instanceof Date);
+      assertInvalidSession(await request(app.getHttpServer()).get('/api/auth/me')
+        .set('Cookie', fixture.cookies.cookieHeader));
+    }
+    const currentUser = await request(app.getHttpServer()).get('/api/auth/me')
+      .set('Cookie', unaffectedCookies.cookieHeader).expect(200);
+    assert.equal(currentUser.body.userId, first.response.body.userId);
+    assert.equal(await sessions.countDocuments(), 3);
+    assert.equal(await sessions.countDocuments({ revokedAt: null }), 1);
+  });
+
+  it('keeps already-revoked timestamps and activity stable on repeated logout', async () => {
+    const { claims, cookies } = await registerAndLogin();
+    const firstLogout = await request(app.getHttpServer()).post('/api/auth/logout')
+      .set('Cookie', cookies.cookieHeader);
+    assertLogoutResponse(firstLogout);
+    const revoked = await sessions.findById(claims.sid).orFail().lean().exec();
+    assert.ok(revoked.revokedAt instanceof Date);
+    const previousMarker = new Date('2000-01-01T00:00:00.000Z');
+    // A fixed existing marker detects rewriting without relying on a timed delay.
+    await sessions.collection.updateOne({ _id: revoked._id }, {
+      $set: { revokedAt: previousMarker, updatedAt: previousMarker },
+    });
+    for (let repeat = 0; repeat < 2; repeat++) {
+      const response = await request(app.getHttpServer()).post('/api/auth/logout')
+        .set('Cookie', cookies.cookieHeader);
+      assertLogoutResponse(response);
+      const unchanged = await sessions.findById(claims.sid).orFail().lean().exec();
+      assert.equal(unchanged.revokedAt?.getTime(), previousMarker.getTime());
+      assert.equal(unchanged.updatedAt.getTime(), previousMarker.getTime());
+      assert.equal(unchanged.lastActivityAt.getTime(), revoked.lastActivityAt.getTime());
+      assert.equal(unchanged.expiresAt.getTime(), revoked.expiresAt.getTime());
+    }
+  });
+
+  it('does not let body or query identifiers select another account or session for logout', async () => {
+    const own = await registerAndLogin('own-logout@example.com');
+    const other = await registerAndLogin('other-logout@example.com');
+    const path = `/api/auth/logout?userId=${other.claims.sub}&sessionId=${other.claims.sid}`;
+    const body = { userId: other.claims.sub, sessionId: other.claims.sid };
+    const withoutCredentials = await request(app.getHttpServer()).post(path).send(body);
+    assertLogoutResponse(withoutCredentials);
+    assert.equal(await sessions.countDocuments({ revokedAt: { $ne: null } }), 0);
+
+    const ownLogout = await request(app.getHttpServer()).post(path)
+      .set('Cookie', own.cookies.cookieHeader).send(body);
+    assertLogoutResponse(ownLogout);
+    const ownSession = await sessions.findById(own.claims.sid).orFail().lean().exec();
+    const otherSession = await sessions.findById(other.claims.sid).orFail().lean().exec();
+    assert.ok(ownSession.revokedAt instanceof Date);
+    assert.equal(otherSession.revokedAt, null);
+    const currentOtherUser = await request(app.getHttpServer()).get('/api/auth/me')
+      .set('Cookie', other.cookies.cookieHeader).expect(200);
+    assert.equal(currentOtherUser.body.userId, other.response.body.userId);
+  });
+
+  it('handles concurrent logout requests without creating sessions or changing activity and expiry', async () => {
+    const { claims, cookies } = await registerAndLogin();
+    const beforeLogout = await sessions.findById(claims.sid).orFail().lean().exec();
+    const responses = await Promise.all(Array.from({ length: 4 }, () =>
+      request(app.getHttpServer()).post('/api/auth/logout')
+        .set('Cookie', cookies.cookieHeader),
+    ));
+    for (const response of responses) assertLogoutResponse(response);
+    const afterLogout = await sessions.findById(claims.sid).orFail().lean().exec();
+    assert.ok(afterLogout.revokedAt instanceof Date);
+    assert.equal(afterLogout.lastActivityAt.getTime(), beforeLogout.lastActivityAt.getTime());
+    assert.equal(afterLogout.expiresAt.getTime(), beforeLogout.expiresAt.getTime());
+    assert.equal(await sessions.countDocuments(), 1);
+    assertInvalidSession(await request(app.getHttpServer()).get('/api/auth/me')
+      .set('Cookie', cookies.cookieHeader));
+  });
+
+  it('does not let an in-flight authenticated request revive or touch a logged-out session', async (context) => {
+    const { claims, cookies } = await registerAndLogin();
+    const beforeLogout = await sessions.findById(claims.sid).orFail().lean().exec();
+    const usersService = app.get(UsersService);
+    const originalLookup = usersService.findByIdForAuthentication.bind(usersService);
+    const entered = deferredSignal();
+    const release = deferredSignal();
+    const lookup = context.mock.method(usersService, 'findByIdForAuthentication', async (userId: string) => {
+      const user = await originalLookup(userId);
+      if (userId === claims.sub) {
+        entered.resolve();
+        await release.promise;
+      }
+      return user;
+    });
+    const pendingRead = request(app.getHttpServer()).get('/api/auth/me')
+      .set('Cookie', cookies.cookieHeader)
+      .timeout({ deadline: 15_000 }).then((response) => response);
+
+    try {
+      await Promise.race([
+        entered.promise,
+        pendingRead.then(() => { throw new Error('The authenticated read completed before the barrier'); }),
+      ]);
+      const response = await request(app.getHttpServer()).post('/api/auth/logout')
+        .set('Cookie', cookies.cookieHeader).timeout({ deadline: 15_000 });
+      assertLogoutResponse(response);
+      release.resolve();
+      assertInvalidSession(await pendingRead);
+      const revoked = await sessions.findById(claims.sid).orFail().lean().exec();
+      assert.ok(revoked.revokedAt instanceof Date);
+      assert.equal(revoked.lastActivityAt.getTime(), beforeLogout.lastActivityAt.getTime());
+      assert.equal(revoked.expiresAt.getTime(), beforeLogout.expiresAt.getTime());
+    } finally {
+      release.resolve();
+      await pendingRead.catch(() => undefined);
+      lookup.mock.restore();
+    }
+  });
+
+  it('reports database revocation failure without clearing cookies and allows a successful retry', async (context) => {
+    const { claims, cookies } = await registerAndLogin();
+    const beforeLogout = await sessions.findById(claims.sid).orFail().lean().exec();
+    const failedQuery = {
+      exec: async () => { throw new Error('Injected isolated revocation failure'); },
+    } as unknown as ReturnType<typeof sessions.updateMany>;
+    const update = context.mock.method(sessions, 'updateMany', () => failedQuery, { times: 1 });
+    try {
+      const response = await request(app.getHttpServer()).post('/api/auth/logout')
+        .set('Cookie', cookies.cookieHeader);
+      assert.equal(response.status, 500);
+      assert.equal(response.body.error, 'Internal Server Error');
+      assert.ok(response.body.message === 'An unexpected error occurred');
+      assertNoAuthCookies(response);
+      const unchanged = await sessions.findById(claims.sid).orFail().lean().exec();
+      assert.equal(unchanged.revokedAt, null);
+      assert.equal(unchanged.lastActivityAt.getTime(), beforeLogout.lastActivityAt.getTime());
+      assert.equal(unchanged.expiresAt.getTime(), beforeLogout.expiresAt.getTime());
+    } finally {
+      update.mock.restore();
+    }
+
+    await request(app.getHttpServer()).get('/api/auth/me')
+      .set('Cookie', cookies.cookieHeader).expect(200);
+    const retry = await request(app.getHttpServer()).post('/api/auth/logout')
+      .set('Cookie', cookies.cookieHeader);
+    assertLogoutResponse(retry);
+    assertInvalidSession(await request(app.getHttpServer()).get('/api/auth/me')
+      .set('Cookie', cookies.cookieHeader));
+  });
+
+  it('rejects cross-origin logout before either clearing cookies or revoking the session', async () => {
+    const { claims, cookies } = await registerAndLogin();
+    const beforeLogout = await sessions.findById(claims.sid).orFail().lean().exec();
+    const crossSite = await request(app.getHttpServer()).post('/api/auth/logout')
+      .set('Cookie', cookies.cookieHeader).set('Sec-Fetch-Site', 'cross-site');
+    assert.equal(crossSite.status, 403);
+    assertNoAuthCookies(crossSite);
+    const foreignOrigin = await request(app.getHttpServer()).post('/api/auth/logout')
+      .set('Cookie', cookies.cookieHeader).set('Origin', 'https://attacker.invalid');
+    assert.equal(foreignOrigin.status, 403);
+    assertNoAuthCookies(foreignOrigin);
+    const unchanged = await sessions.findById(claims.sid).orFail().lean().exec();
+    assert.equal(unchanged.revokedAt, null);
+    assert.equal(unchanged.lastActivityAt.getTime(), beforeLogout.lastActivityAt.getTime());
+    assert.equal(unchanged.expiresAt.getTime(), beforeLogout.expiresAt.getTime());
+    await request(app.getHttpServer()).get('/api/auth/me')
+      .set('Cookie', cookies.cookieHeader).expect(200);
   });
 });
