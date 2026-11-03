@@ -16,6 +16,7 @@ import request, { Response } from 'supertest';
 import { AuthModule } from '../src/auth/auth.module';
 import { AuthenticatedRequest, AuthGuard } from '../src/auth/auth.guard';
 import { AuthService } from '../src/auth/auth.service';
+import { PasswordService } from '../src/auth/password.service';
 import { AuthSession } from '../src/auth/schemas/auth-session.schema';
 import { AccountStatus } from '../src/common/enums/account-status.enum';
 import { UserRole } from '../src/common/enums/user-role.enum';
@@ -121,6 +122,26 @@ function assertInvalidSession(response: Response) {
   assertNoAuthCookies(response);
 }
 
+function assertCredentialFailure(response: Response) {
+  assert.equal(response.status, 401);
+  assert.ok(response.body.message === 'Invalid email or password');
+  assert.deepEqual(Object.keys(response.body).sort(), ['error', 'message', 'statusCode']);
+  assertNoAuthCookies(response);
+}
+
+function assertLockedLogin(response: Response) {
+  assert.equal(response.status, 401);
+  assert.ok(response.body.message === 'Account temporarily locked. Try again later.');
+  assert.deepEqual(Object.keys(response.body).sort(), ['error', 'message', 'statusCode']);
+  assertNoAuthCookies(response);
+}
+
+function deferredSignal() {
+  let resolveSignal!: () => void;
+  const promise = new Promise<void>((resolve) => { resolveSignal = resolve; });
+  return { promise, resolve: resolveSignal };
+}
+
 interface AccessClaims {
   sub: string;
   sid: string;
@@ -183,11 +204,31 @@ async function independentlyVerifyHash(password: string, encodedHash: string) {
   assert.ok(timingSafeEqual(derivedHash, expectedHash));
 }
 
-describe('ACC-01 registration and ACC-04 login', { concurrency: false }, () => {
+describe('ACC-01 registration, ACC-04 login, and ACC-05 lockout', { concurrency: false }, () => {
   let memoryMongo: MongoMemoryServer;
   let app: INestApplication;
   let users: Model<UserDocument>;
   let sessions: Model<AuthSession>;
+
+  async function readLoginState(email = 'traveler@example.com') {
+    return users.findOne({ email }).select('+failedLoginAttempts +lockedUntil').orFail().lean().exec();
+  }
+
+  async function seedLoginAttempts(failedLoginAttempts: number, lockedUntil: Date | null = null) {
+    await request(app.getHttpServer()).post('/api/auth/register').send(registration()).expect(201);
+    await users.updateOne({ email: 'traveler@example.com' }, {
+      $set: { failedLoginAttempts, lockedUntil },
+    }).exec();
+  }
+
+  async function databaseTime() {
+    const result = await users.aggregate<{ now: Date }>([
+      { $limit: 1 },
+      { $project: { _id: 0, now: '$$NOW' } },
+    ]).exec();
+    assert.ok(result[0]?.now instanceof Date);
+    return result[0].now;
+  }
 
   async function registerAndLogin(email = 'traveler@example.com') {
     const registered = await request(app.getHttpServer())
@@ -476,7 +517,7 @@ describe('ACC-01 registration and ACC-04 login', { concurrency: false }, () => {
       const verified = await auth.verifyCredentials({ email: `  ${email.toUpperCase()}  `, password: 'Travel123' });
       assert.equal(verified.role, role);
       assert.equal(verified.email, email);
-      assert.ok(typeof verified.passwordHash === 'string');
+      assert.ok(verified.passwordHash === undefined);
       const ordinaryQuery = await users.findOne({ email }).lean().exec();
       assert.ok(ordinaryQuery);
       for (const field of ['passwordHash', 'mustChangePassword', 'failedLoginAttempts', 'lockedUntil']) {
@@ -819,5 +860,260 @@ describe('ACC-01 registration and ACC-04 login', { concurrency: false }, () => {
     assert.ok(me.responses?.['401']);
     assert.equal(specification.body.paths?.['/api/auth/refresh'], undefined);
     assert.equal(specification.body.paths?.['/api/auth/logout'], undefined);
+  });
+
+  it('locks every role on its fifth consecutive failure across normalized email variants', async () => {
+    for (const role of Object.values(UserRole)) {
+      const email = `lock-${role.toLowerCase()}@example.com`;
+      await request(app.getHttpServer()).post('/api/auth/register')
+        .send(registration({ email })).expect(201);
+      await users.updateOne({ email }, { $set: { role } }).exec();
+
+      for (let attempt = 1; attempt <= 5; attempt++) {
+        const beforeThreshold = attempt === 5 ? await databaseTime() : undefined;
+        const response = await request(app.getHttpServer()).post('/api/auth/login').send({
+          email: attempt % 2 === 0 ? email : `  ${email.toUpperCase()}  `,
+          password: 'Wrong123',
+        });
+        if (attempt < 5) assertCredentialFailure(response);
+        else assertLockedLogin(response);
+
+        const state = await readLoginState(email);
+        assert.equal(state.failedLoginAttempts, attempt);
+        assert.equal(state.status, AccountStatus.ACTIVE);
+        assert.equal(state.role, role);
+        if (attempt < 5) {
+          assert.equal(state.lockedUntil, null);
+        } else {
+          // Bracket the write with the database clock; no sleep or narrow timing window.
+          const afterThreshold = await databaseTime();
+          assert.ok(beforeThreshold instanceof Date);
+          assert.ok(state.lockedUntil instanceof Date);
+          assert.ok(state.lockedUntil.getTime() >= beforeThreshold.getTime() + 15 * 60_000);
+          assert.ok(state.lockedUntil.getTime() <= afterThreshold.getTime() + 15 * 60_000);
+        }
+      }
+      assert.equal(await users.countDocuments({ email }), 1);
+    }
+    assert.equal(await sessions.countDocuments(), 0);
+  });
+
+  it('rejects wrong and correct passwords during an active lock without extending or resetting it', async () => {
+    const lockedUntil = new Date(Date.now() + 15 * 60_000);
+    await seedLoginAttempts(5, lockedUntil);
+    for (const password of ['Wrong123', 'Travel123', 'AnotherWrong123']) {
+      const response = await request(app.getHttpServer()).post('/api/auth/login')
+        .send({ email: 'traveler@example.com', password });
+      assertLockedLogin(response);
+      const state = await readLoginState();
+      assert.equal(state.failedLoginAttempts, 5);
+      assert.equal(state.lockedUntil?.getTime(), lockedUntil.getTime());
+      assert.equal(state.status, AccountStatus.ACTIVE);
+    }
+
+    await users.updateOne({ email: 'traveler@example.com' }, { $set: { mustChangePassword: true } }).exec();
+    const temporaryAccount = await request(app.getHttpServer()).post('/api/auth/login')
+      .send({ email: 'traveler@example.com', password: 'Travel123' });
+    assertLockedLogin(temporaryAccount);
+    const unchanged = await readLoginState();
+    assert.equal(unchanged.failedLoginAttempts, 5);
+    assert.equal(unchanged.lockedUntil?.getTime(), lockedUntil.getTime());
+    assert.equal(await sessions.countDocuments(), 0);
+  });
+
+  it('resets the failure streak only after a successful eligible login', async () => {
+    await seedLoginAttempts(4);
+    const success = await request(app.getHttpServer()).post('/api/auth/login')
+      .send({ email: 'traveler@example.com', password: 'Travel123' }).expect(200);
+    assertPublicAccount(success);
+    readAuthCookies(success);
+    const reset = await readLoginState();
+    assert.equal(reset.failedLoginAttempts, 0);
+    assert.equal(reset.lockedUntil, null);
+
+    const nextFailure = await request(app.getHttpServer()).post('/api/auth/login')
+      .send({ email: 'traveler@example.com', password: 'Wrong123' });
+    assertCredentialFailure(nextFailure);
+    const nextStreak = await readLoginState();
+    assert.equal(nextStreak.failedLoginAttempts, 1);
+    assert.equal(nextStreak.lockedUntil, null);
+    assert.equal(await sessions.countDocuments(), 1);
+  });
+
+  it('allows a correct password after lock expiry and clears the old streak', async () => {
+    await seedLoginAttempts(5, new Date('2000-01-01T00:00:00.000Z'));
+    const response = await request(app.getHttpServer()).post('/api/auth/login')
+      .send({ email: 'traveler@example.com', password: 'Travel123' }).expect(200);
+    assertPublicAccount(response);
+    readAuthCookies(response);
+    const state = await readLoginState();
+    assert.equal(state.failedLoginAttempts, 0);
+    assert.equal(state.lockedUntil, null);
+    assert.equal(state.status, AccountStatus.ACTIVE);
+    assert.equal(await sessions.countDocuments(), 1);
+  });
+
+  it('starts a new one-attempt streak after an expired lock and another wrong password', async () => {
+    await seedLoginAttempts(5, new Date('2000-01-01T00:00:00.000Z'));
+    const response = await request(app.getHttpServer()).post('/api/auth/login')
+      .send({ email: 'traveler@example.com', password: 'Wrong123' });
+    assertCredentialFailure(response);
+    const state = await readLoginState();
+    assert.equal(state.failedLoginAttempts, 1);
+    assert.equal(state.lockedUntil, null);
+    assert.equal(state.status, AccountStatus.ACTIVE);
+    assert.equal(await sessions.countDocuments(), 0);
+  });
+
+  it('does not lose concurrent failure increments and caps the streak at five', async () => {
+    await seedLoginAttempts(0);
+    const firstFailures = await Promise.all(Array.from({ length: 4 }, () =>
+      request(app.getHttpServer()).post('/api/auth/login')
+        .send({ email: 'traveler@example.com', password: 'Wrong123' }),
+    ));
+    for (const response of firstFailures) assertCredentialFailure(response);
+    const beforeThreshold = await readLoginState();
+    assert.equal(beforeThreshold.failedLoginAttempts, 4);
+    assert.equal(beforeThreshold.lockedUntil, null);
+
+    const remainingFailures = await Promise.all(Array.from({ length: 8 }, () =>
+      request(app.getHttpServer()).post('/api/auth/login')
+        .send({ email: 'traveler@example.com', password: 'Wrong123' }),
+    ));
+    for (const response of remainingFailures) assertLockedLogin(response);
+    const locked = await readLoginState();
+    assert.equal(locked.failedLoginAttempts, 5);
+    assert.ok(locked.lockedUntil instanceof Date);
+    assert.equal(locked.status, AccountStatus.ACTIVE);
+    assert.equal(await sessions.countDocuments(), 0);
+  });
+
+  it('keeps unknown emails generic and does not count rejected DTOs as credential failures', async () => {
+    await seedLoginAttempts(3);
+    const unknown = await request(app.getHttpServer()).post('/api/auth/login')
+      .send({ email: 'unknown@example.com', password: 'Wrong123' });
+    assertCredentialFailure(unknown);
+    const invalidInputs: Array<{ changes: Record<string, unknown>; field: string }> = [
+      { changes: { password: undefined }, field: 'password' },
+      { changes: { password: null }, field: 'password' },
+      { changes: { email: 'not-an-email' }, field: 'email' },
+      { changes: { role: UserRole.ADMIN }, field: 'role' },
+    ];
+    for (const { changes, field } of invalidInputs) {
+      const response = await request(app.getHttpServer()).post('/api/auth/login')
+        .send({ email: 'traveler@example.com', password: 'Wrong123', ...changes });
+      assertValidationError(response, field);
+      assertNoAuthCookies(response);
+    }
+    const unchanged = await readLoginState();
+    assert.equal(unchanged.failedLoginAttempts, 3);
+    assert.equal(unchanged.lockedUntil, null);
+    assert.equal(await users.countDocuments(), 1);
+    assert.equal(await sessions.countDocuments(), 0);
+  });
+
+  it('cannot reset or bypass a fifth failure that commits during correct-password verification', async (context) => {
+    await seedLoginAttempts(4);
+    const passwords = app.get(PasswordService);
+    const originalVerify = passwords.verify.bind(passwords);
+    const entered = deferredSignal();
+    const release = deferredSignal();
+    const verification = context.mock.method(passwords, 'verify', async (password: string, hash: string) => {
+      const valid = await originalVerify(password, hash);
+      if (password === 'Travel123' && valid) {
+        entered.resolve();
+        await release.promise;
+      }
+      return valid;
+    });
+    const pendingSuccess = request(app.getHttpServer()).post('/api/auth/login')
+      .send({ email: 'traveler@example.com', password: 'Travel123' })
+      .timeout({ deadline: 15_000 }).then((response) => response);
+
+    try {
+      await Promise.race([
+        entered.promise,
+        pendingSuccess.then(() => { throw new Error('Login completed before the verification barrier'); }),
+      ]);
+      const fifthFailure = await request(app.getHttpServer()).post('/api/auth/login')
+        .send({ email: 'traveler@example.com', password: 'Wrong123' });
+      assertLockedLogin(fifthFailure);
+      const locked = await readLoginState();
+      assert.equal(locked.failedLoginAttempts, 5);
+      assert.ok(locked.lockedUntil instanceof Date);
+
+      release.resolve();
+      assertLockedLogin(await pendingSuccess);
+      const unchanged = await readLoginState();
+      assert.equal(unchanged.failedLoginAttempts, 5);
+      assert.equal(unchanged.lockedUntil?.getTime(), locked.lockedUntil.getTime());
+      assert.equal(await sessions.countDocuments(), 0);
+    } finally {
+      release.resolve();
+      await pendingSuccess.catch(() => undefined);
+      verification.mock.restore();
+    }
+  });
+
+  it('counts a delayed failed verifier from the fresh streak after a successful reset', async (context) => {
+    await seedLoginAttempts(4);
+    const passwords = app.get(PasswordService);
+    const originalVerify = passwords.verify.bind(passwords);
+    const entered = deferredSignal();
+    const release = deferredSignal();
+    const verification = context.mock.method(passwords, 'verify', async (password: string, hash: string) => {
+      const valid = await originalVerify(password, hash);
+      if (password === 'Wrong123' && !valid) {
+        entered.resolve();
+        await release.promise;
+      }
+      return valid;
+    });
+    const pendingFailure = request(app.getHttpServer()).post('/api/auth/login')
+      .send({ email: 'traveler@example.com', password: 'Wrong123' })
+      .timeout({ deadline: 15_000 }).then((response) => response);
+
+    try {
+      await Promise.race([
+        entered.promise,
+        pendingFailure.then(() => { throw new Error('Login completed before the verification barrier'); }),
+      ]);
+      const success = await request(app.getHttpServer()).post('/api/auth/login')
+        .send({ email: 'traveler@example.com', password: 'Travel123' }).expect(200);
+      assertPublicAccount(success);
+      readAuthCookies(success);
+      const reset = await readLoginState();
+      assert.equal(reset.failedLoginAttempts, 0);
+      assert.equal(reset.lockedUntil, null);
+
+      release.resolve();
+      assertCredentialFailure(await pendingFailure);
+      const nextStreak = await readLoginState();
+      assert.equal(nextStreak.failedLoginAttempts, 1);
+      assert.equal(nextStreak.lockedUntil, null);
+      assert.equal(await sessions.countDocuments(), 1);
+    } finally {
+      release.resolve();
+      await pendingFailure.catch(() => undefined);
+      verification.mock.restore();
+    }
+  });
+
+  it('keeps existing sessions valid when failed logins temporarily lock the account', async () => {
+    const { response: login, cookies } = await registerAndLogin();
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      const response = await request(app.getHttpServer()).post('/api/auth/login')
+        .send({ email: 'traveler@example.com', password: 'Wrong123' });
+      if (attempt < 5) assertCredentialFailure(response);
+      else assertLockedLogin(response);
+    }
+    const locked = await readLoginState();
+    assert.equal(locked.failedLoginAttempts, 5);
+    assert.equal(locked.status, AccountStatus.ACTIVE);
+    const currentUser = await request(app.getHttpServer()).get('/api/auth/me')
+      .set('Cookie', cookies.cookieHeader).expect(200);
+    assertPublicAccount(currentUser);
+    assert.equal(currentUser.body.userId, login.body.userId);
+    assert.equal(await sessions.countDocuments(), 1);
   });
 });

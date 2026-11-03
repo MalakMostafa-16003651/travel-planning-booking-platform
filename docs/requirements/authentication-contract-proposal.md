@@ -16,7 +16,7 @@ architecture and delivery requirements. The team's naming and Git rules apply.
 | --- | --- |
 | ACC-01 | Registration requires name, unique valid email, terms/privacy consent, and a password with at least eight characters, one letter, and one digit. |
 | ACC-04 | All account roles log in with email and password. Invalid credentials receive a generic error; suspended accounts receive a suspension message. |
-| ACC-05 | Five consecutive failed logins lock the account for 15 minutes. Successful login resets the counter. |
+| ACC-05 | Five consecutive failed logins lock the account for 15 minutes and show a lockout message. Successful login resets the counter. |
 | ACC-06 | Logout clears authentication cookies and revokes the refresh token on the server. Thirty minutes without an authenticated request expires the session. |
 | ACC-07a | An administrator can set a temporary password for a user or moderator. The account must change it at the next login. |
 | ACC-08 | Password changes require the current password and a compliant new password. |
@@ -124,7 +124,7 @@ Remaining decisions for the respective steps: refresh endpoint/rotation/replay
 handling and whether background refresh counts as activity; current-session versus
 all-session logout; coordinated revocation after account/password changes; and
 any future cross-origin deployment. Until refresh exists, an expired access token
-requires another login. ACC-05/ACC-06 and full ACC-19 are not claimed complete.
+requires another login. ACC-06 and full ACC-19 are not claimed complete.
 No new environment-variable name is introduced; JWT_SECRET was already agreed.
 
 ## Cross-module details deferred to their respective features
