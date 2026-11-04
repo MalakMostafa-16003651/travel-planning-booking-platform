@@ -27,6 +27,10 @@ The [Authentication and Users shared contract](docs/requirements/authentication-
 records the accepted User fields and naming, along with details deferred to later
 features.
 
+The [flight booking contract proposal](docs/requirements/flight-booking-contract-proposal.md)
+records what flight booking and seat holds need from Flights and Payments, along with
+the decisions still open for the team.
+
 ## Student workflow record
 
 The [Person 1 workflow record](docs/work-logs/16003651.md) contains the agreed rules,
