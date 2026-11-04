@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import { AuthModule } from './auth/auth.module';
 import { validateEnvironment } from './config/validate-environment';
 import { FlightBookingsModule } from './flight-bookings/flight-bookings.module';
+import { ItinerariesModule } from './itineraries/itineraries.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { FlightBookingsModule } from './flight-bookings/flight-bookings.module';
     }),
     AuthModule,
     FlightBookingsModule,
+    ItinerariesModule,
   ],
 })
 export class AppModule {}
