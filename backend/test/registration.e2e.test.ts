@@ -24,8 +24,10 @@ import { AuthSession } from '../src/auth/schemas/auth-session.schema';
 import { AccountStatus } from '../src/common/enums/account-status.enum';
 import { UserRole } from '../src/common/enums/user-role.enum';
 import { configureApplication } from '../src/configure-application';
+import { CurrenciesService } from '../src/currencies/currencies.service';
 import { User, UserDocument } from '../src/users/schemas/user.schema';
 import { UsersService } from '../src/users/users.service';
+import { AdminSeedService } from '../src/users/admin-seed.service';
 
 function mongoBinaryOptions() {
   const fallback = {
@@ -388,6 +390,11 @@ describe('ACC-01 registration and ACC-04/05/06 authentication', { concurrency: f
       .send({ temporaryPassword });
   }
 
+  function patchProfile(cookie: string, changes: Record<string, unknown>) {
+    return request(app.getHttpServer()).patch('/api/users/me')
+      .set('Sec-Fetch-Site', 'same-origin').set('Cookie', cookie).send(changes);
+  }
+
   function signedPasswordChangeToken(token: string, changes: Record<string, unknown> = {}, options: JwtSignOptions = {}) {
     const claims = app.get(JwtService).decode<Record<string, unknown>>(token);
     assert.ok(claims && typeof claims === 'object');
@@ -414,6 +421,22 @@ describe('ACC-01 registration and ACC-04/05/06 authentication', { concurrency: f
       return valid;
     });
     return { entered: entered.promise, release: release.resolve, restore: () => verification.mock.restore() };
+  }
+
+  function pauseProfileUpdate(context: TestContext, targetId: string) {
+    const service = app.get(UsersService);
+    const original = service.updateOwnProfile.bind(service);
+    const entered = deferredSignal();
+    const release = deferredSignal();
+    const update = context.mock.method(service, 'updateOwnProfile', async (...args: Parameters<UsersService['updateOwnProfile']>) => {
+      if (args[0] === targetId) {
+        assert.equal(args[1], 0);
+        entered.resolve();
+        await release.promise;
+      }
+      return original(...args);
+    });
+    return { entered: entered.promise, release: release.resolve, restore: () => update.mock.restore() };
   }
 
   async function waitForBarrier(entered: Promise<void>, pending: Array<Promise<Response>>) {
@@ -458,6 +481,7 @@ describe('ACC-01 registration and ACC-04/05/06 authentication', { concurrency: f
   beforeEach(async () => {
     await sessions.deleteMany({}).exec();
     await users.deleteMany({}).exec();
+    await app.get(CurrenciesService).seedSupported();
   });
 
   after(async () => {
@@ -1042,6 +1066,16 @@ describe('ACC-01 registration and ACC-04/05/06 authentication', { concurrency: f
     assert.ok(logout.responses?.['204']);
     assert.ok(logout.responses?.['403']);
     assert.ok(logout.responses?.['500']);
+    for (const operation of [login, me, logout]) {
+      for (const [code, response] of Object.entries(operation.responses) as Array<[string, any]>) {
+        if (Number(code) < 400) continue;
+        const example = response.content?.['application/json']?.example;
+        assert.equal(example?.statusCode, Number(code));
+        if (code === '401') assert.equal(example.error, 'Unauthorized');
+        if (code === '403') assert.equal(example.error, 'Forbidden');
+        if (code === '500') assert.equal(example.error, 'Internal Server Error');
+      }
+    }
   });
 
   it('locks every role on its fifth consecutive failure across normalized email variants', async () => {
@@ -2197,5 +2231,462 @@ describe('ACC-01 registration and ACC-04/05/06 authentication', { concurrency: f
     }
     await request(app.getHttpServer()).get('/api/auth/me').set('Cookie', admin.cookies.cookieHeader).expect(200);
     await resetPassword(admin.cookies.cookieHeader, targetId).expect(204);
+  });
+
+  it('allows an ACC-18 seeded administrator to log in and use the reusable ADMIN guard', async () => {
+    const setup = new AdminSeedService(app.get(getModelToken(User.name)), app.get(PasswordService));
+    await setup.seed({ name: 'Seeded Admin', email: ' SEEDED@example.com ', password: 'SeededAdmin123', termsAccepted: true });
+    const login = await request(app.getHttpServer()).post('/api/auth/login')
+      .send({ email: 'seeded@example.com', password: 'SeededAdmin123' }).expect(200);
+    assertPublicAccount(login);
+    assert.equal(login.body.role, UserRole.ADMIN);
+    await request(app.getHttpServer()).get('/api/test-feature/admin-only')
+      .set('Cookie', readAuthCookies(login).cookieHeader).expect(200);
+  });
+
+  it('returns only the current profile fields for every agreed role without credential or session internals', async () => {
+    for (const role of Object.values(UserRole)) {
+      const email = `profile-${role.toLowerCase()}@example.com`;
+      const userId = await createRoleAccount(email, role);
+      await users.updateOne({ _id: userId }, {
+        $set: { phoneNumber: '+201000000001', preferredCurrency: 'EGP' },
+      }).exec();
+      const login = await request(app.getHttpServer()).post('/api/auth/login')
+        .send({ email, password: 'Travel123' }).expect(200);
+      const cookies = readAuthCookies(login);
+      const profile = await request(app.getHttpServer()).get('/api/users/me')
+        .set('Cookie', cookies.cookieHeader).expect(200);
+      assert.equal(profile.headers['cache-control'], 'no-store');
+      assert.deepEqual(Object.keys(profile.body).sort(), [
+        'createdAt', 'email', 'name', 'phoneNumber', 'preferredCurrency', 'role', 'status', 'updatedAt', 'userId',
+      ].sort());
+      assert.equal(profile.body.userId, userId);
+      assert.equal(profile.body.role, role);
+      assert.equal(profile.body.status, AccountStatus.ACTIVE);
+      assert.ok(profile.body.phoneNumber === '+201000000001');
+      assert.equal(profile.body.preferredCurrency, 'EGP');
+      const stored = await credentialState(userId);
+      const serialized = JSON.stringify(profile.body);
+      assert.ok(!serialized.includes(stored.passwordHash));
+      assert.ok(!serialized.includes(cookies.accessToken));
+      assert.ok(!serialized.includes(cookies.refreshToken));
+      for (const field of ['password', 'passwordHash', 'credentialVersion', 'mustChangePassword', 'failedLoginAttempts', 'lockedUntil', 'termsAcceptedAt', 'refreshTokenHash', 'authenticatedCredentialVersion']) {
+        assert.equal(Object.hasOwn(profile.body, field), false);
+      }
+      assertNoAuthCookies(profile);
+    }
+  });
+
+  it('omits absent profile preferences, accepts legacy epochs, and preserves login/current-identity JSON', async () => {
+    const fixture = await registerAndLogin();
+    const userId = fixture.registered.body.userId as string;
+    await users.updateOne({ _id: userId }, { $unset: { credentialVersion: 1 } }).exec();
+    await sessions.updateOne({ _id: fixture.claims.sid }, { $unset: { credentialVersion: 1 } }).exec();
+    const absent = await request(app.getHttpServer()).get('/api/users/me')
+      .set('Cookie', fixture.cookies.cookieHeader).expect(200);
+    assertPublicAccount(absent);
+    assert.equal(Object.hasOwn(absent.body, 'phoneNumber'), false);
+    assert.equal(Object.hasOwn(absent.body, 'preferredCurrency'), false);
+
+    await users.updateOne({ _id: userId }, {
+      $set: { phoneNumber: '+201000000002', preferredCurrency: 'USD' },
+    }).exec();
+    const present = await request(app.getHttpServer()).get('/api/users/me')
+      .set('Cookie', fixture.cookies.cookieHeader).expect(200);
+    assert.ok(present.body.phoneNumber === '+201000000002');
+    assert.equal(present.body.preferredCurrency, 'USD');
+    const me = await request(app.getHttpServer()).get('/api/auth/me')
+      .set('Cookie', fixture.cookies.cookieHeader).expect(200);
+    assertPublicAccount(me);
+    const login = await request(app.getHttpServer()).post('/api/auth/login')
+      .send({ email: 'traveler@example.com', password: 'Travel123' }).expect(200);
+    assertPublicAccount(login);
+    for (const response of [me, login]) {
+      assert.equal(Object.hasOwn(response.body, 'phoneNumber'), false);
+      assert.equal(Object.hasOwn(response.body, 'preferredCurrency'), false);
+    }
+  });
+
+  it('pins profile ownership to the session despite query identifiers and documents profile operations', async () => {
+    const own = await registerAndLogin('profile-owner@example.com');
+    const otherId = await createRoleAccount('other-profile@example.com');
+    await users.updateOne({ _id: otherId }, {
+      $set: { phoneNumber: '+201000000003', preferredCurrency: 'EUR' },
+    }).exec();
+    const response = await request(app.getHttpServer()).get('/api/users/me')
+      .query({ userId: otherId, role: UserRole.ADMIN, credentialVersion: 999 })
+      .set('Cookie', own.cookies.cookieHeader).expect(200);
+    assert.equal(response.body.userId, own.registered.body.userId);
+    assert.equal(response.body.role, UserRole.USER);
+    const serialized = JSON.stringify(response.body);
+    assert.ok(!serialized.includes(otherId));
+    assert.ok(!serialized.includes('other-profile@example.com'));
+    assert.ok(!serialized.includes('+201000000003'));
+    assert.equal(Object.hasOwn(response.body, 'preferredCurrency'), false);
+
+    const specification = await request(app.getHttpServer()).get('/api/docs-json').expect(200);
+    const operations = specification.body.paths['/api/users/me'];
+    assert.ok(operations?.get?.responses?.['200']);
+    assert.ok(operations?.get?.responses?.['401']);
+    assert.ok(operations.get.security.some((entry: Record<string, unknown>) => Object.hasOwn(entry, 'accessToken')));
+    assert.ok(operations.patch?.responses?.['200']);
+    assert.ok(operations.patch?.responses?.['400']);
+    assert.ok(operations.patch?.responses?.['401']);
+    const schema = specification.body.components.schemas.UserProfileDto;
+    assert.equal(schema.properties.phoneNumber.type, 'string');
+    assert.equal(schema.properties.preferredCurrency.type, 'string');
+    assert.ok(!schema.required?.includes('phoneNumber'));
+    assert.ok(!schema.required?.includes('preferredCurrency'));
+    assert.equal(Object.hasOwn(schema.properties, 'credentialVersion'), false);
+    assert.equal(Object.hasOwn(schema.properties, 'passwordHash'), false);
+  });
+
+  it('guards profile reads against missing, restricted, suspended and deactivated credentials', async () => {
+    assertInvalidSession(await request(app.getHttpServer()).get('/api/users/me'));
+    assertInvalidSession(await request(app.getHttpServer()).get('/api/users/me')
+      .set('Cookie', '__Host-accessToken=malformed'));
+    const restricted = await restrictedFixture('restricted-profile@example.com');
+    assertInvalidSession(await request(app.getHttpServer()).get('/api/users/me').set('Cookie', restricted.cookie.pair));
+    assertInvalidSession(await request(app.getHttpServer()).get('/api/users/me')
+      .set('Cookie', `__Host-accessToken=${restricted.cookie.value}`));
+    for (const status of [AccountStatus.SUSPENDED, AccountStatus.DEACTIVATED]) {
+      const fixture = await registerAndLogin(`inactive-profile-${status.toLowerCase()}@example.com`);
+      await users.updateOne({ _id: fixture.registered.body.userId }, { $set: { status } }).exec();
+      assertInvalidSession(await request(app.getHttpServer()).get('/api/users/me')
+        .set('Cookie', fixture.cookies.cookieHeader));
+    }
+  });
+
+  it('rejects a profile read when reset and password completion change the epoch after its guard', async (context) => {
+    const admin = await adminFixture();
+    const fixture = await registerAndLogin('racing-profile@example.com');
+    const userId = fixture.registered.body.userId as string;
+    const service = app.get(UsersService);
+    const original = service.findOwnProfile.bind(service);
+    const entered = deferredSignal();
+    const release = deferredSignal();
+    const lookup = context.mock.method(service, 'findOwnProfile', async (id: string, version: number) => {
+      if (id === userId) {
+        assert.equal(version, 0);
+        entered.resolve();
+        await release.promise;
+      }
+      return original(id, version);
+    });
+    const pending = request(app.getHttpServer()).get('/api/users/me')
+      .set('Cookie', fixture.cookies.cookieHeader).timeout({ deadline: 20_000 }).then((response) => response);
+    try {
+      await waitForBarrier(entered.promise, [pending]);
+      await resetPassword(admin.cookies.cookieHeader, userId).expect(204);
+      const temporaryLogin = await request(app.getHttpServer()).post('/api/auth/login')
+        .send({ email: 'racing-profile@example.com', password: 'Temporary456' }).expect(200);
+      const limited = readPasswordChangeCookie(temporaryLogin);
+      assertLogoutResponse(await changePassword(limited.pair, 'Temporary456', 'Completed789'));
+      const changed = await credentialState(userId);
+      assert.equal(changed.credentialVersion, 2);
+      assert.equal(changed.mustChangePassword, false);
+      assert.equal(changed.status, AccountStatus.ACTIVE);
+      release.resolve();
+      assertInvalidSession(await pending);
+    } finally {
+      release.resolve();
+      await pending.catch(() => undefined);
+      lookup.mock.restore();
+    }
+  });
+
+  it('updates the profile for every role with normalized fields and unchanged credentials, status and sessions', async () => {
+    for (const role of Object.values(UserRole)) {
+      const email = `updated-profile-${role.toLowerCase()}@example.com`;
+      const userId = await createRoleAccount(email, role);
+      const login = await request(app.getHttpServer()).post('/api/auth/login')
+        .send({ email, password: 'Travel123' }).expect(200);
+      const cookies = readAuthCookies(login);
+      const before = await credentialState(userId);
+      const response = await patchProfile(cookies.cookieHeader, {
+        name: '  Updated Profile  ', phoneNumber: '  +201000000011  ', preferredCurrency: ' egp ',
+      }).expect(200);
+      assert.equal(response.headers['cache-control'], 'no-store');
+      assertNoAuthCookies(response);
+      assert.deepEqual(Object.keys(response.body).sort(), [
+        'createdAt', 'email', 'name', 'phoneNumber', 'preferredCurrency', 'role', 'status', 'updatedAt', 'userId',
+      ].sort());
+      assert.equal(response.body.name, 'Updated Profile');
+      assert.ok(response.body.phoneNumber === '+201000000011');
+      assert.equal(response.body.preferredCurrency, 'EGP');
+      assert.equal(response.body.userId, userId);
+      assert.equal(response.body.role, role);
+      const after = await credentialState(userId);
+      assert.equal(after.role, before.role);
+      assert.equal(after.status, before.status);
+      assert.equal(after.email, before.email);
+      assert.equal(after.credentialVersion, before.credentialVersion);
+      assert.equal(after.mustChangePassword, before.mustChangePassword);
+      assert.equal(after.failedLoginAttempts, before.failedLoginAttempts);
+      assert.equal(after.lockedUntil, before.lockedUntil);
+      assert.ok(after.passwordHash === before.passwordHash);
+      assert.equal(after.createdAt.getTime(), before.createdAt.getTime());
+      assert.ok(after.updatedAt.getTime() >= before.updatedAt.getTime());
+      assert.ok(!JSON.stringify(response.body).includes(before.passwordHash));
+      const me = await request(app.getHttpServer()).get('/api/auth/me')
+        .set('Cookie', cookies.cookieHeader).expect(200);
+      assertPublicAccount(me);
+      assert.equal(me.body.name, 'Updated Profile');
+    }
+  });
+
+  it('changes only supplied profile fields and retains existing optional preferences on later patches', async () => {
+    const fixture = await registerAndLogin();
+    const named = await patchProfile(fixture.cookies.cookieHeader, { name: '  Profile Name  ' }).expect(200);
+    assert.equal(named.body.name, 'Profile Name');
+    assert.equal(Object.hasOwn(named.body, 'phoneNumber'), false);
+    assert.equal(Object.hasOwn(named.body, 'preferredCurrency'), false);
+    const phone = await patchProfile(fixture.cookies.cookieHeader, { phoneNumber: '+201000000012' }).expect(200);
+    assert.equal(phone.body.name, 'Profile Name');
+    assert.ok(phone.body.phoneNumber === '+201000000012');
+    const currency = await patchProfile(fixture.cookies.cookieHeader, { preferredCurrency: ' eur ' }).expect(200);
+    assert.equal(currency.body.name, 'Profile Name');
+    assert.ok(currency.body.phoneNumber === '+201000000012');
+    assert.equal(currency.body.preferredCurrency, 'EUR');
+    for (const response of [named, phone, currency]) assertNoAuthCookies(response);
+  });
+
+  it('accepts profile phone boundaries and rejects malformed international numbers without partial writes', async () => {
+    const fixture = await registerAndLogin();
+    for (const phoneNumber of ['+12345678', '+123456789012345']) {
+      const valid = await patchProfile(fixture.cookies.cookieHeader, { phoneNumber }).expect(200);
+      assert.ok(valid.body.phoneNumber === phoneNumber);
+    }
+    const before = await credentialState(fixture.registered.body.userId);
+    for (const phoneNumber of ['12345678', '+1234567', '+1234567890123456', '+0123456789', '+12 345678', '+12-345678', '+abcdefgh', '+١٢٣٤٥٦٧٨']) {
+      const rejected = await patchProfile(fixture.cookies.cookieHeader, { name: 'Must not persist', phoneNumber });
+      assertValidationError(rejected, 'phoneNumber');
+      assertNoAuthCookies(rejected);
+      const after = await credentialState(fixture.registered.body.userId);
+      assert.equal(after.name, before.name);
+      assert.ok(after.phoneNumber === before.phoneNumber);
+    }
+  });
+
+  it('rejects null, empty and wrong-type profile fields atomically instead of clearing existing data', async () => {
+    const fixture = await registerAndLogin();
+    await patchProfile(fixture.cookies.cookieHeader, {
+      name: 'Original Profile', phoneNumber: '+201000000013', preferredCurrency: 'EGP',
+    }).expect(200);
+    const before = await credentialState(fixture.registered.body.userId);
+    const invalid: Array<[string, unknown]> = [
+      ['name', null], ['name', ''], ['name', '   '], ['name', 123], ['name', {}],
+      ['phoneNumber', null], ['phoneNumber', ''], ['phoneNumber', '   '], ['phoneNumber', 123], ['phoneNumber', []],
+      ['preferredCurrency', null], ['preferredCurrency', ''], ['preferredCurrency', '   '], ['preferredCurrency', 123], ['preferredCurrency', {}],
+    ];
+    for (const [field, value] of invalid) {
+      const response = await patchProfile(fixture.cookies.cookieHeader, {
+        name: 'Must not persist', phoneNumber: '+201000000099', preferredCurrency: 'USD', [field]: value,
+      });
+      assertValidationError(response, field);
+      assertNoAuthCookies(response);
+      const after = await credentialState(fixture.registered.body.userId);
+      assert.equal(after.name, before.name);
+      assert.ok(after.phoneNumber === before.phoneNumber);
+      assert.equal(after.preferredCurrency, before.preferredCurrency);
+      assert.equal(after.credentialVersion, before.credentialVersion);
+    }
+  });
+
+  it('normalizes every seeded profile currency and rejects malformed or unsupported codes before writes', async () => {
+    const fixture = await registerAndLogin();
+    for (const code of ['AED', 'EGP', 'EUR', 'GBP', 'JPY', 'SAR', 'USD']) {
+      const response = await patchProfile(fixture.cookies.cookieHeader, { preferredCurrency: ` ${code.toLowerCase()} ` }).expect(200);
+      assert.equal(response.body.preferredCurrency, code);
+    }
+    const before = await credentialState(fixture.registered.body.userId);
+    for (const code of ['US', 'USDD', '123', 'U$D', '€UR', 'ZZZ']) {
+      const response = await patchProfile(fixture.cookies.cookieHeader, { name: 'Must not persist', preferredCurrency: code });
+      assert.equal(response.status, 400);
+      assert.ok(Array.isArray(response.body.errors?.preferredCurrency) && response.body.errors.preferredCurrency.length > 0);
+      assertNoAuthCookies(response);
+      const after = await credentialState(fixture.registered.body.userId);
+      assert.equal(after.name, before.name);
+      assert.equal(after.preferredCurrency, before.preferredCurrency);
+    }
+  });
+
+  it('rejects profile identity, privilege and credential fields without applying otherwise valid edits', async () => {
+    const fixture = await registerAndLogin();
+    const before = await credentialState(fixture.registered.body.userId);
+    const fields = {
+      userId: new Types.ObjectId().toHexString(), _id: new Types.ObjectId().toHexString(),
+      email: 'different@example.com', role: UserRole.ADMIN, status: AccountStatus.SUSPENDED,
+      password: 'Unaccepted123', passwordHash: 'client-controlled-hash', credentialVersion: 99,
+      mustChangePassword: true, failedLoginAttempts: 0, lockedUntil: null, createdAt: new Date().toISOString(),
+    };
+    for (const [field, value] of Object.entries(fields)) {
+      const response = await patchProfile(fixture.cookies.cookieHeader, { name: 'Must not persist', [field]: value });
+      assertValidationError(response, field);
+      assertNoAuthCookies(response);
+    }
+    const after = await credentialState(fixture.registered.body.userId);
+    assert.equal(after.name, before.name);
+    assert.equal(after.email, before.email);
+    assert.equal(after.role, before.role);
+    assert.equal(after.status, before.status);
+    assert.equal(after.credentialVersion, before.credentialVersion);
+    assert.equal(after.mustChangePassword, before.mustChangePassword);
+    assert.ok(after.passwordHash === before.passwordHash);
+  });
+
+  it('rejects an empty profile patch and ignores query IDs when applying an authorized own-profile update', async () => {
+    const own = await registerAndLogin('patch-profile-owner@example.com');
+    const otherId = await createRoleAccount('other-patch-profile@example.com');
+    const beforeOther = await credentialState(otherId);
+    const empty = await patchProfile(own.cookies.cookieHeader, {});
+    assert.equal(empty.status, 400);
+    assert.ok(Array.isArray(empty.body.errors?.profile) && empty.body.errors.profile.length > 0);
+    assertNoAuthCookies(empty);
+    const response = await request(app.getHttpServer()).patch('/api/users/me')
+      .query({ userId: otherId }).set('Cookie', own.cookies.cookieHeader).send({ name: 'Own Profile Updated' }).expect(200);
+    assert.equal(response.body.userId, own.registered.body.userId);
+    assert.equal(response.body.name, 'Own Profile Updated');
+    const afterOther = await credentialState(otherId);
+    assert.equal(afterOther.name, beforeOther.name);
+    assert.equal(afterOther.credentialVersion, beforeOther.credentialVersion);
+    assert.ok(afterOther.passwordHash === beforeOther.passwordHash);
+  });
+
+  it('guards profile patches against anonymous, restricted, inactive and cross-origin requests', async () => {
+    assertInvalidSession(await patchProfile('', { name: 'Rejected Profile' }));
+    const restricted = await restrictedFixture('restricted-patch-profile@example.com');
+    assertInvalidSession(await patchProfile(restricted.cookie.pair, { name: 'Rejected Profile' }));
+    for (const status of [AccountStatus.SUSPENDED, AccountStatus.DEACTIVATED]) {
+      const fixture = await registerAndLogin(`blocked-profile-${status.toLowerCase()}@example.com`);
+      await users.updateOne({ _id: fixture.registered.body.userId }, { $set: { status } }).exec();
+      assertInvalidSession(await patchProfile(fixture.cookies.cookieHeader, { name: 'Rejected Profile' }));
+      assert.equal((await credentialState(fixture.registered.body.userId)).name, 'Example Traveler');
+    }
+    const fixture = await registerAndLogin('csrf-patch-profile@example.com');
+    const crossSite = await patchProfile(fixture.cookies.cookieHeader, { name: 'Rejected Profile' }).set('Sec-Fetch-Site', 'cross-site');
+    assert.equal(crossSite.status, 403);
+    assertNoAuthCookies(crossSite);
+    const foreign = await request(app.getHttpServer()).patch('/api/users/me')
+      .set('Cookie', fixture.cookies.cookieHeader).set('Origin', 'https://attacker.invalid').send({ name: 'Rejected Profile' });
+    assert.equal(foreign.status, 403);
+    assertNoAuthCookies(foreign);
+    assert.equal((await credentialState(fixture.registered.body.userId)).name, 'Example Traveler');
+  });
+
+  it('preserves concurrent disjoint profile edits instead of replacing unrelated preferences', async () => {
+    const fixture = await registerAndLogin();
+    const before = await credentialState(fixture.registered.body.userId);
+    const responses = await Promise.all([
+      patchProfile(fixture.cookies.cookieHeader, { name: 'Concurrent Profile' }),
+      patchProfile(fixture.cookies.cookieHeader, { phoneNumber: '+201000000014' }),
+      patchProfile(fixture.cookies.cookieHeader, { preferredCurrency: 'JPY' }),
+    ]);
+    for (const response of responses) {
+      assert.equal(response.status, 200);
+      assertNoAuthCookies(response);
+    }
+    const after = await credentialState(fixture.registered.body.userId);
+    assert.equal(after.name, 'Concurrent Profile');
+    assert.ok(after.phoneNumber === '+201000000014');
+    assert.equal(after.preferredCurrency, 'JPY');
+    assert.equal(after.credentialVersion, before.credentialVersion);
+    assert.ok(after.passwordHash === before.passwordHash);
+  });
+
+  it('rejects an old profile patch after reset and password completion change its captured epoch', async (context) => {
+    const admin = await adminFixture();
+    const fixture = await registerAndLogin('reset-patch-profile@example.com');
+    const userId = fixture.registered.body.userId as string;
+    const before = await credentialState(userId);
+    const barrier = pauseProfileUpdate(context, userId);
+    const pending = patchProfile(fixture.cookies.cookieHeader, { name: 'Must not persist' })
+      .timeout({ deadline: 20_000 }).then((response) => response);
+    try {
+      await waitForBarrier(barrier.entered, [pending]);
+      await resetPassword(admin.cookies.cookieHeader, userId).expect(204);
+      const login = await request(app.getHttpServer()).post('/api/auth/login')
+        .send({ email: 'reset-patch-profile@example.com', password: 'Temporary456' }).expect(200);
+      const limited = readPasswordChangeCookie(login);
+      assertLogoutResponse(await changePassword(limited.pair, 'Temporary456', 'FinalProfile789'));
+      barrier.release();
+      assertInvalidSession(await pending);
+      const after = await credentialState(userId);
+      assert.equal(after.name, before.name);
+      assert.equal(after.credentialVersion, 2);
+      assert.equal(after.mustChangePassword, false);
+      assert.equal(after.status, AccountStatus.ACTIVE);
+    } finally {
+      barrier.release();
+      await pending.catch(() => undefined);
+      barrier.restore();
+    }
+  });
+
+  it('rejects a profile patch if status or mandatory-change eligibility changes after its guard', async (context) => {
+    for (const [index, state] of [
+      { status: AccountStatus.SUSPENDED }, { status: AccountStatus.DEACTIVATED }, { mustChangePassword: true },
+    ].entries()) {
+      const fixture = await registerAndLogin(`state-patch-profile-${index}@example.com`);
+      const userId = fixture.registered.body.userId as string;
+      const barrier = pauseProfileUpdate(context, userId);
+      const pending = patchProfile(fixture.cookies.cookieHeader, { name: 'Must not persist' })
+        .timeout({ deadline: 20_000 }).then((response) => response);
+      try {
+        await waitForBarrier(barrier.entered, [pending]);
+        await users.updateOne({ _id: userId }, { $set: state }).exec();
+        barrier.release();
+        assertInvalidSession(await pending);
+        const after = await credentialState(userId);
+        assert.equal(after.name, 'Example Traveler');
+        assert.equal(after.credentialVersion, 0);
+      } finally {
+        barrier.release();
+        await pending.catch(() => undefined);
+        barrier.restore();
+      }
+    }
+  });
+
+  it('uses the public profile currency catalog as database membership and seeds it idempotently without deleting extra rows', async () => {
+    const expectedCodes = ['AED', 'EGP', 'EUR', 'GBP', 'JPY', 'SAR', 'USD'];
+    const service = app.get(CurrenciesService);
+    const currencies = app.get<Model<{ code: string; name: string; createdAt: Date; updatedAt: Date }>>(getModelToken('Currency'));
+    const response = await request(app.getHttpServer()).get('/api/currencies').expect(200);
+    assert.equal(response.headers['cache-control'], 'no-store');
+    assertNoAuthCookies(response);
+    assert.ok(Array.isArray(response.body));
+    assert.deepEqual(response.body.map((entry: { code: string }) => entry.code), expectedCodes);
+    for (const entry of response.body) {
+      assert.deepEqual(Object.keys(entry).sort(), ['code', 'name']);
+      assert.ok(typeof entry.name === 'string' && entry.name.trim().length > 0);
+    }
+    const before = await currencies.findOne({ code: 'EGP' }).orFail().lean().exec();
+    await currencies.create({ code: 'CHF', name: 'Swiss franc' });
+    try {
+      assert.equal(await service.seedSupported(), 7);
+      assert.equal(await service.seedSupported(), 7);
+      assert.equal(await currencies.countDocuments(), 8);
+      const after = await currencies.findOne({ code: 'EGP' }).orFail().lean().exec();
+      assert.equal(after._id.toString(), before._id.toString());
+      assert.equal(after.createdAt.getTime(), before.createdAt.getTime());
+      assert.equal(after.updatedAt.getTime(), before.updatedAt.getTime());
+      assert.equal((await currencies.findOne({ code: 'CHF' }).orFail().lean().exec()).name, 'Swiss franc');
+      const expanded = await request(app.getHttpServer()).get('/api/currencies').expect(200);
+      assert.deepEqual(expanded.body.map((entry: { code: string }) => entry.code), ['AED', 'CHF', 'EGP', 'EUR', 'GBP', 'JPY', 'SAR', 'USD']);
+      const fixture = await registerAndLogin();
+      const accepted = await patchProfile(fixture.cookies.cookieHeader, { preferredCurrency: ' chf ' }).expect(200);
+      assert.equal(accepted.body.preferredCurrency, 'CHF');
+      await currencies.deleteOne({ code: 'GBP' }).exec();
+      const missing = await patchProfile(fixture.cookies.cookieHeader, { name: 'Must not persist', preferredCurrency: 'GBP' });
+      assert.equal(missing.status, 400);
+      assert.ok(Array.isArray(missing.body.errors?.preferredCurrency));
+      const stored = await credentialState(fixture.registered.body.userId);
+      assert.equal(stored.name, 'Example Traveler');
+      assert.equal(stored.preferredCurrency, 'CHF');
+    } finally {
+      await currencies.deleteOne({ code: 'CHF' }).exec();
+      await service.seedSupported();
+    }
   });
 });

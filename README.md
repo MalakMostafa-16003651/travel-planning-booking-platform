@@ -20,6 +20,8 @@ ACC-07a adds administrator-set temporary passwords and restricted first-login
 password changes; ACC-08 adds current-password changes for every logged-in role.
 Password updates invalidate earlier sessions. Shared authentication and role
 guards are available to the team.
+ACC-09 adds own-profile viewing/updating and a shared currency catalog for
+profile preferences and itinerary budgets.
 Automatic token refresh remains outside these requirements; access tokens currently
 expire after 15 minutes and require logging in again.
 

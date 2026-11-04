@@ -1,6 +1,6 @@
 # Backend: registration and login
 
-This NestJS 12 backend implements registration, login/lockout, logout/inactivity, ACC-07a administrator-assisted password reset and ACC-08 password changes using TypeScript, Mongoose and MongoDB Atlas. Registration creates a normal account without logging it in. Login issues protected cookies; `/api/auth/me` returns the current public identity through a reusable authentication guard. Profile features and optional token renewal remain later work.
+This NestJS 12 backend implements registration, login/lockout, logout/inactivity, administrator-assisted reset, password changes and ACC-09 own-profile viewing/updating using TypeScript, Mongoose and MongoDB Atlas. It also provides the shared currency catalog for profiles and budgeting. Registration creates a normal account without logging it in; `/api/auth/me` returns the authenticated identity. Optional token renewal remains later work.
 
 ## Run locally
 
@@ -163,7 +163,58 @@ At the next eligible login, temporary credentials return only `{ "passwordChange
 
 The agreed private `credentialVersion` on User and AuthSession binds a session to the password state verified at login. Reset/change increments the User version in the same atomic write as the new salted hash, flag and counters. Old sessions become unusable even if their records remain until TTL cleanup; this is logical invalidation, not a claim of physical deletion or multi-document rollback. Authentication checks current account state/version before and after its session activity write. Missing stored versions in legacy documents mean zero. Password-change CAS matches the expected hash, version, flag and ACTIVE status, preventing stale concurrent requests from overwriting a newer reset/change.
 
-ACC-18 administrator seeding and ACC-14 account listing/search remain separate, unimplemented dependencies. The reset API accepts a known user ID; tests create administrator fixtures only inside their isolated database. Frontend navigation and real-browser verification remain Milestone 2/manual work. The design follows [OWASP current-password reauthentication guidance](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html) and [recovery/session invalidation guidance](https://cheatsheetseries.owasp.org/cheatsheets/Forgot_Password_Cheat_Sheet.html).
+ACC-18 setup is now provided by the administrator seed command; ACC-14 account listing/search remains a separate Arwa dependency. The reset API accepts a known user ID; tests create administrator fixtures only inside their isolated database. Frontend navigation and real-browser verification remain Milestone 2/manual work. The design follows [OWASP current-password reauthentication guidance](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html) and [recovery/session invalidation guidance](https://cheatsheetseries.owasp.org/cheatsheets/Forgot_Password_Cheat_Sheet.html).
+
+## Administrator setup (ACC-18)
+
+From an interactive terminal in `backend/`, run `npm.cmd run seed:admin`.
+It prompts for name, email, a hidden password, and explicit terms/privacy consent.
+The existing registration validation and salted password hashing are reused.
+No default credential is committed, printed, or passed in command-line arguments;
+no new environment variable is required. The existing root `.env` provides
+MONGODB_URI. Setup starts no HTTP server or booking maintenance.
+
+Only a new account is created as ADMIN/ACTIVE. Repeating setup for an existing
+administrator preserves every field, including password, suspension, timestamps
+and counters. An email belonging to a non-admin fails without promotion. Public
+registration still creates USER accounts only; no admin creation API is added.
+The command supports `--stdin-json` for controlled automation with the same
+name/email/password/termsAccepted fields; keep that input out of shell history,
+files and logs. Tests use it with `--no-env-file` and an isolated database.
+The interactive prompt was verified in a local PTY with a synthetic account:
+password characters were not echoed and setup completed successfully.
+
+Arwa (Person 2) can use the seeded administrator with existing login/ADMIN guards
+after this session PR is merged and setup is run. AI has not created a real
+administrator or run setup against shared Atlas.
+
+## Profiles and shared currencies (ACC-09)
+
+`GET /api/users/me` returns the current account's public fields plus `phoneNumber` and `preferredCurrency` when set. It never returns another user's profile based on a query/body ID. All four roles use a normal authenticated session; restricted password-change cookies are ineligible. Existing registration, login and `/api/auth/me` response shapes stay unchanged.
+
+`PATCH /api/users/me` accepts any nonempty subset of:
+
+```json
+{
+  "name": "Alex Traveler",
+  "phoneNumber": "+201012345678",
+  "preferredCurrency": "EGP"
+}
+```
+
+Name is trimmed and must remain nonempty. Phone input is trimmed and must have international syntax: + followed by 8–15 digits, starting nonzero; this checks format, not whether the number exists. Currency is trimmed/uppercased and must exist in the shared catalog. Omitted fields remain unchanged; null/blank values, unknown fields, email/role/status/ID changes and empty patches return 400. Every supplied field validates before any update. A successful request returns 200 with the profile, no authentication-cookie changes and `Cache-Control: no-store`. Both GET/PATCH enforce current eligibility and the server-captured credential version; concurrent patches change only their supplied fields.
+
+`GET /api/currencies` is public and returns a sorted array of `{ "code": "EGP", "name": "Egyptian pound" }` entries. The shared MongoDB collection is `currencies`: unique uppercase three-letter `code`, `name`, `_id` and timestamps. Initial codes **AED, EGP, EUR, GBP, JPY, SAR, USD** come from the PDF-linked [Countries.csv reference](https://docs.google.com/spreadsheets/d/1SlKUTRqlHuBJAMC-Z-QOZzSrzKpGHT_TgQUI5gVm-BA/edit?gid=2042930643); readable currency names are maintained in the seed constant. These values form the initial team catalog, while later additions need shared coordination.
+
+For explicit setup from `backend/`, using the existing ignored root `.env`:
+
+```powershell
+npm.cmd run seed:currencies
+```
+
+This builds and runs only a standalone catalog seed context. It starts no HTTP server, authentication flow or booking maintenance. Upserts insert missing required codes; reruns preserve existing names, IDs, timestamps and additional currencies. It does not delete data. Normal application startup never seeds. Output is a count or sanitized error without the URI/credentials; an isolated test process can pass `--no-env-file` with its own MONGODB_URI. No new application environment variable is needed. Run the reviewed setup against the shared team database once, rather than asking each module to seed a separate list.
+
+Kiki (Person 7) should import `CurrenciesModule` from `src/currencies/currencies.module` and inject its exported `CurrenciesService`. Use `listSupported(): Promise<Currency[]>` and `isSupported(code: string): Promise<boolean>`; the membership method expects the exact uppercase three-letter code. Use the persisted catalog or public endpoint, not a copied enum/list or the seed constant as runtime validation. The profile's preference stays optional. Budget conversion/FXRatesAPI and rate/error handling remain Kiki's module; booking/payment/refund currency remains Hicham's separate PAY-04 policy. Coordinate shared reference-data setup with Gamila (Person 3) when needed.
 
 ## Reusing authentication in other modules
 
