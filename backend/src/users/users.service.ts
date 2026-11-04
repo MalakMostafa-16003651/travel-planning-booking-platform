@@ -1,9 +1,11 @@
-import { ConflictException, Injectable, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, OnModuleInit, UnauthorizedException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { FAILED_LOGIN_LIMIT, LOGIN_LOCKOUT_MS } from '../auth/auth.constants';
 import { AccountStatus } from '../common/enums/account-status.enum';
 import { UserRole } from '../common/enums/user-role.enum';
+import { CurrenciesService } from '../currencies/currencies.service';
+import { UpdateUserDto } from './dto/update-user.dto';
 import { User, UserDocument } from './schemas/user.schema';
 
 interface CreateRegisteredUser {
@@ -44,7 +46,10 @@ function incrementableCredentialVersion() {
 
 @Injectable()
 export class UsersService implements OnModuleInit {
-  constructor(@InjectModel(User.name) private readonly users: Model<User>) {}
+  constructor(
+    @InjectModel(User.name) private readonly users: Model<User>,
+    private readonly currencies: CurrenciesService,
+  ) {}
 
   async onModuleInit(): Promise<void> {
     // Requests must not arrive before MongoDB enforces email uniqueness.
@@ -66,6 +71,50 @@ export class UsersService implements OnModuleInit {
     return this.users.findById(userId)
       .select('+passwordHash +mustChangePassword +credentialVersion')
       .exec();
+  }
+
+  async findOwnProfile(userId: string, credentialVersion: number): Promise<UserDocument | null> {
+    if (!Number.isSafeInteger(credentialVersion) || credentialVersion < 0) return null;
+    return this.users.findOne({
+      _id: userId,
+      status: AccountStatus.ACTIVE,
+      mustChangePassword: false,
+      $expr: { $eq: [{ $ifNull: ['$credentialVersion', 0] }, credentialVersion] },
+    }).exec();
+  }
+
+  async updateOwnProfile(userId: string, credentialVersion: number, input: UpdateUserDto): Promise<UserDocument> {
+    const changes: Partial<Pick<User, 'name' | 'phoneNumber' | 'preferredCurrency'>> = {};
+    if (input.name !== undefined) changes.name = input.name;
+    if (input.phoneNumber !== undefined) changes.phoneNumber = input.phoneNumber;
+    if (input.preferredCurrency !== undefined) {
+      if (!await this.currencies.isSupported(input.preferredCurrency)) {
+        throw new BadRequestException({
+          message: 'Preferred currency is not supported',
+          errors: { preferredCurrency: ['Choose a currency from GET /api/currencies'] },
+        });
+      }
+      changes.preferredCurrency = input.preferredCurrency;
+    }
+    if (Object.keys(changes).length === 0) {
+      throw new BadRequestException({
+        message: 'At least one profile field is required',
+        errors: { profile: ['Provide name, phoneNumber or preferredCurrency'] },
+      });
+    }
+    if (!Number.isSafeInteger(credentialVersion) || credentialVersion < 0) {
+      throw new UnauthorizedException('Invalid or expired session');
+    }
+    // Only supplied fields are changed. Matching eligibility/epoch at the write
+    // prevents a stale request from editing an account after a password reset.
+    const user = await this.users.findOneAndUpdate({
+      _id: userId,
+      status: AccountStatus.ACTIVE,
+      mustChangePassword: false,
+      $expr: { $eq: [{ $ifNull: ['$credentialVersion', 0] }, credentialVersion] },
+    }, { $set: changes }, { returnDocument: 'after', runValidators: true, upsert: false }).exec();
+    if (!user) throw new UnauthorizedException('Invalid or expired session');
+    return user;
   }
 
   async isLoginLocked(userId: string, passwordHash: string): Promise<boolean> {

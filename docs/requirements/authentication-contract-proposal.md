@@ -59,8 +59,8 @@ behavior for later requirements are added with those features.
 | `email` | Trimmed, lowercase email with database-enforced uniqueness. Uniqueness is case-insensitive after normalization. |
 | `passwordHash` | Salted password hash; never returned in API responses. |
 | `credentialVersion` | Private nonnegative safe integer, default zero, incremented atomically with password reset/change; sessions retain the verified version. Agreed by the team leader on 2026-11-04. |
-| `phoneNumber` | Profile phone number; exact validation and optionality are deferred to ACC-09. |
-| `preferredCurrency` | Code from the shared supported-currency reference data. |
+| `phoneNumber` | Optional profile phone number; ACC-09 accepts international syntax (+ and 8–15 digits) when supplied. Omission preserves it; null/blank updates are rejected. |
+| `preferredCurrency` | Optional uppercase code from the shared Currency catalog; no automatic default. |
 | `role` | One value from the shared role enum; each account has a single role. |
 | `status` | One value from the shared account-status enum. |
 | `mustChangePassword` | Restricts accounts using administrator-set temporary passwords until they change the password. |
@@ -72,6 +72,39 @@ behavior for later requirements are added with those features.
 Public registration creates `USER` accounts. Registration and profile DTOs must
 not allow callers to assign privileged roles or change account status. Public
 responses must allowlist their fields and exclude password/session information.
+
+### ACC-09 own profiles and the shared Currency catalog
+
+`GET /api/users/me` and `PATCH /api/users/me` use the authenticated owner for all
+four roles. The profile response adds optional phoneNumber/preferredCurrency to
+the existing public account fields; login/registration/auth-me JSON is unchanged.
+PATCH accepts only name, phoneNumber and preferredCurrency; all supplied values
+must validate before an atomic field update. Empty patches and supplied null/blank
+values are rejected. Omission retains existing fields, and no default is assigned.
+The mutation also matches the authenticated credential version and current
+eligible account state so a stale request cannot survive a password reset.
+
+On 2026-11-04 the team leader explicitly requested creation of one catalog for
+Kiki (Person 7) to reuse. `Currency` uses collection `currencies`, fields `_id`,
+`code`, `name`, `createdAt`, `updatedAt`; code is unique, uppercase and three
+letters. Initial codes are AED/EGP/EUR/GBP/JPY/SAR/USD, derived from the PDF-linked
+[Countries.csv](https://docs.google.com/spreadsheets/d/1SlKUTRqlHuBJAMC-Z-QOZzSrzKpGHT_TgQUI5gVm-BA/edit?gid=2042930643).
+This is the team's initial supported set, not an assertion that the source
+declares an exhaustive currency policy. Additional supported codes need shared
+coordination rather than private lists in each module.
+
+Import CurrenciesModule and inject its exported CurrenciesService to call
+`listSupported()` or exact-canonical `isSupported(code)`. Public
+`GET /api/currencies` returns sorted `{ code, name }` pairs for selectors. Run
+`npm.cmd run seed:currencies` from backend for explicit setup; startup does not
+seed automatically. The idempotent seed preserves existing rows/names/timestamps
+and does not delete additional coordinated codes. No public currency-write API,
+FX conversion, new secret name or payment-currency change is introduced.
+
+Malak implements profile preference storage/validation and the requested shared
+catalog. Kiki owns itinerary/budget/FX usage and coordinates any currency changes;
+Gamila coordinates integration with airport/reference-data seeding if needed.
+The student will share the handoff; AI does not message teammates automatically.
 
 ### ModeratorAssignment
 
@@ -189,11 +222,11 @@ No new environment-variable name is introduced; JWT_SECRET was already agreed.
 | --- | --- |
 | Upcoming bookings | Flight and hotel booking owners provide checks for upcoming Confirmed bookings. Define ongoing hotel stays and the exact date/time boundary. Coordinate concurrent booking confirmation and account deactivation. |
 | Deactivated authors | Blog, itinerary, comment, and review owners consistently hide or anonymize content as ACC-12 requires. Agree whether to derive visibility from account status or persist a reversible visibility change. |
-| Preferred currency | Profile validation and itinerary budgeting use the same seeded supported currencies. Booking prices, payments, and refunds retain the single platform currency required by PAY-04. |
-| Administrative account operations | Agree ownership for ACC-13 to ACC-16: moderator creation, account listing, and suspension/reactivation. |
+| Preferred currency | Malak's profile validation and Kiki's budgeting reuse CurrenciesModule/CurrenciesService and collection currencies. Coordinate reference-data seeding with Gamila. Booking prices, payments, and refunds retain the single platform currency required by PAY-04, owned by Hicham. |
+| Administrative account operations | Arwa (Person 2) owns moderator creation, account listing, suspension/reactivation and their admin APIs; coordinate account fields/guards with Malak. |
 | Provider status | ACC-15 provider deactivation is separate from moderator suspension. Provider owners enforce search/booking restrictions while preserving existing Confirmed bookings. |
-| Booking inspection | ACC-17 administration views consume booking-module data without duplicating booking logic. |
-| Notifications/audit | Assign owners and interfaces for mandatory in-app account/provider notifications and audit records of administrative actions. |
+| Booking inspection | Arwa's ACC-17 administration views consume Ismail's flight-booking and Osama's hotel-booking data without duplicating booking logic. |
+| Notifications/audit | Arwa owns shared in-app notification functionality and audit logs. Feature owners agree the calling interfaces with her. |
 
 Suspension and deactivation must retain their different effects: suspended
 users' content stays visible unless separately moderated; deactivated users'

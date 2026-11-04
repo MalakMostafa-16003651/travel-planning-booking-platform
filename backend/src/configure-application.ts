@@ -45,7 +45,7 @@ export function configureApplication(app: INestApplication): void {
 
   const config = new DocumentBuilder()
     .setTitle('Travel Planning and Booking Platform API')
-    .setDescription('Milestone 1. Registration, login/lockout, logout/inactivity, ACC-07a temporary passwords, ACC-08 password changes, shared role guards and cookie/current-user controls. Flight booking integration depends on the provider/payment contracts.')
+    .setDescription('Milestone 1. Authentication, password management, ACC-09 own-profile updates, shared currency reference data, role guards and protected cookies. Flight booking integration depends on the provider/payment contracts.')
     .addCookieAuth(ACCESS_TOKEN_COOKIE, { type: 'apiKey', in: 'cookie' }, 'accessToken')
     .addCookieAuth(PASSWORD_CHANGE_TOKEN_COOKIE, { type: 'apiKey', in: 'cookie' }, 'passwordChangeToken')
     .setVersion('0.1.0')
