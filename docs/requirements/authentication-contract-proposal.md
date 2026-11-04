@@ -222,6 +222,34 @@ No new environment-variable name is introduced; JWT_SECRET was already agreed.
 
 ## Cross-module details deferred to their respective features
 
+### Milestone 1 acceptance boundary: ACC-10 / ACC-19
+
+| Requirement part | Backend evidence | Remaining work |
+| --- | --- | --- |
+| ACC-10: guests cannot perform restricted actions | AuthGuard rejects absent/invalid/expired credentials with JSON 401. Own-profile/identity, password and admin operations have guards; current flight-booking routes reuse AuthGuard. | Each future review/blog/booking owner must apply the shared guard. Login navigation and returning to the intended action require the Milestone 2 frontend. |
+| ACC-19: protected cookie issuance | Access/refresh cookies share HttpOnly, Secure, SameSite=Lax, Path=/ and no Domain. Tokens are not JSON fields; refresh storage is hashed. | Verify the actual frontend/browser deployment honors these attributes. |
+| ACC-19: current identity | GET /api/auth/me returns only the public identity and validates live account/session state. Bearer-only and refresh-only credentials do not authorize it. | Frontend retrieves identity here instead of reading/storing tokens. |
+| ACC-19: no JavaScript-accessible credential storage | No localStorage/sessionStorage/document.cookie access or token-storage code was found in the current backend source. | No frontend exists in this repository yet; browser storage, reload/logout and return-to-action behavior remain unverified. This is not a full ACC-19 completion claim. |
+
+The workbook requires login-and-return behavior for ACC-10 and cookie/identity/
+storage behavior for ACC-19. M1 backend readiness does not complete the frontend
+clauses. No refresh endpoint is mandated by these rows, and none is added as an
+audit side effect. Missing sessions receive JSON errors; backend APIs do not
+replace those responses with browser redirects.
+
+Public registration/login, the public currency catalog and Swagger remain
+intentional public routes. Logout accepts optional credential proofs so cleanup
+works after expiry; that does not grant access to other protected operations.
+Restricted password-change credentials remain confined to change/logout.
+
+For ACC-11's next integration, contact Arwa (Person 2) to confirm the agreed
+ModeratorAssignment lookup interface: moderatorId, exactly one airlineId/hotelId,
+matching moderator role and current assignment. Gamila/Lama enforce assigned
+provider scope; Ismail/Osama enforce booking ownership/provider inspection; Kiki
+enforces private itinerary ownership. Admin booking exceptions do not grant
+general access to private itineraries. Do not duplicate another owner's module
+or treat client-supplied provider/user IDs as authorization.
+
 | Concern | Coordination for the relevant feature |
 | --- | --- |
 | Upcoming bookings | Flight and hotel booking owners provide checks for upcoming Confirmed bookings. Define ongoing hotel stays and the exact date/time boundary. Coordinate concurrent booking confirmation and account deactivation. |
