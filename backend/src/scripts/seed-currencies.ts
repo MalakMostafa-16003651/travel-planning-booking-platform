@@ -1,30 +1,13 @@
 import { INestApplicationContext, Module } from '@nestjs/common';
-import { ConfigModule, ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
-import { MongooseModule } from '@nestjs/mongoose';
 import { disconnect } from 'mongoose';
-import { resolve } from 'node:path';
+import { SeedDatabaseModule } from './seed-database.module';
 import { CurrenciesModule } from '../currencies/currencies.module';
 import { CurrenciesService } from '../currencies/currencies.service';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({
-      isGlobal: true,
-      envFilePath: resolve(__dirname, '../../../.env'),
-      // Isolated tests supply their own URI and never load a local secret file.
-      ignoreEnvFile: process.argv.includes('--no-env-file'),
-    }),
-    MongooseModule.forRootAsync({
-      inject: [ConfigService],
-      useFactory: (config: ConfigService) => {
-        const uri = config.get<unknown>('MONGODB_URI');
-        if (typeof uri !== 'string' || !/^mongodb(?:\+srv)?:\/\/\S+$/.test(uri)) {
-          throw new Error('A valid MONGODB_URI is required');
-        }
-        return { uri, serverSelectionTimeoutMS: 10_000, retryAttempts: 0 };
-      },
-    }),
+    SeedDatabaseModule,
     CurrenciesModule,
   ],
 })

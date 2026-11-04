@@ -188,7 +188,11 @@ account/version after touching activity. In-flight operations already accepted
 before a reset are not claimed retroactively rolled back.
 
 The workbook lists ACC-14 account listing as an ACC-07a dependency; that module
-and ACC-18 administrator seeding remain unimplemented here. Temporary-password
+remains Arwa's separate work. ACC-18 is implemented by explicit administrator
+setup (`npm.cmd run seed:admin`), with no public admin registration endpoint.
+Existing administrators are preserved, non-admin email collisions are rejected,
+and credentials use the existing registration policy and salted hash format.
+Temporary-password
 delivery is outside this API, and frontend flow remains Milestone 2.
 
 ### ACC-06 current-browser logout and inactivity

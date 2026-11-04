@@ -5,12 +5,14 @@ import { join, resolve } from 'node:path';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import { Connection, createConnection } from 'mongoose';
+import { PasswordService } from '../src/auth/password.service';
 
 const EXPECTED_CODES = ['AED', 'EGP', 'EUR', 'GBP', 'JPY', 'SAR', 'USD'];
 const BACKEND_DIRECTORY = resolve(__dirname, '../..');
 // npm test compiles this same CLI source with the suite; no stale production
 // output or separate build prerequisite can hide a changed implementation.
 const SEED_SCRIPT = resolve(__dirname, '../src/scripts/seed-currencies.js');
+const ADMIN_SCRIPT = resolve(__dirname, '../src/scripts/seed-admin.js');
 const SUCCESS_MESSAGE = 'Currency reference seed completed: 7 required codes available.\n';
 const FAILURE_MESSAGE = 'Currency seed did not finish cleanly. Check MongoDB configuration/connectivity, then retry.\n';
 
@@ -50,19 +52,22 @@ interface SeedResult {
   stderr: string;
 }
 
-function runSeed(uri: string): Promise<SeedResult> {
+function runSeed(uri: string, adminInput?: unknown): Promise<SeedResult> {
   // Override the URI before spawning and explicitly disable all local .env reads.
   const environment: NodeJS.ProcessEnv = { ...process.env, MONGODB_URI: uri };
   delete environment.JWT_SECRET;
   return new Promise((resolveResult, reject) => {
-    const child = spawn(process.execPath, [SEED_SCRIPT, '--no-env-file'], {
+    const child = spawn(process.execPath, adminInput === undefined
+      ? [SEED_SCRIPT, '--no-env-file'] : [ADMIN_SCRIPT, '--no-env-file', '--stdin-json'], {
       cwd: BACKEND_DIRECTORY,
       env: environment,
       windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
       timeout: 30_000,
       killSignal: 'SIGKILL',
     });
+    child.stdin!.on('error', () => { /* Exit status determines failure; never print supplied input. */ });
+    child.stdin!.end(adminInput === undefined ? undefined : JSON.stringify(adminInput));
     let stdout = '';
     let stderr = '';
     child.stdout!.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf8'); });
@@ -177,5 +182,61 @@ describe('currency seed CLI', { concurrency: false }, () => {
       assert.ok(!output.includes(forbidden), 'Seed diagnostics must not expose supplied configuration values');
     }
     assert.deepEqual(await connection!.db!.listCollections({}, { nameOnly: true }).toArray(), []);
+  });
+
+  function adminInput(overrides: Record<string, unknown> = {}) {
+    return { name: ' Setup Admin ', email: ' ADMIN@example.com ', password: 'SeedAdmin123', termsAccepted: true, ...overrides };
+  }
+
+  function assertAdminSuccess(result: SeedResult) {
+    assert.ok(result.exitCode === 0 && result.signal === null, 'Admin setup must succeed');
+    assert.ok(result.stdout === 'Administrator seed completed; existing administrator data is preserved.\n');
+    assert.ok(result.stderr === '');
+    assert.ok(!result.stdout.includes('SeedAdmin123'));
+  }
+
+  it('admin seed creates a normalized ADMIN with a verifiable salted hash and no sessions', { timeout: 40_000 }, async () => {
+    assertAdminSuccess(await runSeed(isolatedUri, adminInput()));
+    const user = await connection!.collection('users').findOne({ email: 'admin@example.com' });
+    assert.ok(user);
+    assert.equal(user.name, 'Setup Admin');
+    assert.equal(user.role, 'ADMIN');
+    assert.equal(user.status, 'ACTIVE');
+    assert.equal(user.mustChangePassword, false);
+    assert.equal(user.credentialVersion, 0);
+    assert.ok(user.termsAcceptedAt instanceof Date);
+    assert.ok(await new PasswordService().verify('SeedAdmin123', user.passwordHash));
+    const collections = await connection!.db!.listCollections({}, { nameOnly: true }).toArray();
+    assert.deepEqual(collections.map(row => row.name), ['users']);
+  });
+
+  it('admin seed reruns preserve passwords, suspension and every existing field', { timeout: 70_000 }, async () => {
+    assertAdminSuccess(await runSeed(isolatedUri, adminInput()));
+    const users = connection!.collection('users');
+    await users.updateOne({ email: 'admin@example.com' }, { $set: { status: 'SUSPENDED', failedLoginAttempts: 4 } });
+    const before = await users.findOne({ email: 'admin@example.com' });
+    assertAdminSuccess(await runSeed(isolatedUri, adminInput({ name: 'Different name', password: 'Different456' })));
+    const after = await users.findOne({ email: 'admin@example.com' });
+    assert.ok(JSON.stringify(after) === JSON.stringify(before), 'Rerun must not overwrite an administrator');
+    assert.equal(await users.countDocuments(), 1);
+  });
+
+  it('admin seed never promotes an existing normal user on email collision', { timeout: 40_000 }, async () => {
+    const users = connection!.collection('users');
+    await users.insertOne({ email: 'admin@example.com', name: 'Existing user', role: 'USER', status: 'ACTIVE' });
+    const before = await users.findOne({ email: 'admin@example.com' });
+    const result = await runSeed(isolatedUri, adminInput());
+    assert.ok(result.exitCode === 1 && result.signal === null);
+    assert.ok(!result.stderr.includes('SeedAdmin123') && !result.stderr.includes('admin@example.com'));
+    assert.ok(JSON.stringify(await users.findOne({ email: 'admin@example.com' })) === JSON.stringify(before));
+  });
+
+  it('admin seed rejects invalid credentials, missing consent and privilege injection without records', { timeout: 120_000 }, async () => {
+    for (const override of [{ password: 'short1' }, { email: 'invalid' }, { termsAccepted: false }, { role: 'ADMIN' }, { name: '' }]) {
+      const result = await runSeed(isolatedUri, adminInput(override));
+      assert.ok(result.exitCode === 1 && result.signal === null);
+      assert.ok(!result.stderr.includes('SeedAdmin123'));
+      assert.equal(await connection!.collection('users').countDocuments(), 0);
+    }
   });
 });

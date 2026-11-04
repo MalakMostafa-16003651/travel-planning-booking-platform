@@ -13,6 +13,7 @@
     "start:prod": "node dist/main.js",
     "build:test": "tsc -p tsconfig.test.json",
     "seed:currencies": "npm run build && node dist/scripts/seed-currencies.js",
+    "seed:admin": "npm run build && node dist/scripts/seed-admin.js",
     "test": "npm run build:test && node --test --test-concurrency=1 .test-dist/test/*.test.js"
   },
   "dependencies": {

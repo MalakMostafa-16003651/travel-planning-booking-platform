@@ -163,7 +163,29 @@ At the next eligible login, temporary credentials return only `{ "passwordChange
 
 The agreed private `credentialVersion` on User and AuthSession binds a session to the password state verified at login. Reset/change increments the User version in the same atomic write as the new salted hash, flag and counters. Old sessions become unusable even if their records remain until TTL cleanup; this is logical invalidation, not a claim of physical deletion or multi-document rollback. Authentication checks current account state/version before and after its session activity write. Missing stored versions in legacy documents mean zero. Password-change CAS matches the expected hash, version, flag and ACTIVE status, preventing stale concurrent requests from overwriting a newer reset/change.
 
-ACC-18 administrator seeding and ACC-14 account listing/search remain separate, unimplemented dependencies. The reset API accepts a known user ID; tests create administrator fixtures only inside their isolated database. Frontend navigation and real-browser verification remain Milestone 2/manual work. The design follows [OWASP current-password reauthentication guidance](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html) and [recovery/session invalidation guidance](https://cheatsheetseries.owasp.org/cheatsheets/Forgot_Password_Cheat_Sheet.html).
+ACC-18 setup is now provided by the administrator seed command; ACC-14 account listing/search remains a separate Arwa dependency. The reset API accepts a known user ID; tests create administrator fixtures only inside their isolated database. Frontend navigation and real-browser verification remain Milestone 2/manual work. The design follows [OWASP current-password reauthentication guidance](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html) and [recovery/session invalidation guidance](https://cheatsheetseries.owasp.org/cheatsheets/Forgot_Password_Cheat_Sheet.html).
+
+## Administrator setup (ACC-18)
+
+From an interactive terminal in `backend/`, run `npm.cmd run seed:admin`.
+It prompts for name, email, a hidden password, and explicit terms/privacy consent.
+The existing registration validation and salted password hashing are reused.
+No default credential is committed, printed, or passed in command-line arguments;
+no new environment variable is required. The existing root `.env` provides
+MONGODB_URI. Setup starts no HTTP server or booking maintenance.
+
+Only a new account is created as ADMIN/ACTIVE. Repeating setup for an existing
+administrator preserves every field, including password, suspension, timestamps
+and counters. An email belonging to a non-admin fails without promotion. Public
+registration still creates USER accounts only; no admin creation API is added.
+The command supports `--stdin-json` for controlled automation with the same
+name/email/password/termsAccepted fields; keep that input out of shell history,
+files and logs. Tests use it with `--no-env-file` and an isolated database.
+The interactive prompt has not been manually certified.
+
+Arwa (Person 2) can use the seeded administrator with existing login/ADMIN guards
+after this session PR is merged and setup is run. AI has not created a real
+administrator or run setup against shared Atlas.
 
 ## Profiles and shared currencies (ACC-09)
 

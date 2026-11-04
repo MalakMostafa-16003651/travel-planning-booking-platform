@@ -27,6 +27,7 @@ import { configureApplication } from '../src/configure-application';
 import { CurrenciesService } from '../src/currencies/currencies.service';
 import { User, UserDocument } from '../src/users/schemas/user.schema';
 import { UsersService } from '../src/users/users.service';
+import { AdminSeedService } from '../src/users/admin-seed.service';
 
 function mongoBinaryOptions() {
   const fallback = {
@@ -2220,6 +2221,17 @@ describe('ACC-01 registration and ACC-04/05/06 authentication', { concurrency: f
     }
     await request(app.getHttpServer()).get('/api/auth/me').set('Cookie', admin.cookies.cookieHeader).expect(200);
     await resetPassword(admin.cookies.cookieHeader, targetId).expect(204);
+  });
+
+  it('allows an ACC-18 seeded administrator to log in and use the reusable ADMIN guard', async () => {
+    const setup = new AdminSeedService(app.get(getModelToken(User.name)), app.get(PasswordService));
+    await setup.seed({ name: 'Seeded Admin', email: ' SEEDED@example.com ', password: 'SeededAdmin123', termsAccepted: true });
+    const login = await request(app.getHttpServer()).post('/api/auth/login')
+      .send({ email: 'seeded@example.com', password: 'SeededAdmin123' }).expect(200);
+    assertPublicAccount(login);
+    assert.equal(login.body.role, UserRole.ADMIN);
+    await request(app.getHttpServer()).get('/api/test-feature/admin-only')
+      .set('Cookie', readAuthCookies(login).cookieHeader).expect(200);
   });
 
   it('returns only the current profile fields for every agreed role without credential or session internals', async () => {
