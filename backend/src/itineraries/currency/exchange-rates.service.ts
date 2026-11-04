@@ -68,7 +68,9 @@ export class ExchangeRatesService {
     }
 
     try {
-      const symbols = (await this.currencies.listSupported()).filter((code) => code !== base);
+      const symbols = (await this.currencies.listSupported())
+        .map(({ code }) => code)
+        .filter((code) => code !== base);
       const fresh = await this.client.latest(base, symbols);
       await this.rates.updateOne(
         { baseCurrency: base },

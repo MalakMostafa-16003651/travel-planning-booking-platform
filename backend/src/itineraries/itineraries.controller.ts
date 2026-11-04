@@ -4,7 +4,10 @@ import {
   ApiOkResponse, ApiOperation, ApiServiceUnavailableResponse, ApiTags, ApiUnauthorizedResponse, ApiUnprocessableEntityResponse,
 } from '@nestjs/swagger';
 import { AuthGuard, AuthenticatedRequest } from '../auth/auth.guard';
+import { Roles } from '../auth/roles.decorator';
+import { RolesGuard } from '../auth/roles.guard';
 import { ApiErrorDto } from '../common/dto/api-error.dto';
+import { UserRole } from '../common/enums/user-role.enum';
 import { BudgetSummaryDto } from './dto/budget-summary.dto';
 import { CreateItineraryDto } from './dto/create-itinerary.dto';
 import { CreateItineraryDayDto, ReorderItineraryDaysDto, UpdateItineraryDayDto } from './dto/itinerary-day.dto';
@@ -48,7 +51,8 @@ export class ItinerariesController {
   }
 
   @Post()
-  @UseGuards(AuthGuard)
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(UserRole.USER)
   @ApiCookieAuth('accessToken')
   @ApiOperation({ summary: 'ITN-01: create an itinerary', description: "Starts with no days. Currency defaults to the user's preferredCurrency, else USD." })
   @ApiCreatedResponse({ type: ItineraryDto })
@@ -210,7 +214,8 @@ export class ItinerariesController {
   }
 
   @Post(':id/clone')
-  @UseGuards(AuthGuard)
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(UserRole.USER)
   @ApiCookieAuth('accessToken')
   @ApiOperation({ summary: 'ITN-21: clone a public itinerary', description: 'Creates your own PRIVATE copy with clonedFrom attribution (original id, author and title). Later changes to either copy do not affect the other.' })
   @ApiCreatedResponse({ type: ItineraryDto })

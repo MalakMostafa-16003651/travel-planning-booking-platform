@@ -1,8 +1,10 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AuthModule } from '../auth/auth.module';
+import { CurrenciesModule } from '../currencies/currencies.module';
+import { CurrenciesService } from '../currencies/currencies.service';
 import { User, UserSchema } from '../users/schemas/user.schema';
-import { InterimAuthorsAdapter, InterimCurrenciesAdapter } from './adapters/interim.adapters';
+import { InterimAuthorsAdapter } from './adapters/interim.adapters';
 import { PendingFlightSearchAdapter, PendingHotelSearchAdapter } from './adapters/pending-travel-search.adapters';
 import { ExchangeRatesService } from './currency/exchange-rates.service';
 import { FxRatesClient } from './currency/fx-rates.client';
@@ -20,6 +22,7 @@ import { Itinerary, ItinerarySchema } from './schemas/itinerary.schema';
 @Module({
   imports: [
     AuthModule,
+    CurrenciesModule,
     MongooseModule.forFeature([
       { name: Itinerary.name, schema: ItinerarySchema },
       { name: ActivityImage.name, schema: ActivityImageSchema },
@@ -36,7 +39,7 @@ import { Itinerary, ItinerarySchema } from './schemas/itinerary.schema';
     OptionalAuthGuard,
     // Swap these for the real modules as they land; nothing else in this module changes.
     { provide: ITINERARY_AUTHORS, useClass: InterimAuthorsAdapter }, // -> UsersService (Person 1)
-    { provide: ITINERARY_CURRENCIES, useClass: InterimCurrenciesAdapter }, // -> CurrenciesService (PR #10)
+    { provide: ITINERARY_CURRENCIES, useExisting: CurrenciesService },
     { provide: ITINERARY_FLIGHT_SEARCH, useClass: PendingFlightSearchAdapter }, // -> FlightsService (Person 3)
     { provide: ITINERARY_HOTEL_SEARCH, useClass: PendingHotelSearchAdapter }, // -> HotelsService (Person 5)
   ],

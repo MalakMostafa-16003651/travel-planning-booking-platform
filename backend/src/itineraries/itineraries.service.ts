@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Error as MongooseError, QueryFilter, Model, Types } from 'mongoose';
 import { UserRole } from '../common/enums/user-role.enum';
@@ -40,11 +40,6 @@ export interface SearchResult<C> {
 
 const NOT_FOUND = 'Itinerary not found';
 
-/** Itineraries are created and cloned by travellers only (registered role USER). */
-export function assertTraveler(role: UserRole): void {
-  if (role !== UserRole.USER) throw new ForbiddenException('Only travellers can create itineraries');
-}
-
 @Injectable()
 export class ItinerariesService {
   constructor(
@@ -61,7 +56,6 @@ export class ItinerariesService {
   // ---------------------------------------------------------------- itineraries (ITN-01, ITN-03, ITN-20)
 
   async create(input: CreateItineraryDto, viewer: NonNullable<Viewer>): Promise<ItineraryDto> {
-    assertTraveler(viewer.role);
     const currency = input.currency
       ? await this.assertCurrency(input.currency, 'currency')
       : await this.defaultCurrency(viewer.userId);
@@ -448,7 +442,6 @@ export class ItinerariesService {
 
   /** ITN-21: an independent private copy. Author status is rechecked at clone time. */
   async clone(itineraryId: string, viewer: NonNullable<Viewer>): Promise<ItineraryDto> {
-    assertTraveler(viewer.role);
     const source = await this.findReadable(itineraryId, undefined);
     const author = (await this.authors.getAuthors([source.userId.toString()])).get(source.userId.toString());
     if (!isVisibleAuthor(author)) throw new NotFoundException(NOT_FOUND);
@@ -655,7 +648,7 @@ export class ItinerariesService {
     const normalized = code.trim().toUpperCase();
     if (!(await this.currencies.isSupported(normalized))) {
       const supported = await this.currencies.listSupported();
-      throw fieldError(field, `Unsupported currency ${normalized}. Supported: ${supported.join(', ')}`);
+      throw fieldError(field, `Unsupported currency ${normalized}. Supported: ${supported.map(({ code }) => code).join(', ')}`);
     }
     return normalized;
   }

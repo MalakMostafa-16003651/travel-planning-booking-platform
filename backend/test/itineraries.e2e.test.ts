@@ -12,6 +12,7 @@ import request, { Response } from 'supertest';
 import { AuthModule } from '../src/auth/auth.module';
 import { AccountStatus } from '../src/common/enums/account-status.enum';
 import { UserRole } from '../src/common/enums/user-role.enum';
+import { CurrenciesService } from '../src/currencies/currencies.service';
 import { configureApplication } from '../src/configure-application';
 import { FxRatesClient, FxRatesUnavailableError } from '../src/itineraries/currency/fx-rates.client';
 import { ItinerariesModule } from '../src/itineraries/itineraries.module';
@@ -112,6 +113,7 @@ describe('Itineraries, activities and budgeting', { concurrency: false }, () => 
     connection = moduleRef.get(getConnectionToken());
     users = moduleRef.get(getModelToken(User.name));
     await Promise.all([users.init(), moduleRef.get<Model<Itinerary>>(getModelToken(Itinerary.name)).init()]);
+    await moduleRef.get(CurrenciesService).seedSupported();
   }, { timeout: 30 * 60_000 });
 
   beforeEach(async () => {
@@ -151,8 +153,15 @@ describe('Itineraries, activities and budgeting', { concurrency: false }, () => 
 
     it('rejects guests, non-travellers, bad dates and unsupported currencies', async () => {
       await http().post('/api/itineraries').send({ title: 'x', countries: ['EG'], startDate: '2026-12-20' }).expect(401);
-      const admin = await login('admin@example.com', { role: UserRole.ADMIN });
-      await http().post('/api/itineraries').set('Cookie', admin).send({ title: 'x', countries: ['EG'], startDate: '2026-12-20' }).expect(403);
+      for (const [email, role] of [
+        ['admin@example.com', UserRole.ADMIN],
+        ['airline-moderator@example.com', UserRole.AIRLINE_MODERATOR],
+        ['hotel-moderator@example.com', UserRole.HOTEL_MODERATOR],
+      ] as const) {
+        const cookie = await login(email, { role });
+        await http().post('/api/itineraries').set('Cookie', cookie)
+          .send({ title: 'x', countries: ['EG'], startDate: '2026-12-20' }).expect(403);
+      }
       const badDate = await http().post('/api/itineraries').set('Cookie', alice).send({ title: 'x', countries: ['EG'], startDate: '2026-02-30' }).expect(400);
       assert.ok(badDate.body.errors.startDate);
       const badCurrency = await http().post('/api/itineraries').set('Cookie', alice)
@@ -508,6 +517,14 @@ describe('Itineraries, activities and budgeting', { concurrency: false }, () => 
         .send({ fromCity: 'Luxor', toCity: 'Aswan', mode: 'TRAIN', amount: 15, currency: 'USD', dayId: source.days[1].dayId }).expect(201);
 
       await http().post(`/api/itineraries/${sourceId}/clone`).expect(401);
+      for (const [email, role] of [
+        ['admin@example.com', UserRole.ADMIN],
+        ['airline-moderator@example.com', UserRole.AIRLINE_MODERATOR],
+        ['hotel-moderator@example.com', UserRole.HOTEL_MODERATOR],
+      ] as const) {
+        const cookie = await login(email, { role });
+        await http().post(`/api/itineraries/${sourceId}/clone`).set('Cookie', cookie).expect(403);
+      }
       const clone = (await http().post(`/api/itineraries/${sourceId}/clone`).set('Cookie', bob).expect(201)).body;
       assert.notEqual(clone.itineraryId, sourceId);
       assert.equal(clone.visibility, 'PRIVATE');
