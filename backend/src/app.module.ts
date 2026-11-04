@@ -4,6 +4,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { resolve } from 'node:path';
 import { AuthModule } from './auth/auth.module';
 import { validateEnvironment } from './config/validate-environment';
+import { FlightBookingsModule } from './flight-bookings/flight-bookings.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { validateEnvironment } from './config/validate-environment';
       }),
     }),
     AuthModule,
+    FlightBookingsModule,
   ],
 })
 export class AppModule {}

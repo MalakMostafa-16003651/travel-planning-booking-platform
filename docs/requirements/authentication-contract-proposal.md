@@ -58,6 +58,7 @@ behavior for later requirements are added with those features.
 | `name` | User's display name. |
 | `email` | Trimmed, lowercase email with database-enforced uniqueness. Uniqueness is case-insensitive after normalization. |
 | `passwordHash` | Salted password hash; never returned in API responses. |
+| `credentialVersion` | Private nonnegative safe integer, default zero, incremented atomically with password reset/change; sessions retain the verified version. Agreed by the team leader on 2026-11-04. |
 | `phoneNumber` | Profile phone number; exact validation and optionality are deferred to ACC-09. |
 | `preferredCurrency` | Code from the shared supported-currency reference data. |
 | `role` | One value from the shared role enum; each account has a single role. |
@@ -93,9 +94,8 @@ Person 1 supplies reusable authentication and role checks. Each module owner
 enforces resource ownership and provider restrictions on that module's queries
 and operations. Client-provided identifiers are not proof of ownership.
 
-Forced-password-change restrictions must be enforced on the backend. The exact
-endpoints available under this restriction are deferred to the temporary-password
-and login features.
+Forced-password-change restrictions are enforced on the backend. Restricted
+credentials permit only the password-change and logout operations described below.
 
 ## Session settings agreed for ACC-04
 
@@ -117,15 +117,53 @@ opened. HTTPS is required outside localhost development; Secure stays enabled.
 
 AuthGuard is exported by AuthModule and supplies `request.user = { userId, role }`.
 Each feature owner still enforces their resource's role/ownership restrictions.
-No unrestricted session is granted to an account with mustChangePassword set
-while the required password-change flow is absent.
+AuthModule also exports RolesGuard. Role-restricted routes use
+`@UseGuards(AuthGuard, RolesGuard)` followed by `@Roles(UserRole.ADMIN)` or the
+required shared roles. Method policy overrides controller policy; missing/empty
+role policy fails closed. Client-supplied roles never establish identity.
+Accounts with mustChangePassword receive a restricted password-change session,
+never a normal authenticated identity or access/refresh pair.
+
+### ACC-07a / ACC-08 agreed password management
+
+On 2026-11-04 the student selected **"Use this design"** for private
+`credentialVersion` on User/AuthSession, a 15-minute HttpOnly restricted
+password-change cookie, administrator-chosen compliant temporary passwords never
+returned by the API, and a fresh login after password change. The restricted
+cookie is backed by an existing AuthSession so logout revokes it server-side.
+The session uses the existing fields plus the private credential version; it has
+a 15-minute absolute expiry and no issued refresh token. Tokens have a distinct
+signed `tokenUse` and cannot be used in normal authentication.
+
+ADMIN-only `POST /api/admin/users/:userId/reset-password` accepts
+`temporaryPassword` for USER/AIRLINE_MODERATOR/HOTEL_MODERATOR targets. It keeps
+the target's status unchanged, resets failed-login lockout, sets mustChangePassword
+and increments the credential version. Administrator targets are excluded.
+
+The next eligible login returns only `passwordChangeRequired: true`, clears normal
+cookies and sets `__Host-passwordChangeToken` with the existing secure cookie
+attributes. `PATCH /api/auth/change-password` accepts `currentPassword` and a
+compliant, different `newPassword`, using either that restricted cookie or the
+caller's normal access cookie. Success clears all authentication cookies and
+requires login. No caller-supplied user ID controls password-change ownership.
+
+Version increments and password/flag/counter writes are atomic on User. Old
+normal/restricted sessions are logically invalidated without relying on TTL or
+successful multi-document cleanup. Legacy missing versions mean zero. Session
+issuance preserves the version verified with credentials; guards recheck current
+account/version after touching activity. In-flight operations already accepted
+before a reset are not claimed retroactively rolled back.
+
+The workbook lists ACC-14 account listing as an ACC-07a dependency; that module
+and ACC-18 administrator seeding remain unimplemented here. Temporary-password
+delivery is outside this API, and frontend flow remains Milestone 2.
 
 ### ACC-06 current-browser logout and inactivity
 
 ACC-06 uses current-browser logout as a documented implementation choice; the
 reviewed sheet does not require all-device logout. The endpoint is POST /api/auth/logout,
 with no JSON input. It revokes only sessions identified by the presented refresh
-hash and/or verified access JWT session/user claims, then clears both cookies with
+hash and/or purpose-verified access/password-change JWT session/user claims, then clears all three cookies with
 matching attributes and returns 204. It also works with an expired access cookie
 when the refresh cookie is present, and allows cleanup of an inactive account.
 Missing/malformed/repeated credentials are idempotent. Database failure returns
@@ -137,8 +175,9 @@ activity does not extend the absolute seven-day maximum. Frontend redirection an
 storage integration are Milestone 2 work.
 
 Remaining choices for any later token-renewal work: refresh endpoint/rotation/replay
-handling and whether background refresh counts as activity; coordinated revocation
-after account/password changes; and any future cross-origin deployment. Neither
+handling and whether background refresh counts as activity; future account-status
+mutation coordination; and any future cross-origin deployment. Password changes
+now invalidate sessions through credential versions. Neither
 ACC-06 nor ACC-19 prescribes a refresh endpoint. Until renewal is implemented, an
 expired access token requires another login. ACC-19 frontend integration is not
 claimed complete by this backend feature.
@@ -164,10 +203,11 @@ content follows ACC-12.
 
 - GEN-11 requires Pending Payment -> Confirmed -> Completed, with Pending Payment
   -> Expired and Confirmed -> Cancelled as the other allowed booking transitions.
-  The current three-value booking enum needs a coordinated update when the
-  booking features are implemented. Booking owners will finalize whether
-  `PENDING` represents Pending Payment or is renamed, and define `COMPLETED` and
-  `EXPIRED` once for both booking modules. This does not affect ACC-01.
+  The team's published flight-booking implementation, imported from PR #8,
+  already adds `COMPLETED` and `EXPIRED` to the shared booking enum and retains
+  `PENDING` for the unpaid hold. This records the integrated source, not a claim
+  that every booking owner accepted its proposal. Flight/hotel/payment owners
+  must coordinate remaining contract decisions; Person 1 does not redefine it.
 - ACC-03 is referenced by the PDF registration endpoint table but absent from the
   reviewed workbook. Do not invent its meaning.
 

@@ -1,6 +1,6 @@
 # Backend: registration and login
 
-This NestJS 12 backend implements ACC-01 registration, ACC-04 login, ACC-05 failed-login lockout and ACC-06 logout/inactivity using TypeScript, Mongoose and MongoDB Atlas. Registration creates a normal account without logging it in. Login issues protected cookies; `/api/auth/me` returns the current public identity through a reusable authentication guard. Profile/password-management features and optional token renewal are later work.
+This NestJS 12 backend implements registration, login/lockout, logout/inactivity, ACC-07a administrator-assisted password reset and ACC-08 password changes using TypeScript, Mongoose and MongoDB Atlas. Registration creates a normal account without logging it in. Login issues protected cookies; `/api/auth/me` returns the current public identity through a reusable authentication guard. Profile features and optional token renewal remain later work.
 
 ## Run locally
 
@@ -76,7 +76,7 @@ A successful request returns **201 Created** with the public account fields:
 
 The ID and timestamps above are examples. MongoDB stores the document's `_id`; the API exposes it as `userId`. Passwords and password hashes are excluded from the response.
 
-Invalid input returns **400 Bad Request**, with `statusCode: 400`, `error: "Bad Request"`, `message: "Validation failed"`, and an `errors` object mapping field names to arrays of validation messages. A registered email returns **409 Conflict**:
+Invalid input returns **400 Bad Request**, with `statusCode: 400`, `error: "Bad Request"`, `message: "Validation failed"`, and an `errors` object mapping field names to nonempty arrays of validation messages. Nested fields use dotted paths, for example `passengers.0.fullName`; empty parent entries and raw request values are omitted. A registered email returns **409 Conflict**:
 
 ```json
 {
@@ -102,7 +102,7 @@ Email uniqueness applies after normalization, so `Travel.Tester@example.com` and
 }
 ```
 
-Email is trimmed/lowercased; the password is checked exactly as supplied against the existing salted scrypt hash. All four agreed roles can log in. Success returns **200** with the same public user fields as registration, and sets two cookies. Neither token nor any credential/session field appears in JSON. Both successful login and `/api/auth/me` return `Cache-Control: no-store`.
+Email is trimmed/lowercased; the password is checked exactly as supplied against the existing salted scrypt hash. All four agreed roles can log in. Ordinary success returns **200** with the same public user fields as registration, sets two normal cookies and expires any stale password-change cookie. Temporary-password login instead uses the restricted flow below. Neither token nor any credential/session field appears in JSON. Both successful login and `/api/auth/me` return `Cache-Control: no-store`.
 
 | Cookie | Lifetime and protections |
 | --- | --- |
@@ -113,7 +113,7 @@ Email is trimmed/lowercased; the password is checked exactly as supplied against
 
 **Token-renewal boundary:** the refresh cookie/storage foundation supports server-side revocation, but `/api/auth/refresh` is not implemented. Neither reviewed ACC-06 nor ACC-19 mandates that endpoint or a rotation policy. There is no automatic renewal: an expired 15-minute access token requires login again. The agreed seven-day session maximum does not override access expiry or 30-minute inactivity. Frontend integration and JavaScript-storage verification belong to Milestone 2.
 
-Ordinary wrong passwords, unknown emails and deactivated accounts receive the same **401** message: `Invalid email or password`; temporary lockout has the explicit message below. Valid suspended-account credentials receive **403**, `Account is suspended`; the status is not disclosed for a wrong password. An unlocked account requiring a password change receives **403**, `Password change is required`, and no unrestricted session while that future flow is absent. Invalid DTO fields receive **400**. Missing/invalid/expired/revoked/inactive or newly ineligible sessions receive **401**, `Invalid or expired session`.
+Ordinary wrong passwords, unknown emails and deactivated accounts receive the same **401** message: `Invalid email or password`; temporary lockout has the explicit message below. Valid suspended-account credentials receive **403**, `Account is suspended`; the status is not disclosed for a wrong password. An unlocked active account requiring a password change receives **200**, `{ "passwordChangeRequired": true }`, with only a restricted credential as described below. Invalid DTO fields receive **400**. Missing/invalid/expired/revoked/inactive or newly ineligible sessions receive **401**, `Invalid or expired session`.
 
 ## Failed-login lockout (ACC-05)
 
@@ -139,9 +139,9 @@ The implementation uses the official [NestJS cookie guidance](https://docs.nestj
 
 ## Logout and inactivity (ACC-06)
 
-`POST /api/auth/logout` takes its session credentials from the browser's authentication cookies; no JSON body or user/session ID is required. A successful request returns **204 No Content**, `Cache-Control: no-store`, and expires both cookies using the same HttpOnly/Secure/SameSite=Lax/Path=/ settings with no Domain. Cookie settings are shared with login so clearing cannot drift from issuance.
+`POST /api/auth/logout` takes its session credentials from the browser's authentication cookies; no JSON body or user/session ID is required. A successful request returns **204 No Content**, `Cache-Control: no-store`, and expires access, refresh and password-change cookies using the same HttpOnly/Secure/SameSite=Lax/Path=/ settings with no Domain. Cookie settings are shared with login so clearing cannot drift from issuance.
 
-The default action is current-browser logout. The server matches the opaque refresh cookie by its SHA-256 hash, and independently validates the access JWT before using its exact session/user claims. Only matching sessions are revoked; a request cannot select another account through body/query IDs. If the two cookies identify different valid sessions, both represented sessions are revoked. Other sessions without a presented credential remain intact.
+The default action is current-browser logout. The server matches the opaque refresh cookie by its SHA-256 hash, and independently validates access/password-change JWT purposes before using their exact session/user claims. Only matching sessions are revoked; a request cannot select another account through body/query IDs. If cookies identify different valid sessions, the represented sessions are revoked. Other sessions without a presented credential remain intact.
 
 Logout uses the refresh cookie even when access has expired or the account is suspended, deactivated or deleted. Missing/malformed credentials and repeated logout are idempotent: cookies are cleared and the endpoint returns 204 without revealing whether a session existed. Repeating logout preserves the original revocation timestamp and never advances activity or session expiry.
 
@@ -153,9 +153,30 @@ For a manual Swagger check with an agreed test account: log in, call `/api/auth/
 
 The logout implementation follows [Express cookie-clearing behavior](https://expressjs.com/en/guide/migrating-5/) and [OWASP server-side session invalidation](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html). Current-browser scope and the 204/idempotent/error policy are implementation choices; the reviewed sheet requires cookie clearing, server refresh-token revocation and 30-minute inactivity expiry.
 
+## Temporary passwords and password changes (ACC-07a / ACC-08)
+
+`POST /api/admin/users/:userId/reset-password` requires a normal authenticated ADMIN session. Input is `{ "temporaryPassword": "<compliant temporary password>" }`; the replacement follows the registration policy. Targets must be users or airline/hotel moderators, never administrators. Invalid IDs/input return 400; missing/unsupported targets return 404; non-admin callers receive 403. Success returns 204 with no password or token. The administrator delivers the temporary password outside this API. Reset preserves ACTIVE/SUSPENDED/DEACTIVATED status, clears failed-login lockout and sets the mandatory-change flag. It does not unsuspend or reactivate an account.
+
+At the next eligible login, temporary credentials return only `{ "passwordChangeRequired": true }`. The server clears normal cookies and sets `__Host-passwordChangeToken`: a 15-minute, purpose-bound JWT in an HttpOnly, Secure, SameSite=Lax, Path=/ cookie with no Domain. Its server session is revocable; it has no issued access/refresh pair. It permits password change and logout, never `/api/auth/me`, bookings or admin routes. Normal lockout and account-status rules still apply.
+
+`PATCH /api/auth/change-password` accepts `{ "currentPassword": "<current or temporary password>", "newPassword": "<compliant different password>" }`. Every role can use its own normal access cookie; forced-change users use the restricted cookie. Passwords are preserved exactly, including whitespace/case. Invalid fields/unchanged passwords return 400; an incorrect current password or stale session returns 401. Success returns 204, clears all three cookies and requires fresh login. The caller cannot supply a target user ID or role.
+
+The agreed private `credentialVersion` on User and AuthSession binds a session to the password state verified at login. Reset/change increments the User version in the same atomic write as the new salted hash, flag and counters. Old sessions become unusable even if their records remain until TTL cleanup; this is logical invalidation, not a claim of physical deletion or multi-document rollback. Authentication checks current account state/version before and after its session activity write. Missing stored versions in legacy documents mean zero. Password-change CAS matches the expected hash, version, flag and ACTIVE status, preventing stale concurrent requests from overwriting a newer reset/change.
+
+ACC-18 administrator seeding and ACC-14 account listing/search remain separate, unimplemented dependencies. The reset API accepts a known user ID; tests create administrator fixtures only inside their isolated database. Frontend navigation and real-browser verification remain Milestone 2/manual work. The design follows [OWASP current-password reauthentication guidance](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html) and [recovery/session invalidation guidance](https://cheatsheetseries.owasp.org/cheatsheets/Forgot_Password_Cheat_Sheet.html).
+
 ## Reusing authentication in other modules
 
-Import `AuthModule` into the feature module and apply its exported `AuthGuard` with `@UseGuards(AuthGuard)` to protected controllers/routes. The guard supplies `request.user = { userId, role }` using the current database account; `AuthenticatedRequest` describes the request type. The guard does not grant access to another user's records: each module owner must scope queries to the authenticated user/provider and implement the required role/ownership policy. The general roles guard and moderator assignment checks are not implemented by this step.
+Import `AuthModule` into the feature module and apply its exported `AuthGuard` with `@UseGuards(AuthGuard)` to protected controllers/routes. The guard supplies `request.user = { userId, role }` using the current database account; `AuthenticatedRequest` describes the request type. Each module owner must still scope queries to the authenticated user/provider and enforce ownership.
+
+For a role-restricted route, import `RolesGuard` and the `Roles` decorator from `src/auth`, and import `UserRole` from the shared enum. Apply the guards in this order:
+
+```ts
+@UseGuards(AuthGuard, RolesGuard)
+@Roles(UserRole.ADMIN)
+```
+
+`AuthGuard` establishes the identity; `RolesGuard` checks that server-established role. Missing identity returns 401; a disallowed role or missing/empty role policy returns 403. Method-level role metadata replaces controller-level metadata. Role claims in request bodies or query strings are ignored. The role guard is exported by `AuthModule` and uses Nest's `Reflector`; it does not require another role enum or dependency. Moderator-provider assignments and resource ownership remain the respective module owner's checks.
 
 ## How a request reaches MongoDB
 
@@ -185,6 +206,28 @@ Start the backend, open Swagger UI, expand `POST /api/auth/register`, and select
 | Role injection | Add `"role": "ADMIN"` to the sample body. | 400; registration cannot assign privileged roles. |
 | Unknown property | Add an extra field such as `"unexpected": true`. | 400; the field is rejected. |
 
+## Flight booking and inventory holds
+
+`backend/src/flight-bookings` implements FLT-19, FLT-21, FLT-22, FLT-23, FLT-25, FLT-26, the booking side of FLT-12, and GEN-11. It is built against the [flight booking contract proposal](../docs/requirements/flight-booking-contract-proposal.md), which lists the fields it needs from other modules and the open team decisions.
+
+| Method | Endpoint | Result |
+| --- | --- | --- |
+| POST | `/api/flight-bookings` | Validates and prices a booking. Reserves and stores nothing. |
+| POST | `/api/flight-bookings/hold` | Reserves seats and creates a `PENDING` booking for 10 minutes. |
+| GET | `/api/flight-bookings` | Your bookings; `group=UPCOMING`, `PAST` or `CANCELLED`, page size 10. |
+| GET | `/api/flight-bookings/:id` | One of your bookings. |
+| GET | `/api/flight-bookings/:id/cancellation-quote` | The refund you would receive. Changes nothing. |
+| POST | `/api/flight-bookings/:id/cancel` | Cancels a Confirmed booking and requests its refund. |
+| GET | `/api/flight-bookings/:id/e-ticket` | PDF e-ticket for a Confirmed booking. |
+
+All routes need a login. Another user's booking returns **404**. Booking and cancelling need role `USER`. Amounts are integer minor units.
+
+**Overselling** is prevented by one conditional cabin write: `heldSeats` only increases if `totalSeats - bookedSeats - heldSeats` still covers the request. Hold, confirm, cancel and expiry run in MongoDB transactions, so a round trip reserves both cabins or neither. Transactions need a replica set: Atlas always has one, and the tests start one.
+
+**Expiry** runs every minute, as does retrying failed refund requests and completing departed bookings. Payment checks `holdExpiresAt` directly, so a late sweep cannot extend a hold.
+
+**Integration:** `ports/` defines what this module needs from Flights, Payments and Notifications. The inventory adapter already uses the agreed `flights`, `cabininventories`, `airports` and `airlines` collections, so holds return 404 until those contain data. `adapters/pending-integration.adapters.ts` holds temporary Payments and Notifications bindings: until Person 8's module calls `confirmPaidBooking`, a booking can be held but not confirmed outside the automated tests.
+
 ## Automated tests
 
 From `backend/`, run:
@@ -193,4 +236,6 @@ From `backend/`, run:
 npm.cmd test
 ```
 
-The tests use an isolated local MongoDB instance and a generated test-only signing secret; they never read the local `.env` or connect to the team's Atlas database. On Windows, the helper first checks for an installed MongoDB server executable and starts a separate instance with a fresh temporary database directory. Otherwise it downloads/caches a test binary. Tests verify registration, credentials, login/cookie/session behavior, logout/revocation/inactivity, lockout/concurrent ordering, current-account checks and rejection cases. They manually forward Secure cookies in the in-memory HTTP client; this is not a browser-cookie policy test. Do not print cookie/token/hash values when diagnosing a failure.
+Test files run sequentially to avoid competing local MongoDB startups. The fixtures use isolated local MongoDB databases and generated test-only signing secrets; they never read `.env` or connect to the team's Atlas database. On Windows, the auth helper first checks for an installed MongoDB executable and starts a separate process with a fresh temporary directory; otherwise it downloads/caches a binary. The booking replica-set fixture uses MongoMemoryServer's binary resolution/download cache. Standard test-process binary settings can select an installed binary for both fixtures; these are not application secrets or `.env.example` additions.
+
+Coverage includes registration, credentials, protected cookies, logout/inactivity, lockout, roles, current-password changes, admin resets, restricted login, credential-version invalidation, concurrent/stale operations, validation and Swagger, plus the imported booking suite. HTTP tests explicitly forward Secure cookies; they do not certify real-browser cookie policy. Do not print cookie/token/hash values when diagnosing a failure.

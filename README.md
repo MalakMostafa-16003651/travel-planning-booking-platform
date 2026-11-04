@@ -16,6 +16,10 @@ refresh cookies, and `/api/auth/me` with server-side session/account checks.
 ACC-05 locks new logins for 15 minutes after five consecutive failures and resets
 the counter after successful login. ACC-06 adds current-browser logout with server
 revocation and cookie clearing, plus server-side 30-minute inactivity enforcement.
+ACC-07a adds administrator-set temporary passwords and restricted first-login
+password changes; ACC-08 adds current-password changes for every logged-in role.
+Password updates invalidate earlier sessions. Shared authentication and role
+guards are available to the team.
 Automatic token refresh remains outside these requirements; access tokens currently
 expire after 15 minutes and require logging in again.
 
@@ -26,6 +30,10 @@ MongoDB tests.
 The [Authentication and Users shared contract](docs/requirements/authentication-contract-proposal.md)
 records the accepted User fields and naming, along with details deferred to later
 features.
+
+The [flight booking contract proposal](docs/requirements/flight-booking-contract-proposal.md)
+records what flight booking and seat holds need from Flights and Payments, along with
+the decisions still open for the team.
 
 ## Student workflow record
 
