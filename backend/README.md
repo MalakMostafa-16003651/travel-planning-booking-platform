@@ -181,7 +181,8 @@ registration still creates USER accounts only; no admin creation API is added.
 The command supports `--stdin-json` for controlled automation with the same
 name/email/password/termsAccepted fields; keep that input out of shell history,
 files and logs. Tests use it with `--no-env-file` and an isolated database.
-The interactive prompt has not been manually certified.
+The interactive prompt was verified in a local PTY with a synthetic account:
+password characters were not echoed and setup completed successfully.
 
 Arwa (Person 2) can use the seeded administrator with existing login/ADMIN guards
 after this session PR is merged and setup is run. AI has not created a real

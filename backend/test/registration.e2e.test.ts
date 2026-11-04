@@ -1066,6 +1066,16 @@ describe('ACC-01 registration and ACC-04/05/06 authentication', { concurrency: f
     assert.ok(logout.responses?.['204']);
     assert.ok(logout.responses?.['403']);
     assert.ok(logout.responses?.['500']);
+    for (const operation of [login, me, logout]) {
+      for (const [code, response] of Object.entries(operation.responses) as Array<[string, any]>) {
+        if (Number(code) < 400) continue;
+        const example = response.content?.['application/json']?.example;
+        assert.equal(example?.statusCode, Number(code));
+        if (code === '401') assert.equal(example.error, 'Unauthorized');
+        if (code === '403') assert.equal(example.error, 'Forbidden');
+        if (code === '500') assert.equal(example.error, 'Internal Server Error');
+      }
+    }
   });
 
   it('locks every role on its fifth consecutive failure across normalized email variants', async () => {

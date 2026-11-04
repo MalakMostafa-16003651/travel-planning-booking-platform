@@ -1,6 +1,7 @@
 import { BadRequestException, INestApplication, ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ValidationError } from 'class-validator';
+import { STATUS_CODES } from 'node:http';
 import { ApiExceptionFilter } from './common/filters/api-exception.filter';
 import { ACCESS_TOKEN_COOKIE, PASSWORD_CHANGE_TOKEN_COOKIE } from './auth/auth.constants';
 
@@ -50,7 +51,28 @@ export function configureApplication(app: INestApplication): void {
     .addCookieAuth(PASSWORD_CHANGE_TOKEN_COOKIE, { type: 'apiKey', in: 'cookie' }, 'passwordChangeToken')
     .setVersion('0.1.0')
     .build();
-  SwaggerModule.setup('api/docs', app, () => SwaggerModule.createDocument(app, config), {
+  SwaggerModule.setup('api/docs', app, () => {
+    const document = SwaggerModule.createDocument(app, config);
+    // The shared error DTO describes every error status. Give each response a
+    // matching example instead of showing its 400 example under 401/403/etc.
+    for (const path of Object.values(document.paths)) {
+      for (const method of ['get', 'post', 'patch', 'put', 'delete', 'head', 'options'] as const) {
+        for (const [status, response] of Object.entries(path[method]?.responses ?? {})) {
+          if (!response || !('content' in response)) continue;
+          const media = response.content?.['application/json'];
+          if (!media?.schema || !('$ref' in media.schema) || media.schema.$ref !== '#/components/schemas/ApiErrorDto') continue;
+          const statusCode = Number(status);
+          if (!Number.isInteger(statusCode) || statusCode < 400 || statusCode > 599) continue;
+          media.example = {
+            statusCode,
+            error: STATUS_CODES[statusCode],
+            message: statusCode === 400 ? 'Validation failed' : statusCode === 500 ? 'An unexpected error occurred' : STATUS_CODES[statusCode],
+          };
+        }
+      }
+    }
+    return document;
+  }, {
     jsonDocumentUrl: 'api/docs-json',
   });
 }
