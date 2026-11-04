@@ -1,0 +1,580 @@
+import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
+import { resolve } from 'node:path';
+import { after, before, beforeEach, describe, it } from 'node:test';
+import { INestApplication } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import { getConnectionToken, getModelToken, MongooseModule } from '@nestjs/mongoose';
+import { Test } from '@nestjs/testing';
+import { MongoMemoryServer } from 'mongodb-memory-server';
+import { Connection, Model } from 'mongoose';
+import request, { Response } from 'supertest';
+import { AuthModule } from '../src/auth/auth.module';
+import { AccountStatus } from '../src/common/enums/account-status.enum';
+import { UserRole } from '../src/common/enums/user-role.enum';
+import { configureApplication } from '../src/configure-application';
+import { FxRatesClient, FxRatesUnavailableError } from '../src/itineraries/currency/fx-rates.client';
+import { ItinerariesModule } from '../src/itineraries/itineraries.module';
+import { ITINERARY_FLIGHT_SEARCH, ITINERARY_HOTEL_SEARCH, ItineraryFlightSearch, ItineraryHotelSearch } from '../src/itineraries/ports/travel-search.port';
+import { Itinerary } from '../src/itineraries/schemas/itinerary.schema';
+import { User, UserDocument } from '../src/users/schemas/user.schema';
+
+/** USD-based rates: 1 USD = 50 EGP = 0.9 EUR. */
+const USD_RATES: Record<string, number> = { EGP: 50, EUR: 0.9, GBP: 0.8, AED: 3.67, SAR: 3.75, JPY: 150 };
+
+class FakeFxClient {
+  calls = 0;
+  fail = false;
+  omit: string[] = [];
+
+  async latest(base: string, symbols: string[]) {
+    this.calls += 1;
+    if (this.fail) throw new FxRatesUnavailableError('down');
+    const perUsd = { USD: 1, ...USD_RATES } as Record<string, number>;
+    const rates: Record<string, number> = {};
+    for (const code of symbols) {
+      if (!this.omit.includes(code) && perUsd[code]) rates[code] = perUsd[code] / perUsd[base];
+    }
+    return { base, rateDate: new Date('2026-11-04T00:00:00Z'), rates };
+  }
+}
+
+class FakeSearch<C> {
+  criteria: C[] = [];
+  async search(criteria: C) {
+    this.criteria.push(criteria);
+    return { items: ['result'] };
+  }
+}
+
+const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), randomBytes(64)]);
+
+function cookiesFrom(response: Response): string {
+  const header = response.headers['set-cookie'] as unknown as string[];
+  return header.map((cookie) => cookie.split(';')[0]).join('; ');
+}
+
+describe('Itineraries, activities and budgeting', { concurrency: false }, () => {
+  let mongo: MongoMemoryServer;
+  let app: INestApplication;
+  let connection: Connection;
+  let users: Model<UserDocument>;
+  const fx = new FakeFxClient();
+  const flights = new FakeSearch<ItineraryFlightSearch>();
+  const hotels = new FakeSearch<ItineraryHotelSearch>();
+  let alice: string;
+  let bob: string;
+
+  const http = () => request(app.getHttpServer());
+
+  async function login(email: string, changes: Partial<User> = {}): Promise<string> {
+    await http().post('/api/auth/register').send({ name: email.split('@')[0], email, password: 'Travel123', termsAccepted: true }).expect(201);
+    if (Object.keys(changes).length > 0) await users.updateOne({ email }, { $set: changes }).exec();
+    const response = await http().post('/api/auth/login').set('Sec-Fetch-Site', 'same-origin').send({ email, password: 'Travel123' }).expect(200);
+    return cookiesFrom(response);
+  }
+
+  const setStatus = (email: string, status: AccountStatus) => users.updateOne({ email }, { $set: { status } }).exec();
+
+  async function createItinerary(cookie = alice, body: Record<string, unknown> = {}) {
+    const response = await http().post('/api/itineraries').set('Cookie', cookie)
+      .send({ title: 'Egypt trip', countries: ['eg'], startDate: '2026-12-20', ...body }).expect(201);
+    return response.body.itineraryId as string;
+  }
+
+  async function addDay(id: string, city: string, extra: Record<string, unknown> = {}, cookie = alice) {
+    const response = await http().post(`/api/itineraries/${id}/days`).set('Cookie', cookie).send({ city, countryCode: 'EG', ...extra }).expect(201);
+    return response.body;
+  }
+
+  before(async () => {
+    mongo = await MongoMemoryServer.create({
+      binary: { downloadDir: resolve(process.cwd(), 'node_modules/.cache/mongodb-binaries') },
+    });
+    const moduleRef = await Test.createTestingModule({
+      imports: [
+        ConfigModule.forRoot({
+          isGlobal: true, ignoreEnvFile: true, skipProcessEnv: true,
+          load: [() => ({ JWT_SECRET: randomBytes(48).toString('hex') })],
+        }),
+        MongooseModule.forRoot(mongo.getUri('itineraries')),
+        AuthModule,
+        ItinerariesModule,
+      ],
+    })
+      .overrideProvider(FxRatesClient).useValue(fx)
+      .overrideProvider(ITINERARY_FLIGHT_SEARCH).useValue(flights)
+      .overrideProvider(ITINERARY_HOTEL_SEARCH).useValue(hotels)
+      .compile();
+    app = moduleRef.createNestApplication();
+    configureApplication(app);
+    await app.init();
+    connection = moduleRef.get(getConnectionToken());
+    users = moduleRef.get(getModelToken(User.name));
+    await Promise.all([users.init(), moduleRef.get<Model<Itinerary>>(getModelToken(Itinerary.name)).init()]);
+  }, { timeout: 30 * 60_000 });
+
+  beforeEach(async () => {
+    for (const name of ['users', 'authsessions', 'itineraries', 'activityimages', 'exchangerates']) {
+      await connection.collection(name).deleteMany({});
+    }
+    Object.assign(fx, { calls: 0, fail: false, omit: [] });
+    flights.criteria = [];
+    hotels.criteria = [];
+    alice = await login('alice@example.com');
+    bob = await login('bob@example.com');
+  });
+
+  after(async () => {
+    await app?.close();
+    await mongo?.stop();
+  });
+
+  describe('ITN-01/ITN-03 itinerary CRUD and ownership (ACC-11)', () => {
+    it('creates an itinerary for the owner with defaults', async () => {
+      const response = await http().post('/api/itineraries').set('Cookie', alice)
+        .send({ title: '  Egypt trip ', countries: ['eg'], startDate: '2026-12-20' }).expect(201);
+      assert.equal(response.body.title, 'Egypt trip');
+      assert.deepEqual(response.body.countries, ['EG']);
+      assert.equal(response.body.visibility, 'PRIVATE');
+      assert.equal(response.body.currency, 'USD');
+      assert.equal(response.body.dayCount, 0);
+      assert.deepEqual(response.body.days, []);
+    });
+
+    it("defaults the currency to the user's preferredCurrency", async () => {
+      const carol = await login('carol@example.com', { preferredCurrency: 'EGP' });
+      const response = await http().post('/api/itineraries').set('Cookie', carol)
+        .send({ title: 'Trip', countries: ['EG'], startDate: '2026-12-20' }).expect(201);
+      assert.equal(response.body.currency, 'EGP');
+    });
+
+    it('rejects guests, non-travellers, bad dates and unsupported currencies', async () => {
+      await http().post('/api/itineraries').send({ title: 'x', countries: ['EG'], startDate: '2026-12-20' }).expect(401);
+      const admin = await login('admin@example.com', { role: UserRole.ADMIN });
+      await http().post('/api/itineraries').set('Cookie', admin).send({ title: 'x', countries: ['EG'], startDate: '2026-12-20' }).expect(403);
+      const badDate = await http().post('/api/itineraries').set('Cookie', alice).send({ title: 'x', countries: ['EG'], startDate: '2026-02-30' }).expect(400);
+      assert.ok(badDate.body.errors.startDate);
+      const badCurrency = await http().post('/api/itineraries').set('Cookie', alice)
+        .send({ title: 'x', countries: ['EG'], startDate: '2026-12-20', currency: 'CHF' }).expect(400);
+      assert.match(badCurrency.body.errors.currency[0], /Unsupported currency CHF/);
+      await http().post('/api/itineraries').set('Cookie', alice)
+        .send({ title: 'x', countries: ['EG'], startDate: '2026-12-20', userId: 'someone' }).expect(400);
+    });
+
+    it('keeps private itineraries owner-only, including for admins', async () => {
+      const id = await createItinerary();
+      const admin = await login('admin@example.com', { role: UserRole.ADMIN });
+      await http().get(`/api/itineraries/${id}`).set('Cookie', alice).expect(200);
+      await http().get(`/api/itineraries/${id}`).set('Cookie', bob).expect(404);
+      await http().get(`/api/itineraries/${id}`).set('Cookie', admin).expect(404);
+      await http().get(`/api/itineraries/${id}`).expect(404);
+      await http().get(`/api/itineraries/public/${id}`).expect(404);
+      await http().patch(`/api/itineraries/${id}`).set('Cookie', bob).send({ title: 'mine now' }).expect(404);
+      await http().delete(`/api/itineraries/${id}`).set('Cookie', bob).expect(404);
+      await http().post(`/api/itineraries/${id}/days`).set('Cookie', bob).send({ city: 'Cairo' }).expect(404);
+      await http().get(`/api/itineraries/${id}/budget-summary`).set('Cookie', admin).expect(404);
+      await http().get('/api/itineraries/not-an-id').set('Cookie', alice).expect(404);
+    });
+
+    it('lists only your own itineraries and paginates', async () => {
+      for (let i = 0; i < 12; i += 1) await createItinerary(alice, { title: `Trip ${i}` });
+      await createItinerary(bob);
+      const first = await http().get('/api/itineraries').set('Cookie', alice).expect(200);
+      assert.equal(first.body.total, 12);
+      assert.equal(first.body.items.length, 10);
+      assert.equal(first.body.totalPages, 2);
+      const second = await http().get('/api/itineraries?page=2').set('Cookie', alice).expect(200);
+      assert.equal(second.body.items.length, 2);
+      await http().get('/api/itineraries').expect(401);
+    });
+
+    it('updates and deletes an itinerary', async () => {
+      const id = await createItinerary();
+      const updated = await http().patch(`/api/itineraries/${id}`).set('Cookie', alice)
+        .send({ title: 'New', currency: 'eur', visibility: 'PUBLIC' }).expect(200);
+      assert.equal(updated.body.title, 'New');
+      assert.equal(updated.body.currency, 'EUR');
+      assert.equal(updated.body.visibility, 'PUBLIC');
+      assert.ok(updated.body.publishedAt);
+      await http().delete(`/api/itineraries/${id}`).set('Cookie', alice).expect(204);
+      await http().get(`/api/itineraries/${id}`).set('Cookie', alice).expect(404);
+    });
+  });
+
+  describe('ITN-05/ITN-07/ITN-08 days, numbering, dates and city grouping', () => {
+    it('derives day numbers, dates and city stops, and keeps them consistent after every change', async () => {
+      const id = await createItinerary();
+      await addDay(id, 'Cairo');
+      await addDay(id, 'Cairo');
+      let body = await addDay(id, 'Luxor');
+      assert.deepEqual(body.days.map((d: { dayNumber: number; date: string }) => [d.dayNumber, d.date]),
+        [[1, '2026-12-20'], [2, '2026-12-21'], [3, '2026-12-22']]);
+      assert.deepEqual(body.cityGroups.map((g: { city: string; dayCount: number }) => [g.city, g.dayCount]), [['Cairo', 2], ['Luxor', 1]]);
+      assert.equal(body.endDate, '2026-12-22');
+
+      // Insert at the start: everything shifts forward.
+      body = await addDay(id, 'Alexandria', { position: 1 });
+      assert.deepEqual(body.days.map((d: { city: string; date: string }) => `${d.city}@${d.date}`),
+        ['Alexandria@2026-12-20', 'Cairo@2026-12-21', 'Cairo@2026-12-22', 'Luxor@2026-12-23']);
+
+      // Reorder: Luxor first, one Cairo between Alexandria... grouping follows order.
+      const [alex, cairo1, cairo2, luxor] = body.days.map((d: { dayId: string }) => d.dayId);
+      body = (await http().patch(`/api/itineraries/${id}/days/reorder`).set('Cookie', alice)
+        .send({ dayIds: [cairo1, luxor, cairo2, alex] }).expect(200)).body;
+      assert.deepEqual(body.days.map((d: { city: string; dayNumber: number }) => `${d.dayNumber}:${d.city}`),
+        ['1:Cairo', '2:Luxor', '3:Cairo', '4:Alexandria']);
+      assert.deepEqual(body.cityGroups.map((g: { city: string }) => g.city), ['Cairo', 'Luxor', 'Cairo', 'Alexandria']);
+      assert.equal(body.days[0].dayId, cairo1, 'ids are stable across reorder');
+
+      // Delete day 2: later days move back one date.
+      body = (await http().delete(`/api/itineraries/${id}/days/${luxor}`).set('Cookie', alice).expect(200)).body;
+      assert.deepEqual(body.days.map((d: { city: string; date: string }) => `${d.city}@${d.date}`),
+        ['Cairo@2026-12-20', 'Cairo@2026-12-21', 'Alexandria@2026-12-22']);
+      assert.deepEqual(body.cityGroups.map((g: { city: string; dayCount: number }) => [g.city, g.dayCount]), [['Cairo', 2], ['Alexandria', 1]]);
+
+      // Changing the start date moves every day.
+      body = (await http().patch(`/api/itineraries/${id}`).set('Cookie', alice).send({ startDate: '2027-01-01' }).expect(200)).body;
+      assert.deepEqual(body.days.map((d: { date: string }) => d.date), ['2027-01-01', '2027-01-02', '2027-01-03']);
+    });
+
+    it('rejects a reorder that is not exactly the set of days, and invalid positions', async () => {
+      const id = await createItinerary();
+      const a = (await addDay(id, 'Cairo')).days[0].dayId;
+      const b = (await addDay(id, 'Luxor')).days[1].dayId;
+      await http().patch(`/api/itineraries/${id}/days/reorder`).set('Cookie', alice).send({ dayIds: [a] }).expect(400);
+      await http().patch(`/api/itineraries/${id}/days/reorder`).set('Cookie', alice).send({ dayIds: [a, a] }).expect(400);
+      await http().patch(`/api/itineraries/${id}/days/reorder`).set('Cookie', alice)
+        .send({ dayIds: [a, '665f1f77bcf86cd799439011'] }).expect(400);
+      await http().patch(`/api/itineraries/${id}/days/reorder`).set('Cookie', alice).send({ dayIds: [b, a] }).expect(200);
+      await http().post(`/api/itineraries/${id}/days`).set('Cookie', alice).send({ city: 'Aswan', position: 5 }).expect(400);
+      await http().post(`/api/itineraries/${id}/days`).set('Cookie', alice).send({ city: 'Aswan', position: 0 }).expect(400);
+    });
+
+    it('updates a day and returns 404 for unknown days', async () => {
+      const id = await createItinerary();
+      const dayId = (await addDay(id, 'Cairo', { notes: 'arrive' })).days[0].dayId;
+      const body = (await http().patch(`/api/itineraries/${id}/days/${dayId}`).set('Cookie', alice).send({ city: 'Giza', notes: '' }).expect(200)).body;
+      assert.equal(body.days[0].city, 'Giza');
+      assert.equal(body.days[0].notes, undefined);
+      await http().patch(`/api/itineraries/${id}/days/665f1f77bcf86cd799439011`).set('Cookie', alice).send({ city: 'x' }).expect(404);
+    });
+  });
+
+  describe('ITN-10/ITN-12 activities and images', () => {
+    it('adds, updates and deletes activities with time validation', async () => {
+      const id = await createItinerary();
+      const dayId = (await addDay(id, 'Cairo')).days[0].dayId;
+      let body = (await http().post(`/api/itineraries/${id}/days/${dayId}/activities`).set('Cookie', alice)
+        .send({ title: 'Museum', startTime: '09:00', endTime: '12:00' }).expect(201)).body;
+      const activityId = body.days[0].activities[0].activityId;
+      await http().post(`/api/itineraries/${id}/days/${dayId}/activities`).set('Cookie', alice)
+        .send({ title: 'Bad', startTime: '15:00', endTime: '14:00' }).expect(400);
+      await http().patch(`/api/activities/${activityId}`).set('Cookie', alice).send({ endTime: '08:00' }).expect(400);
+      body = (await http().patch(`/api/activities/${activityId}`).set('Cookie', alice).send({ title: 'Egyptian Museum', location: 'Tahrir' }).expect(200)).body;
+      assert.equal(body.days[0].activities[0].title, 'Egyptian Museum');
+      await http().patch(`/api/activities/${activityId}`).set('Cookie', bob).send({ title: 'x' }).expect(404);
+      body = (await http().delete(`/api/activities/${activityId}`).set('Cookie', alice).expect(200)).body;
+      assert.equal(body.days[0].activities.length, 0);
+    });
+
+    it('validates uploads by content and enforces image visibility', async () => {
+      const id = await createItinerary();
+      const dayId = (await addDay(id, 'Cairo')).days[0].dayId;
+      const activityId = (await http().post(`/api/itineraries/${id}/days/${dayId}/activities`).set('Cookie', alice)
+        .send({ title: 'Museum' }).expect(201)).body.days[0].activities[0].activityId;
+
+      await http().post(`/api/activities/${activityId}/images`).set('Cookie', alice)
+        .attach('image', Buffer.from('not an image'), { filename: 'fake.png', contentType: 'image/png' }).expect(400);
+      await http().post(`/api/activities/${activityId}/images`).set('Cookie', alice).expect(400);
+      await http().post(`/api/activities/${activityId}/images`).set('Cookie', bob)
+        .attach('image', PNG, { filename: 'a.png', contentType: 'image/png' }).expect(404);
+      await http().post(`/api/activities/${activityId}/images`).set('Cookie', alice)
+        .attach('image', Buffer.concat([PNG, Buffer.alloc(5 * 1024 * 1024)]), { filename: 'big.png', contentType: 'image/png' }).expect(413);
+
+      const body = (await http().post(`/api/activities/${activityId}/images`).set('Cookie', alice)
+        .attach('image', PNG, { filename: 'a.png', contentType: 'application/octet-stream' }).expect(201)).body;
+      const image = body.days[0].activities[0].images[0];
+      assert.equal(image.contentType, 'image/png');
+
+      const download = await http().get(image.url).set('Cookie', alice).buffer(true).parse((res, cb) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk: Buffer) => chunks.push(chunk));
+        res.on('end', () => cb(null, Buffer.concat(chunks)));
+      }).expect(200);
+      assert.equal(download.headers['content-type'], 'image/png');
+      assert.ok((download.body as Buffer).equals(PNG));
+      await http().get(image.url).expect(404); // private itinerary
+      await http().patch(`/api/itineraries/${id}`).set('Cookie', alice).send({ visibility: 'PUBLIC' }).expect(200);
+      await http().get(image.url).expect(200);
+
+      await http().delete(`/api/activities/${activityId}/images/${image.imageId}`).set('Cookie', alice).expect(200);
+      await http().get(image.url).expect(404);
+      assert.equal(await connection.collection('activityimages').countDocuments(), 0);
+    });
+
+    it('removes images when their day or itinerary is deleted', async () => {
+      const id = await createItinerary();
+      const dayId = (await addDay(id, 'Cairo')).days[0].dayId;
+      const activityId = (await http().post(`/api/itineraries/${id}/days/${dayId}/activities`).set('Cookie', alice)
+        .send({ title: 'Museum' }).expect(201)).body.days[0].activities[0].activityId;
+      await http().post(`/api/activities/${activityId}/images`).set('Cookie', alice).attach('image', PNG, 'a.png').expect(201);
+      await http().delete(`/api/itineraries/${id}/days/${dayId}`).set('Cookie', alice).expect(200);
+      assert.equal(await connection.collection('activityimages').countDocuments(), 0);
+    });
+  });
+
+  describe('ITN-14/ITN-16/ITN-18 budgets, transport and currency conversion', () => {
+    async function budgetedItinerary() {
+      const id = await createItinerary(alice, { currency: 'USD' });
+      const cairo = (await addDay(id, 'Cairo')).days[0].dayId;
+      const luxor = (await addDay(id, 'Luxor')).days[1].dayId;
+      await http().post(`/api/itineraries/${id}/days/${cairo}/budgets`).set('Cookie', alice).send({ category: 'FOOD', amount: 500, currency: 'egp' }).expect(201);
+      await http().post(`/api/itineraries/${id}/days/${cairo}/budgets`).set('Cookie', alice).send({ category: 'ACCOMMODATION', amount: 80, currency: 'USD' }).expect(201);
+      await http().post(`/api/itineraries/${id}/days/${luxor}/budgets`).set('Cookie', alice).send({ category: 'ACTIVITIES', amount: 45, currency: 'EUR' }).expect(201);
+      await http().post(`/api/itineraries/${id}/days/${luxor}/budgets`).set('Cookie', alice).send({ category: 'LOCAL_TRANSPORT', amount: 100, currency: 'EGP' }).expect(201);
+      const body = (await http().post(`/api/itineraries/${id}/transport-costs`).set('Cookie', alice)
+        .send({ fromCity: 'Cairo', toCity: 'Luxor', mode: 'TRAIN', amount: 1000, currency: 'EGP', dayId: luxor }).expect(201)).body;
+      return { id, cairo, luxor, body };
+    }
+
+    it('validates budget entries and transport costs', async () => {
+      const id = await createItinerary();
+      const dayId = (await addDay(id, 'Cairo')).days[0].dayId;
+      const post = (body: object) => http().post(`/api/itineraries/${id}/days/${dayId}/budgets`).set('Cookie', alice).send(body);
+      await post({ category: 'SHOPPING', amount: 1, currency: 'USD' }).expect(400);
+      await post({ category: 'FOOD', amount: -1, currency: 'USD' }).expect(400);
+      await post({ category: 'FOOD', amount: 1.234, currency: 'USD' }).expect(400);
+      await post({ category: 'FOOD', amount: '10', currency: 'USD' }).expect(400);
+      const unsupported = await post({ category: 'FOOD', amount: 10, currency: 'CHF' }).expect(400);
+      assert.match(unsupported.body.errors.currency[0], /Supported: AED, EGP, EUR, GBP, JPY, SAR, USD/);
+      await http().post(`/api/itineraries/${id}/transport-costs`).set('Cookie', alice)
+        .send({ fromCity: 'A', toCity: 'B', mode: 'TRAIN', amount: 1, currency: 'USD', dayId: '665f1f77bcf86cd799439011' }).expect(400);
+    });
+
+    it('summarises per category, day, city and transport in the requested currency', async () => {
+      const { id, body } = await budgetedItinerary();
+      assert.equal(body.transportCosts[0].dayNumber, 2);
+      const summary = (await http().get(`/api/itineraries/${id}/budget-summary`).set('Cookie', alice).expect(200)).body;
+      assert.equal(summary.currency, 'USD');
+      // 500 EGP = 10 USD; 45 EUR = 50 USD; 100 EGP = 2 USD; 1000 EGP = 20 USD.
+      assert.deepEqual(summary.totals, {
+        categories: { FOOD: 10, ACCOMMODATION: 80, ACTIVITIES: 50, LOCAL_TRANSPORT: 2 },
+        daily: 142, transport: 20, grandTotal: 162,
+      });
+      assert.deepEqual(summary.byDay.map((d: { total: number }) => d.total), [90, 52]);
+      assert.deepEqual(summary.byCity.map((c: { city: string; total: number }) => [c.city, c.total]), [['Cairo', 90], ['Luxor', 52]]);
+      assert.equal(summary.transportCosts[0].convertedAmount, 20);
+      assert.deepEqual(summary.originalTotals, [
+        { currency: 'EGP', amount: 1600 }, { currency: 'EUR', amount: 45 }, { currency: 'USD', amount: 80 },
+      ]);
+      assert.equal(summary.ratesStale, false);
+
+      const inEgp = (await http().get(`/api/itineraries/${id}/budget-summary?currency=egp`).set('Cookie', alice).expect(200)).body;
+      assert.equal(inEgp.currency, 'EGP');
+      assert.equal(inEgp.totals.grandTotal, 8100);
+      await http().get(`/api/itineraries/${id}/budget-summary?currency=XYZ`).set('Cookie', alice).expect(400);
+      await http().get(`/api/itineraries/${id}/budget-summary?currency=dollars`).set('Cookie', alice).expect(400);
+    });
+
+    it('caches rates, falls back to stale rates, and reports provider failures', async () => {
+      const { id } = await budgetedItinerary();
+      await http().get(`/api/itineraries/${id}/budget-summary`).set('Cookie', alice).expect(200);
+      await http().get(`/api/itineraries/${id}/budget-summary`).set('Cookie', alice).expect(200);
+      assert.equal(fx.calls, 1, 'second request uses the cache');
+
+      await connection.collection('exchangerates').updateMany({}, { $set: { fetchedAt: new Date(Date.now() - 2 * 60 * 60 * 1000) } });
+      fx.fail = true;
+      const stale = (await http().get(`/api/itineraries/${id}/budget-summary`).set('Cookie', alice).expect(200)).body;
+      assert.equal(stale.ratesStale, true);
+      assert.equal(stale.totals.grandTotal, 162);
+
+      await connection.collection('exchangerates').deleteMany({});
+      const down = await http().get(`/api/itineraries/${id}/budget-summary`).set('Cookie', alice).expect(503);
+      assert.match(down.body.message, /temporarily unavailable/);
+
+      fx.fail = false;
+      fx.omit = ['EUR'];
+      const missing = await http().get(`/api/itineraries/${id}/budget-summary`).set('Cookie', alice).expect(422);
+      assert.match(missing.body.message, /EUR/);
+    });
+
+    it('needs no rates when every amount is already in the display currency', async () => {
+      const id = await createItinerary(alice, { currency: 'EGP' });
+      const dayId = (await addDay(id, 'Cairo')).days[0].dayId;
+      await http().post(`/api/itineraries/${id}/days/${dayId}/budgets`).set('Cookie', alice).send({ category: 'FOOD', amount: 10.1, currency: 'EGP' }).expect(201);
+      fx.fail = true;
+      const summary = (await http().get(`/api/itineraries/${id}/budget-summary`).set('Cookie', alice).expect(200)).body;
+      assert.equal(summary.totals.grandTotal, 10.1);
+      assert.equal(summary.rateDate, null);
+    });
+
+    it('updates and deletes budget entries and transport costs, owner only', async () => {
+      const { id, body } = await budgetedItinerary();
+      const budgetId = body.days[0].budgets[0].budgetId;
+      const costId = body.transportCosts[0].transportCostId;
+      await http().patch(`/api/budgets/${budgetId}`).set('Cookie', bob).send({ amount: 1 }).expect(404);
+      let updated = (await http().patch(`/api/budgets/${budgetId}`).set('Cookie', alice).send({ amount: 750, currency: 'usd' }).expect(200)).body;
+      assert.deepEqual([updated.days[0].budgets[0].amount, updated.days[0].budgets[0].currency], [750, 'USD']);
+      await http().patch(`/api/budgets/${budgetId}`).set('Cookie', alice).send({ currency: 'CHF' }).expect(400);
+      updated = (await http().patch(`/api/transport-costs/${costId}`).set('Cookie', alice).send({ mode: 'BUS', amount: 300 }).expect(200)).body;
+      assert.equal(updated.transportCosts[0].mode, 'BUS');
+      await http().delete(`/api/transport-costs/${costId}`).set('Cookie', bob).expect(404);
+      await http().delete(`/api/transport-costs/${costId}`).set('Cookie', alice).expect(200);
+      updated = (await http().delete(`/api/budgets/${budgetId}`).set('Cookie', alice).expect(200)).body;
+      assert.equal(updated.days[0].budgets.length, 1);
+      assert.equal(updated.transportCosts.length, 0);
+      await http().get(`/api/itineraries/${id}`).set('Cookie', alice).expect(200);
+    });
+
+    it('unlinks a transport cost when its day is deleted', async () => {
+      const { id, luxor } = await budgetedItinerary();
+      const body = (await http().delete(`/api/itineraries/${id}/days/${luxor}`).set('Cookie', alice).expect(200)).body;
+      assert.equal(body.transportCosts.length, 1);
+      assert.equal(body.transportCosts[0].dayId, undefined);
+    });
+  });
+
+  describe('ITN-20/ITN-21 public search, viewing and cloning (ACC-12)', () => {
+    async function publicItinerary(cookie: string, title: string, cities: string[], country = 'EG') {
+      const id = await createItinerary(cookie, { title, countries: [country], visibility: 'PUBLIC' });
+      for (const city of cities) await addDay(id, city, { countryCode: country }, cookie);
+      return id;
+    }
+
+    it('lets guests search and view public itineraries only', async () => {
+      await publicItinerary(alice, 'Nile cruise', ['Luxor', 'Aswan']);
+      await publicItinerary(bob, 'Paris weekend', ['Paris'], 'FR');
+      await createItinerary(alice, { title: 'Secret Nile plan' });
+
+      let page = (await http().get('/api/itineraries/public/search').expect(200)).body;
+      assert.equal(page.total, 2);
+      page = (await http().get('/api/itineraries/public/search?q=nile').expect(200)).body;
+      assert.deepEqual(page.items.map((i: { title: string }) => i.title), ['Nile cruise']);
+      assert.equal(page.items[0].author.name, 'alice');
+      assert.deepEqual(page.items[0].cities, ['Luxor', 'Aswan']);
+      page = (await http().get('/api/itineraries/public/search?country=fr').expect(200)).body;
+      assert.deepEqual(page.items.map((i: { title: string }) => i.title), ['Paris weekend']);
+      page = (await http().get('/api/itineraries/public/search?city=aswan').expect(200)).body;
+      assert.equal(page.total, 1);
+      page = (await http().get('/api/itineraries/public/search?minDays=2').expect(200)).body;
+      assert.equal(page.total, 1);
+      page = (await http().get('/api/itineraries/public/search?sort=SHORTEST').expect(200)).body;
+      assert.deepEqual(page.items.map((i: { title: string }) => i.title), ['Paris weekend', 'Nile cruise']);
+      page = (await http().get('/api/itineraries/public/search?q=.*').expect(200)).body;
+      assert.equal(page.total, 0, 'search text is not a regex');
+      await http().get('/api/itineraries/public/search?minDays=3&maxDays=1').expect(400);
+      await http().get('/api/itineraries/public/search?sort=RANDOM').expect(400);
+    });
+
+    it('hides deactivated and missing authors before pagination, but not suspended ones', async () => {
+      for (let i = 0; i < 12; i += 1) await publicItinerary(alice, `Alice ${i}`, ['Cairo']);
+      const bobsId = await publicItinerary(bob, 'Bob trip', ['Cairo']);
+      const carol = await login('carol@example.com');
+      const carolsId = await publicItinerary(carol, 'Carol trip', ['Cairo']);
+
+      await setStatus('alice@example.com', AccountStatus.DEACTIVATED);
+      await setStatus('bob@example.com', AccountStatus.SUSPENDED);
+      await users.deleteOne({ email: 'carol@example.com' }).exec();
+
+      const page = (await http().get('/api/itineraries/public/search').expect(200)).body;
+      assert.equal(page.total, 1);
+      assert.equal(page.totalPages, 1);
+      assert.deepEqual(page.items.map((i: { itineraryId: string }) => i.itineraryId), [bobsId]);
+      await http().get(`/api/itineraries/public/${carolsId}`).expect(404);
+
+      const alicesId = (await connection.collection('itineraries').findOne({ title: 'Alice 0' }))!._id.toString();
+      const dave = await login('dave@example.com');
+      await http().get(`/api/itineraries/public/${alicesId}`).expect(404);
+      await http().get(`/api/itineraries/${alicesId}`).set('Cookie', dave).expect(404);
+      await http().get(`/api/itineraries/${alicesId}/budget-summary`).set('Cookie', dave).expect(404);
+      await http().post(`/api/itineraries/${alicesId}/clone`).set('Cookie', dave).expect(404);
+      const stored = await connection.collection('itineraries').findOne({ title: 'Alice 0' });
+      assert.equal(stored!.visibility, 'PUBLIC', 'the setting is preserved for reactivation');
+
+      await setStatus('alice@example.com', AccountStatus.ACTIVE);
+      await http().get(`/api/itineraries/public/${alicesId}`).expect(200);
+    });
+
+    it('clones into an independent private copy with attribution', async () => {
+      const sourceId = await publicItinerary(alice, 'Nile cruise', ['Luxor', 'Aswan']);
+      const source = (await http().get(`/api/itineraries/${sourceId}`).set('Cookie', alice).expect(200)).body;
+      const luxor = source.days[0].dayId;
+      const activityId = (await http().post(`/api/itineraries/${sourceId}/days/${luxor}/activities`).set('Cookie', alice)
+        .send({ title: 'Karnak' }).expect(201)).body.days[0].activities[0].activityId;
+      await http().post(`/api/activities/${activityId}/images`).set('Cookie', alice).attach('image', PNG, 'k.png').expect(201);
+      await http().post(`/api/itineraries/${sourceId}/days/${luxor}/budgets`).set('Cookie', alice).send({ category: 'FOOD', amount: 20, currency: 'USD' }).expect(201);
+      await http().post(`/api/itineraries/${sourceId}/transport-costs`).set('Cookie', alice)
+        .send({ fromCity: 'Luxor', toCity: 'Aswan', mode: 'TRAIN', amount: 15, currency: 'USD', dayId: source.days[1].dayId }).expect(201);
+
+      await http().post(`/api/itineraries/${sourceId}/clone`).expect(401);
+      const clone = (await http().post(`/api/itineraries/${sourceId}/clone`).set('Cookie', bob).expect(201)).body;
+      assert.notEqual(clone.itineraryId, sourceId);
+      assert.equal(clone.visibility, 'PRIVATE');
+      assert.equal(clone.clonedFrom.itineraryId, sourceId);
+      assert.equal(clone.clonedFrom.authorName, 'alice');
+      assert.equal(clone.clonedFrom.title, 'Nile cruise');
+      assert.equal(clone.days.length, 2);
+      assert.notEqual(clone.days[0].dayId, luxor);
+      assert.equal(clone.days[0].activities[0].title, 'Karnak');
+      assert.equal(clone.transportCosts[0].dayId, clone.days[1].dayId, 'transport link is remapped');
+      const cloneImage = clone.days[0].activities[0].images[0];
+      await http().get(cloneImage.url).set('Cookie', bob).expect(200);
+
+      // Independent: editing or deleting the original does not touch the clone.
+      await http().patch(`/api/itineraries/${sourceId}/days/${luxor}`).set('Cookie', alice).send({ city: 'Qena' }).expect(200);
+      await http().delete(`/api/itineraries/${sourceId}`).set('Cookie', alice).expect(204);
+      const after = (await http().get(`/api/itineraries/${clone.itineraryId}`).set('Cookie', bob).expect(200)).body;
+      assert.equal(after.days[0].city, 'Luxor');
+      await http().get(cloneImage.url).set('Cookie', bob).expect(200);
+      await http().get(`/api/itineraries/${clone.itineraryId}`).set('Cookie', alice).expect(404);
+
+      // Attribution reads "Deleted user" once the original author is deactivated.
+      await setStatus('alice@example.com', AccountStatus.DEACTIVATED);
+      const attributed = (await http().get(`/api/itineraries/${clone.itineraryId}`).set('Cookie', bob).expect(200)).body;
+      assert.equal(attributed.clonedFrom.authorName, 'Deleted user');
+    });
+
+    it('does not clone private itineraries', async () => {
+      const id = await createItinerary();
+      await http().post(`/api/itineraries/${id}/clone`).set('Cookie', bob).expect(404);
+    });
+  });
+
+  describe('ITN-25/ITN-26 reuse of hotel and flight search', () => {
+    it('derives hotel and flight criteria from the city stops', async () => {
+      const id = await createItinerary();
+      await addDay(id, 'Cairo');
+      await addDay(id, 'Cairo');
+      const body = await addDay(id, 'Luxor');
+      const [cairo1, cairo2, luxor] = body.days.map((d: { dayId: string }) => d.dayId);
+
+      const hotelsResult = (await http().get(`/api/itineraries/${id}/hotels?dayId=${cairo2}&guests=2`).set('Cookie', alice).expect(200)).body;
+      assert.deepEqual(hotels.criteria[0], { city: 'Cairo', countryCode: 'EG', checkIn: '2026-12-20', checkOut: '2026-12-22', guests: 2 });
+      assert.deepEqual(hotelsResult.results, { items: ['result'] });
+
+      await http().get(`/api/itineraries/${id}/flights?dayId=${luxor}&adults=2&infants=1`).set('Cookie', alice).expect(200);
+      assert.deepEqual(flights.criteria[0], {
+        originCity: 'Cairo', originCountryCode: 'EG', destinationCity: 'Luxor', destinationCountryCode: 'EG',
+        departureDate: '2026-12-22', adults: 2, children: 0, infants: 1,
+      });
+      await http().get(`/api/itineraries/${id}/flights?dayId=${cairo2}`).set('Cookie', alice).expect(400);
+      await http().get(`/api/itineraries/${id}/flights?dayId=${cairo1}`).set('Cookie', alice).expect(400);
+      await http().get(`/api/itineraries/${id}/flights?dayId=${cairo1}&originCity=Berlin&originCountryCode=DE`).set('Cookie', alice).expect(200);
+      assert.equal(flights.criteria[1].originCity, 'Berlin');
+      await http().get(`/api/itineraries/${id}/hotels?dayId=${cairo1}`).set('Cookie', bob).expect(404);
+    });
+  });
+
+  it('rejects an edit based on a stale copy (optimistic concurrency)', async () => {
+    const id = await createItinerary();
+    const model = connection.model<Itinerary>(Itinerary.name);
+    const first = await model.findById(id).orFail();
+    const second = await model.findById(id).orFail();
+    first.days.push({ city: 'Cairo', activities: [], budgets: [] } as never);
+    await first.save();
+    second.days.push({ city: 'Luxor', activities: [], budgets: [] } as never);
+    await assert.rejects(second.save());
+  });
+
+});
