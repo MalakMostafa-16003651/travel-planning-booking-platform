@@ -1,20 +1,29 @@
-import { Body, Controller, Cookies, Get, Header, HttpCode, Post, Req, Res, UseGuards } from '@nestjs/common';
-import { ApiBadRequestResponse, ApiConflictResponse, ApiCookieAuth, ApiCreatedResponse, ApiForbiddenResponse, ApiInternalServerErrorResponse, ApiNoContentResponse, ApiOkResponse, ApiOperation, ApiTags, ApiUnauthorizedResponse } from '@nestjs/swagger';
+import { Body, Controller, Cookies, Get, Header, HttpCode, Patch, Post, Req, Res, UseGuards } from '@nestjs/common';
+import { ApiBadRequestResponse, ApiConflictResponse, ApiCookieAuth, ApiCreatedResponse, ApiExtraModels, ApiForbiddenResponse, ApiInternalServerErrorResponse, ApiNoContentResponse, ApiOkResponse, ApiOperation, ApiTags, ApiUnauthorizedResponse, getSchemaPath } from '@nestjs/swagger';
 import { Response } from 'express';
 import { ApiErrorDto } from '../common/dto/api-error.dto';
-import { ACCESS_TOKEN_COOKIE, ACCESS_TOKEN_TTL_SECONDS, AUTH_COOKIE_OPTIONS, REFRESH_TOKEN_COOKIE, REFRESH_TOKEN_TTL_MS } from './auth.constants';
+import { ACCESS_TOKEN_COOKIE, ACCESS_TOKEN_TTL_SECONDS, AUTH_COOKIE_OPTIONS, PASSWORD_CHANGE_TOKEN_COOKIE, PASSWORD_CHANGE_TOKEN_TTL_SECONDS, REFRESH_TOKEN_COOKIE, REFRESH_TOKEN_TTL_MS } from './auth.constants';
 import { AuthGuard, AuthenticatedRequest } from './auth.guard';
 import { AuthSessionsService } from './auth-sessions.service';
 import { AuthService } from './auth.service';
 import { AuthenticatedUserDto } from './dto/authenticated-user.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { RegisteredUserDto } from './dto/registered-user.dto';
+import { PasswordChangeRequiredDto } from './dto/password-change-required.dto';
+import { PasswordChangeGuard, PasswordChangeRequest } from './password-change.guard';
+import { PasswordManagementService } from './password-management.service';
 
 @ApiTags('Authentication')
+@ApiExtraModels(AuthenticatedUserDto, PasswordChangeRequiredDto)
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly auth: AuthService, private readonly sessions: AuthSessionsService) {}
+  constructor(
+    private readonly auth: AuthService,
+    private readonly sessions: AuthSessionsService,
+    private readonly passwords: PasswordManagementService,
+  ) {}
 
   @Post('register')
   @ApiOperation({
@@ -33,17 +42,31 @@ export class AuthController {
   @Header('Cache-Control', 'no-store')
   @ApiOperation({
     summary: 'ACC-04/ACC-05: log in with email and password',
-    description: 'Five consecutive failed logins lock new login attempts for 15 minutes and return a lockout message. An eligible successful login resets the counter. Issues HttpOnly, Secure, SameSite=Lax access/refresh cookies; tokens are excluded from JSON. Access expires in 15 minutes; automatic token renewal is not implemented.',
+    description: 'Five failed logins lock new attempts for 15 minutes. Eligible login resets the counter. Ordinary login issues protected access/refresh cookies and public identity. ACC-07a temporary-password login instead returns passwordChangeRequired=true and a 15-minute restricted cookie allowing only password change/logout; it clears normal cookies. Tokens are never in JSON. Automatic renewal is not implemented.',
   })
-  @ApiOkResponse({ type: AuthenticatedUserDto, description: 'Current public user; authentication cookies are set separately.' })
+  @ApiOkResponse({
+    schema: { oneOf: [{ $ref: getSchemaPath(AuthenticatedUserDto) }, { $ref: getSchemaPath(PasswordChangeRequiredDto) }] },
+    description: 'Public identity with normal cookies, or passwordChangeRequired with only a restricted password-change cookie.',
+  })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'Invalid fields or unknown properties.' })
   @ApiUnauthorizedResponse({ type: ApiErrorDto, description: 'Invalid email/password, deactivated account, or temporary lockout. Locked accounts receive: Account temporarily locked. Try again later.' })
-  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'Suspended account, mandatory password change, or cross-origin request.' })
-  async login(@Body() input: LoginDto, @Res({ passthrough: true }) response: Response): Promise<AuthenticatedUserDto> {
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'Suspended account or cross-origin request.' })
+  async login(
+    @Body() input: LoginDto,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<AuthenticatedUserDto | PasswordChangeRequiredDto> {
     const user = await this.auth.verifyCredentials(input);
-    const tokens = await this.sessions.create(user._id.toString());
+    if (user.mustChangePassword) {
+      const token = await this.sessions.createPasswordChange(user._id.toString(), user.credentialVersion);
+      response.clearCookie(ACCESS_TOKEN_COOKIE, AUTH_COOKIE_OPTIONS);
+      response.clearCookie(REFRESH_TOKEN_COOKIE, AUTH_COOKIE_OPTIONS);
+      response.cookie(PASSWORD_CHANGE_TOKEN_COOKIE, token, { ...AUTH_COOKIE_OPTIONS, maxAge: PASSWORD_CHANGE_TOKEN_TTL_SECONDS * 1000 });
+      return { passwordChangeRequired: true };
+    }
+    const tokens = await this.sessions.create(user._id.toString(), user.credentialVersion);
     response.cookie(ACCESS_TOKEN_COOKIE, tokens.accessToken, { ...AUTH_COOKIE_OPTIONS, maxAge: ACCESS_TOKEN_TTL_SECONDS * 1000 });
     response.cookie(REFRESH_TOKEN_COOKIE, tokens.refreshToken, { ...AUTH_COOKIE_OPTIONS, maxAge: REFRESH_TOKEN_TTL_MS });
+    response.clearCookie(PASSWORD_CHANGE_TOKEN_COOKIE, AUTH_COOKIE_OPTIONS);
     return AuthenticatedUserDto.fromUser(user);
   }
 
@@ -52,19 +75,48 @@ export class AuthController {
   @Header('Cache-Control', 'no-store')
   @ApiOperation({
     summary: 'ACC-06: log out the current browser session',
-    description: 'Revokes only sessions identified by the presented refresh/access cookies before clearing both cookies. No JSON body is required. Idempotent for missing/invalid credentials. An expired access cookie does not prevent logout through the refresh cookie.',
+    description: 'Revokes only sessions identified by presented refresh/access/password-change cookies before clearing all three cookies. No JSON body is required. Idempotent for missing/invalid credentials. Expired access does not prevent logout through the refresh cookie.',
   })
-  @ApiNoContentResponse({ description: 'Matching server sessions revoked and both authentication cookies expired.' })
+  @ApiNoContentResponse({ description: 'Matching server sessions revoked and all authentication cookies expired.' })
   @ApiForbiddenResponse({ type: ApiErrorDto, description: 'Cross-origin browser request rejected before logout.' })
   @ApiInternalServerErrorResponse({ type: ApiErrorDto, description: 'Server revocation failed; cookies are preserved for retry.' })
   async logout(
     @Cookies(ACCESS_TOKEN_COOKIE) accessToken: string | undefined,
     @Cookies(REFRESH_TOKEN_COOKIE) refreshToken: string | undefined,
+    @Cookies(PASSWORD_CHANGE_TOKEN_COOKIE) passwordChangeToken: string | undefined,
     @Res({ passthrough: true }) response: Response,
   ): Promise<void> {
-    await this.sessions.logout(accessToken, refreshToken);
+    await this.sessions.logout(accessToken, refreshToken, passwordChangeToken);
+    this.clearAuthenticationCookies(response);
+  }
+
+  @Patch('change-password')
+  @UseGuards(PasswordChangeGuard)
+  @HttpCode(204)
+  @Header('Cache-Control', 'no-store')
+  @ApiCookieAuth('accessToken')
+  @ApiCookieAuth('passwordChangeToken')
+  @ApiOperation({
+    summary: 'ACC-07a/ACC-08: change your own password',
+    description: 'Accepts either a normal access cookie or the restricted password-change cookie. Verifies the current password; replacement must meet registration policy and differ from it. Atomically invalidates all prior sessions and clears cookies. A new normal login is required. No user ID, role or status is accepted from the caller.',
+  })
+  @ApiNoContentResponse({ description: 'Password changed. All previous sessions are invalid; log in again.' })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'Invalid fields, noncompliant/unchanged new password, or unknown properties.' })
+  @ApiUnauthorizedResponse({ type: ApiErrorDto, description: 'Invalid current password or stale/ineligible normal/restricted session.' })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'Cross-origin request.' })
+  async changePassword(
+    @Req() request: PasswordChangeRequest,
+    @Body() input: ChangePasswordDto,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<void> {
+    await this.passwords.changePassword(request.passwordChangeIdentity!, input);
+    this.clearAuthenticationCookies(response);
+  }
+
+  private clearAuthenticationCookies(response: Response): void {
     response.clearCookie(ACCESS_TOKEN_COOKIE, AUTH_COOKIE_OPTIONS);
     response.clearCookie(REFRESH_TOKEN_COOKIE, AUTH_COOKIE_OPTIONS);
+    response.clearCookie(PASSWORD_CHANGE_TOKEN_COOKIE, AUTH_COOKIE_OPTIONS);
   }
 
   @Get('me')

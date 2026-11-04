@@ -41,16 +41,11 @@ export class AuthService implements OnModuleInit {
     if (user.status !== AccountStatus.ACTIVE) {
       throw new UnauthorizedException('Invalid email or password');
     }
-    // No unrestricted session is permitted before the temporary-password flow exists.
-    if (user.mustChangePassword) {
-      if (await this.users.isLoginLocked(user._id.toString(), user.passwordHash)) {
-        throw new UnauthorizedException(LOCKOUT_MESSAGE);
-      }
-      throw new ForbiddenException('Password change is required');
-    }
     // This conditional write is the successful-login ordering point. A concurrent
     // fifth failure that locked first prevents a stale verifier from clearing it.
-    const authenticated = await this.users.resetFailedLoginAttempts(user._id.toString(), user.passwordHash);
+    const authenticated = await this.users.resetFailedLoginAttempts(
+      user._id.toString(), user.passwordHash, user.credentialVersion,
+    );
     if (!authenticated) {
       const locked = await this.users.isLoginLocked(user._id.toString(), user.passwordHash);
       throw new UnauthorizedException(locked ? LOCKOUT_MESSAGE : 'Invalid email or password');

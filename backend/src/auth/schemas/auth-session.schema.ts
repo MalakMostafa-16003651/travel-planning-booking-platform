@@ -14,6 +14,19 @@ export class AuthSession {
   @Prop({ required: true, select: false })
   refreshTokenHash!: string;
 
+  @Prop({
+    type: Number,
+    default: 0,
+    min: 0,
+    max: Number.MAX_SAFE_INTEGER,
+    select: false,
+    validate: {
+      validator: Number.isSafeInteger,
+      message: 'Credential version must be a safe integer',
+    },
+  })
+  credentialVersion!: number;
+
   @Prop({ type: Date, required: true })
   lastActivityAt!: Date;
 

@@ -9,6 +9,8 @@ import { AuthenticatedUserDto } from './dto/authenticated-user.dto';
 export interface AuthenticatedRequest extends Request {
   user?: { userId: string; role: UserRole };
   authenticatedUser?: AuthenticatedUserDto;
+  // Server-only credential snapshot for conditional account mutations.
+  authenticatedCredentialVersion?: number;
 }
 
 @Injectable()
@@ -22,6 +24,7 @@ export class AuthGuard implements CanActivate {
     const user = await this.sessions.authenticate(token);
     request.user = { userId: user._id.toString(), role: user.role };
     request.authenticatedUser = AuthenticatedUserDto.fromUser(user);
+    request.authenticatedCredentialVersion = user.credentialVersion;
     return true;
   }
 }

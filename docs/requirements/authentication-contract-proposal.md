@@ -58,8 +58,9 @@ behavior for later requirements are added with those features.
 | `name` | User's display name. |
 | `email` | Trimmed, lowercase email with database-enforced uniqueness. Uniqueness is case-insensitive after normalization. |
 | `passwordHash` | Salted password hash; never returned in API responses. |
-| `phoneNumber` | Profile phone number; exact validation and optionality are deferred to ACC-09. |
-| `preferredCurrency` | Code from the shared supported-currency reference data. |
+| `credentialVersion` | Private nonnegative safe integer, default zero, incremented atomically with password reset/change; sessions retain the verified version. Agreed by the team leader on 2026-11-04. |
+| `phoneNumber` | Optional profile phone number; ACC-09 accepts international syntax (+ and 8–15 digits) when supplied. Omission preserves it; null/blank updates are rejected. |
+| `preferredCurrency` | Optional uppercase code from the shared Currency catalog; no automatic default. |
 | `role` | One value from the shared role enum; each account has a single role. |
 | `status` | One value from the shared account-status enum. |
 | `mustChangePassword` | Restricts accounts using administrator-set temporary passwords until they change the password. |
@@ -71,6 +72,39 @@ behavior for later requirements are added with those features.
 Public registration creates `USER` accounts. Registration and profile DTOs must
 not allow callers to assign privileged roles or change account status. Public
 responses must allowlist their fields and exclude password/session information.
+
+### ACC-09 own profiles and the shared Currency catalog
+
+`GET /api/users/me` and `PATCH /api/users/me` use the authenticated owner for all
+four roles. The profile response adds optional phoneNumber/preferredCurrency to
+the existing public account fields; login/registration/auth-me JSON is unchanged.
+PATCH accepts only name, phoneNumber and preferredCurrency; all supplied values
+must validate before an atomic field update. Empty patches and supplied null/blank
+values are rejected. Omission retains existing fields, and no default is assigned.
+The mutation also matches the authenticated credential version and current
+eligible account state so a stale request cannot survive a password reset.
+
+On 2026-11-04 the team leader explicitly requested creation of one catalog for
+Kiki (Person 7) to reuse. `Currency` uses collection `currencies`, fields `_id`,
+`code`, `name`, `createdAt`, `updatedAt`; code is unique, uppercase and three
+letters. Initial codes are AED/EGP/EUR/GBP/JPY/SAR/USD, derived from the PDF-linked
+[Countries.csv](https://docs.google.com/spreadsheets/d/1SlKUTRqlHuBJAMC-Z-QOZzSrzKpGHT_TgQUI5gVm-BA/edit?gid=2042930643).
+This is the team's initial supported set, not an assertion that the source
+declares an exhaustive currency policy. Additional supported codes need shared
+coordination rather than private lists in each module.
+
+Import CurrenciesModule and inject its exported CurrenciesService to call
+`listSupported()` or exact-canonical `isSupported(code)`. Public
+`GET /api/currencies` returns sorted `{ code, name }` pairs for selectors. Run
+`npm.cmd run seed:currencies` from backend for explicit setup; startup does not
+seed automatically. The idempotent seed preserves existing rows/names/timestamps
+and does not delete additional coordinated codes. No public currency-write API,
+FX conversion, new secret name or payment-currency change is introduced.
+
+Malak implements profile preference storage/validation and the requested shared
+catalog. Kiki owns itinerary/budget/FX usage and coordinates any currency changes;
+Gamila coordinates integration with airport/reference-data seeding if needed.
+The student will share the handoff; AI does not message teammates automatically.
 
 ### ModeratorAssignment
 
@@ -93,9 +127,8 @@ Person 1 supplies reusable authentication and role checks. Each module owner
 enforces resource ownership and provider restrictions on that module's queries
 and operations. Client-provided identifiers are not proof of ownership.
 
-Forced-password-change restrictions must be enforced on the backend. The exact
-endpoints available under this restriction are deferred to the temporary-password
-and login features.
+Forced-password-change restrictions are enforced on the backend. Restricted
+credentials permit only the password-change and logout operations described below.
 
 ## Session settings agreed for ACC-04
 
@@ -117,15 +150,57 @@ opened. HTTPS is required outside localhost development; Secure stays enabled.
 
 AuthGuard is exported by AuthModule and supplies `request.user = { userId, role }`.
 Each feature owner still enforces their resource's role/ownership restrictions.
-No unrestricted session is granted to an account with mustChangePassword set
-while the required password-change flow is absent.
+AuthModule also exports RolesGuard. Role-restricted routes use
+`@UseGuards(AuthGuard, RolesGuard)` followed by `@Roles(UserRole.ADMIN)` or the
+required shared roles. Method policy overrides controller policy; missing/empty
+role policy fails closed. Client-supplied roles never establish identity.
+Accounts with mustChangePassword receive a restricted password-change session,
+never a normal authenticated identity or access/refresh pair.
+
+### ACC-07a / ACC-08 agreed password management
+
+On 2026-11-04 the student selected **"Use this design"** for private
+`credentialVersion` on User/AuthSession, a 15-minute HttpOnly restricted
+password-change cookie, administrator-chosen compliant temporary passwords never
+returned by the API, and a fresh login after password change. The restricted
+cookie is backed by an existing AuthSession so logout revokes it server-side.
+The session uses the existing fields plus the private credential version; it has
+a 15-minute absolute expiry and no issued refresh token. Tokens have a distinct
+signed `tokenUse` and cannot be used in normal authentication.
+
+ADMIN-only `POST /api/admin/users/:userId/reset-password` accepts
+`temporaryPassword` for USER/AIRLINE_MODERATOR/HOTEL_MODERATOR targets. It keeps
+the target's status unchanged, resets failed-login lockout, sets mustChangePassword
+and increments the credential version. Administrator targets are excluded.
+
+The next eligible login returns only `passwordChangeRequired: true`, clears normal
+cookies and sets `__Host-passwordChangeToken` with the existing secure cookie
+attributes. `PATCH /api/auth/change-password` accepts `currentPassword` and a
+compliant, different `newPassword`, using either that restricted cookie or the
+caller's normal access cookie. Success clears all authentication cookies and
+requires login. No caller-supplied user ID controls password-change ownership.
+
+Version increments and password/flag/counter writes are atomic on User. Old
+normal/restricted sessions are logically invalidated without relying on TTL or
+successful multi-document cleanup. Legacy missing versions mean zero. Session
+issuance preserves the version verified with credentials; guards recheck current
+account/version after touching activity. In-flight operations already accepted
+before a reset are not claimed retroactively rolled back.
+
+The workbook lists ACC-14 account listing as an ACC-07a dependency; that module
+remains Arwa's separate work. ACC-18 is implemented by explicit administrator
+setup (`npm.cmd run seed:admin`), with no public admin registration endpoint.
+Existing administrators are preserved, non-admin email collisions are rejected,
+and credentials use the existing registration policy and salted hash format.
+Temporary-password
+delivery is outside this API, and frontend flow remains Milestone 2.
 
 ### ACC-06 current-browser logout and inactivity
 
 ACC-06 uses current-browser logout as a documented implementation choice; the
 reviewed sheet does not require all-device logout. The endpoint is POST /api/auth/logout,
 with no JSON input. It revokes only sessions identified by the presented refresh
-hash and/or verified access JWT session/user claims, then clears both cookies with
+hash and/or purpose-verified access/password-change JWT session/user claims, then clears all three cookies with
 matching attributes and returns 204. It also works with an expired access cookie
 when the refresh cookie is present, and allows cleanup of an inactive account.
 Missing/malformed/repeated credentials are idempotent. Database failure returns
@@ -137,8 +212,9 @@ activity does not extend the absolute seven-day maximum. Frontend redirection an
 storage integration are Milestone 2 work.
 
 Remaining choices for any later token-renewal work: refresh endpoint/rotation/replay
-handling and whether background refresh counts as activity; coordinated revocation
-after account/password changes; and any future cross-origin deployment. Neither
+handling and whether background refresh counts as activity; future account-status
+mutation coordination; and any future cross-origin deployment. Password changes
+now invalidate sessions through credential versions. Neither
 ACC-06 nor ACC-19 prescribes a refresh endpoint. Until renewal is implemented, an
 expired access token requires another login. ACC-19 frontend integration is not
 claimed complete by this backend feature.
@@ -146,15 +222,43 @@ No new environment-variable name is introduced; JWT_SECRET was already agreed.
 
 ## Cross-module details deferred to their respective features
 
+### Milestone 1 acceptance boundary: ACC-10 / ACC-19
+
+| Requirement part | Backend evidence | Remaining work |
+| --- | --- | --- |
+| ACC-10: guests cannot perform restricted actions | AuthGuard rejects absent/invalid/expired credentials with JSON 401. Own-profile/identity, password and admin operations have guards; current flight-booking routes reuse AuthGuard. | Each future review/blog/booking owner must apply the shared guard. Login navigation and returning to the intended action require the Milestone 2 frontend. |
+| ACC-19: protected cookie issuance | Access/refresh cookies share HttpOnly, Secure, SameSite=Lax, Path=/ and no Domain. Tokens are not JSON fields; refresh storage is hashed. | Verify the actual frontend/browser deployment honors these attributes. |
+| ACC-19: current identity | GET /api/auth/me returns only the public identity and validates live account/session state. Bearer-only and refresh-only credentials do not authorize it. | Frontend retrieves identity here instead of reading/storing tokens. |
+| ACC-19: no JavaScript-accessible credential storage | No localStorage/sessionStorage/document.cookie access or token-storage code was found in the current backend source. | No frontend exists in this repository yet; browser storage, reload/logout and return-to-action behavior remain unverified. This is not a full ACC-19 completion claim. |
+
+The workbook requires login-and-return behavior for ACC-10 and cookie/identity/
+storage behavior for ACC-19. M1 backend readiness does not complete the frontend
+clauses. No refresh endpoint is mandated by these rows, and none is added as an
+audit side effect. Missing sessions receive JSON errors; backend APIs do not
+replace those responses with browser redirects.
+
+Public registration/login, the public currency catalog and Swagger remain
+intentional public routes. Logout accepts optional credential proofs so cleanup
+works after expiry; that does not grant access to other protected operations.
+Restricted password-change credentials remain confined to change/logout.
+
+For ACC-11's next integration, contact Arwa (Person 2) to confirm the agreed
+ModeratorAssignment lookup interface: moderatorId, exactly one airlineId/hotelId,
+matching moderator role and current assignment. Gamila/Lama enforce assigned
+provider scope; Ismail/Osama enforce booking ownership/provider inspection; Kiki
+enforces private itinerary ownership. Admin booking exceptions do not grant
+general access to private itineraries. Do not duplicate another owner's module
+or treat client-supplied provider/user IDs as authorization.
+
 | Concern | Coordination for the relevant feature |
 | --- | --- |
 | Upcoming bookings | Flight and hotel booking owners provide checks for upcoming Confirmed bookings. Define ongoing hotel stays and the exact date/time boundary. Coordinate concurrent booking confirmation and account deactivation. |
 | Deactivated authors | Blog, itinerary, comment, and review owners consistently hide or anonymize content as ACC-12 requires. Agree whether to derive visibility from account status or persist a reversible visibility change. |
-| Preferred currency | Profile validation and itinerary budgeting use the same seeded supported currencies. Booking prices, payments, and refunds retain the single platform currency required by PAY-04. |
-| Administrative account operations | Agree ownership for ACC-13 to ACC-16: moderator creation, account listing, and suspension/reactivation. |
+| Preferred currency | Malak's profile validation and Kiki's budgeting reuse CurrenciesModule/CurrenciesService and collection currencies. Coordinate reference-data seeding with Gamila. Booking prices, payments, and refunds retain the single platform currency required by PAY-04, owned by Hicham. |
+| Administrative account operations | Arwa (Person 2) owns moderator creation, account listing, suspension/reactivation and their admin APIs; coordinate account fields/guards with Malak. |
 | Provider status | ACC-15 provider deactivation is separate from moderator suspension. Provider owners enforce search/booking restrictions while preserving existing Confirmed bookings. |
-| Booking inspection | ACC-17 administration views consume booking-module data without duplicating booking logic. |
-| Notifications/audit | Assign owners and interfaces for mandatory in-app account/provider notifications and audit records of administrative actions. |
+| Booking inspection | Arwa's ACC-17 administration views consume Ismail's flight-booking and Osama's hotel-booking data without duplicating booking logic. |
+| Notifications/audit | Arwa owns shared in-app notification functionality and audit logs. Feature owners agree the calling interfaces with her. |
 
 Suspension and deactivation must retain their different effects: suspended
 users' content stays visible unless separately moderated; deactivated users'
@@ -164,10 +268,11 @@ content follows ACC-12.
 
 - GEN-11 requires Pending Payment -> Confirmed -> Completed, with Pending Payment
   -> Expired and Confirmed -> Cancelled as the other allowed booking transitions.
-  The current three-value booking enum needs a coordinated update when the
-  booking features are implemented. Booking owners will finalize whether
-  `PENDING` represents Pending Payment or is renamed, and define `COMPLETED` and
-  `EXPIRED` once for both booking modules. This does not affect ACC-01.
+  The team's published flight-booking implementation, imported from PR #8,
+  already adds `COMPLETED` and `EXPIRED` to the shared booking enum and retains
+  `PENDING` for the unpaid hold. This records the integrated source, not a claim
+  that every booking owner accepted its proposal. Flight/hotel/payment owners
+  must coordinate remaining contract decisions; Person 1 does not redefine it.
 - ACC-03 is referenced by the PDF registration endpoint table but absent from the
   reviewed workbook. Do not invent its meaning.
 

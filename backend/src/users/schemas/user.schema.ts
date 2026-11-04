@@ -18,6 +18,15 @@ export class User {
   @Prop({ required: true, select: false })
   passwordHash!: string;
 
+  @Prop({
+    type: Number,
+    default: 0,
+    min: 0,
+    select: false,
+    validate: { validator: Number.isSafeInteger, message: 'Credential version must be an integer' },
+  })
+  credentialVersion!: number;
+
   @Prop({ type: String })
   phoneNumber?: string;
 
