@@ -23,6 +23,25 @@ function unlockedLoginFilter(userId: string, passwordHash: string) {
   };
 }
 
+function incrementableCredentialVersion() {
+  const version = { $ifNull: ['$credentialVersion', 0] };
+  return {
+    // Pipeline updates bypass schema validation. Reject malformed stored values
+    // and reserve room for one exact integer increment; legacy missing means zero.
+    $cond: [
+      { $isNumber: version },
+      {
+        $and: [
+          { $gte: [version, 0] },
+          { $lt: [version, Number.MAX_SAFE_INTEGER] },
+          { $eq: [version, { $trunc: version }] },
+        ],
+      },
+      false,
+    ],
+  };
+}
+
 @Injectable()
 export class UsersService implements OnModuleInit {
   constructor(@InjectModel(User.name) private readonly users: Model<User>) {}
@@ -35,12 +54,18 @@ export class UsersService implements OnModuleInit {
   async findForAuthentication(email: string): Promise<UserDocument | null> {
     // Sensitive fields are loaded only for the authentication service, never an API response.
     return this.users.findOne({ email: email.trim().toLowerCase() })
-      .select('+passwordHash +mustChangePassword +failedLoginAttempts +lockedUntil')
+      .select('+passwordHash +mustChangePassword +credentialVersion +failedLoginAttempts +lockedUntil')
       .exec();
   }
 
   async findByIdForAuthentication(userId: string): Promise<UserDocument | null> {
-    return this.users.findById(userId).select('+mustChangePassword').exec();
+    return this.users.findById(userId).select('+mustChangePassword +credentialVersion').exec();
+  }
+
+  async findForPasswordChange(userId: string): Promise<UserDocument | null> {
+    return this.users.findById(userId)
+      .select('+passwordHash +mustChangePassword +credentialVersion')
+      .exec();
   }
 
   async isLoginLocked(userId: string, passwordHash: string): Promise<boolean> {
@@ -84,12 +109,86 @@ export class UsersService implements OnModuleInit {
     return this.isLoginLocked(userId, passwordHash);
   }
 
-  async resetFailedLoginAttempts(userId: string, passwordHash: string): Promise<UserDocument | null> {
+  async resetFailedLoginAttempts(
+    userId: string,
+    passwordHash: string,
+    credentialVersion = 0,
+  ): Promise<UserDocument | null> {
+    if (!Number.isSafeInteger(credentialVersion) || credentialVersion < 0) return null;
+    const unlocked = unlockedLoginFilter(userId, passwordHash);
     return this.users.findOneAndUpdate(
-      { ...unlockedLoginFilter(userId, passwordHash), mustChangePassword: false },
+      {
+        ...unlocked,
+        $expr: {
+          $and: [
+            unlocked.$expr,
+            { $eq: [{ $ifNull: ['$credentialVersion', 0] }, credentialVersion] },
+          ],
+        },
+      },
       [{ $set: { failedLoginAttempts: 0, lockedUntil: null, updatedAt: '$$NOW' } }],
       { updatePipeline: true, timestamps: false, returnDocument: 'after' },
+    ).select('+mustChangePassword +credentialVersion').exec();
+  }
+
+  async replacePassword(
+    userId: string,
+    expectedHash: string,
+    expectedVersion: number,
+    newHash: string,
+    expectedMustChangePassword: boolean,
+  ): Promise<boolean> {
+    if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0 || expectedVersion >= Number.MAX_SAFE_INTEGER) {
+      return false;
+    }
+    const result = await this.users.updateOne(
+      {
+        _id: userId,
+        passwordHash: expectedHash,
+        status: AccountStatus.ACTIVE,
+        mustChangePassword: expectedMustChangePassword,
+        $expr: {
+          $and: [
+            { $eq: [{ $ifNull: ['$credentialVersion', 0] }, expectedVersion] },
+            incrementableCredentialVersion(),
+          ],
+        },
+      },
+      [{
+        $set: {
+          passwordHash: { $literal: newHash },
+          mustChangePassword: false,
+          failedLoginAttempts: 0,
+          lockedUntil: null,
+          credentialVersion: { $add: [{ $ifNull: ['$credentialVersion', 0] }, 1] },
+          updatedAt: '$$NOW',
+        },
+      }],
+      { updatePipeline: true, timestamps: false, upsert: false },
     ).exec();
+    return result.matchedCount === 1;
+  }
+
+  async setTemporaryPassword(userId: string, newHash: string): Promise<boolean> {
+    const result = await this.users.updateOne(
+      {
+        _id: userId,
+        role: { $in: [UserRole.USER, UserRole.AIRLINE_MODERATOR, UserRole.HOTEL_MODERATOR] },
+        $expr: incrementableCredentialVersion(),
+      },
+      [{
+        $set: {
+          passwordHash: { $literal: newHash },
+          mustChangePassword: true,
+          failedLoginAttempts: 0,
+          lockedUntil: null,
+          credentialVersion: { $add: [{ $ifNull: ['$credentialVersion', 0] }, 1] },
+          updatedAt: '$$NOW',
+        },
+      }],
+      { updatePipeline: true, timestamps: false, upsert: false },
+    ).exec();
+    return result.matchedCount === 1;
   }
 
   async createRegisteredUser(input: CreateRegisteredUser): Promise<UserDocument> {
