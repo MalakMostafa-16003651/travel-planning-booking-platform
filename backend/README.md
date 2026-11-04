@@ -185,6 +185,28 @@ Start the backend, open Swagger UI, expand `POST /api/auth/register`, and select
 | Role injection | Add `"role": "ADMIN"` to the sample body. | 400; registration cannot assign privileged roles. |
 | Unknown property | Add an extra field such as `"unexpected": true`. | 400; the field is rejected. |
 
+## Flight booking and inventory holds
+
+`backend/src/flight-bookings` implements FLT-19, FLT-21, FLT-22, FLT-23, FLT-25, FLT-26, the booking side of FLT-12, and GEN-11. It is built against the [flight booking contract proposal](../docs/requirements/flight-booking-contract-proposal.md), which lists the fields it needs from other modules and the open team decisions.
+
+| Method | Endpoint | Result |
+| --- | --- | --- |
+| POST | `/api/flight-bookings` | Validates and prices a booking. Reserves and stores nothing. |
+| POST | `/api/flight-bookings/hold` | Reserves seats and creates a `PENDING` booking for 10 minutes. |
+| GET | `/api/flight-bookings` | Your bookings; `group=UPCOMING`, `PAST` or `CANCELLED`, page size 10. |
+| GET | `/api/flight-bookings/:id` | One of your bookings. |
+| GET | `/api/flight-bookings/:id/cancellation-quote` | The refund you would receive. Changes nothing. |
+| POST | `/api/flight-bookings/:id/cancel` | Cancels a Confirmed booking and requests its refund. |
+| GET | `/api/flight-bookings/:id/e-ticket` | PDF e-ticket for a Confirmed booking. |
+
+All routes need a login. Another user's booking returns **404**. Booking and cancelling need role `USER`. Amounts are integer minor units.
+
+**Overselling** is prevented by one conditional cabin write: `heldSeats` only increases if `totalSeats - bookedSeats - heldSeats` still covers the request. Hold, confirm, cancel and expiry run in MongoDB transactions, so a round trip reserves both cabins or neither. Transactions need a replica set: Atlas always has one, and the tests start one.
+
+**Expiry** runs every minute, as does retrying failed refund requests and completing departed bookings. Payment checks `holdExpiresAt` directly, so a late sweep cannot extend a hold.
+
+**Integration:** `ports/` defines what this module needs from Flights, Payments and Notifications. The inventory adapter already uses the agreed `flights`, `cabininventories`, `airports` and `airlines` collections, so holds return 404 until those contain data. `adapters/pending-integration.adapters.ts` holds temporary Payments and Notifications bindings: until Person 8's module calls `confirmPaidBooking`, a booking can be held but not confirmed outside the automated tests.
+
 ## Automated tests
 
 From `backend/`, run:
