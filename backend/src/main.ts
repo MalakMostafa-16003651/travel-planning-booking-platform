@@ -20,6 +20,6 @@ async function bootstrap(): Promise<void> {
 }
 
 void bootstrap().catch(() => {
-  Logger.error('Backend startup failed. Check database configuration and connectivity.', 'Bootstrap');
+  Logger.error('Backend startup failed. Check environment configuration and database connectivity.', 'Bootstrap');
   process.exitCode = 1;
 });

@@ -16,7 +16,7 @@ architecture and delivery requirements. The team's naming and Git rules apply.
 | --- | --- |
 | ACC-01 | Registration requires name, unique valid email, terms/privacy consent, and a password with at least eight characters, one letter, and one digit. |
 | ACC-04 | All account roles log in with email and password. Invalid credentials receive a generic error; suspended accounts receive a suspension message. |
-| ACC-05 | Five consecutive failed logins lock the account for 15 minutes. Successful login resets the counter. |
+| ACC-05 | Five consecutive failed logins lock the account for 15 minutes and show a lockout message. Successful login resets the counter. |
 | ACC-06 | Logout clears authentication cookies and revokes the refresh token on the server. Thirty minutes without an authenticated request expires the session. |
 | ACC-07a | An administrator can set a temporary password for a user or moderator. The account must change it at the next login. |
 | ACC-08 | Password changes require the current password and a compliant new password. |
@@ -97,24 +97,52 @@ Forced-password-change restrictions must be enforced on the backend. The exact
 endpoints available under this restriction are deferred to the temporary-password
 and login features.
 
-## Session settings deferred to login and session features
+## Session settings agreed for ACC-04
 
-The requirements mandate access and refresh cookies, refresh-token revocation,
-and 30-minute inactivity expiry. Finalize these settings when implementing the
-relevant login and session features:
+On 2026-11-03, after an explanation, the student selected "Use these settings":
+15-minute access tokens, seven-day maximum refresh tokens, 30-minute inactivity
+expiry, private AuthSession storage with only a refresh-token hash, HttpOnly/Secure/
+SameSite=Lax cookies named `__Host-accessToken` and `__Host-refreshToken`, the
+existing JWT_SECRET name, and a same-origin frontend/API. Refresh and logout
+behavior remain separate implementation steps, as stated in the proposal.
 
-1. Access-token lifetime, refresh-token lifetime, and refresh endpoint/behavior.
-2. Server-side session representation, refresh rotation, and replay handling.
-3. How authenticated activity updates inactivity expiry and whether a background
-   refresh counts as activity.
-4. Whether logout revokes the current session or every session.
-5. Session revocation following password changes, resets, suspension, and
-   deactivation.
-6. Cookie names, SameSite value, CSRF protection, frontend origin/CORS rules, and
-   local HTTPS configuration for the required Secure cookies.
+The private AuthSession uses `_id`, `userId`, `refreshTokenHash`, `lastActivityAt`,
+`expiresAt`, `revokedAt`, `createdAt`, `updatedAt`. The refresh token is random and
+opaque; its SHA-256 hash is stored with a unique index. `expiresAt` is an absolute
+seven-day maximum. Cookie Path=/ and no Domain enforce the `__Host-` convention.
+Authenticated requests verify access JWTs and the session, reload the account's
+current role/status, and atomically advance activity. TTL cleanup does not replace
+expiry checks. Same-origin CSRF protection applies to browser writes; CORS is not
+opened. HTTPS is required outside localhost development; Secure stays enabled.
 
-No new environment-variable names are introduced by this contract. Any additions
-must follow the team's agreement process.
+AuthGuard is exported by AuthModule and supplies `request.user = { userId, role }`.
+Each feature owner still enforces their resource's role/ownership restrictions.
+No unrestricted session is granted to an account with mustChangePassword set
+while the required password-change flow is absent.
+
+### ACC-06 current-browser logout and inactivity
+
+ACC-06 uses current-browser logout as a documented implementation choice; the
+reviewed sheet does not require all-device logout. The endpoint is POST /api/auth/logout,
+with no JSON input. It revokes only sessions identified by the presented refresh
+hash and/or verified access JWT session/user claims, then clears both cookies with
+matching attributes and returns 204. It also works with an expired access cookie
+when the refresh cookie is present, and allows cleanup of an inactive account.
+Missing/malformed/repeated credentials are idempotent. Database failure returns
+a generic error and preserves cookies for retry; revocation is atomic per document.
+
+The guard's 30-minute idle check and activity update use database time atomically;
+rejected requests cannot keep an expired/revoked session alive. Authenticated
+activity does not extend the absolute seven-day maximum. Frontend redirection and
+storage integration are Milestone 2 work.
+
+Remaining choices for any later token-renewal work: refresh endpoint/rotation/replay
+handling and whether background refresh counts as activity; coordinated revocation
+after account/password changes; and any future cross-origin deployment. Neither
+ACC-06 nor ACC-19 prescribes a refresh endpoint. Until renewal is implemented, an
+expired access token requires another login. ACC-19 frontend integration is not
+claimed complete by this backend feature.
+No new environment-variable name is introduced; JWT_SECRET was already agreed.
 
 ## Cross-module details deferred to their respective features
 
