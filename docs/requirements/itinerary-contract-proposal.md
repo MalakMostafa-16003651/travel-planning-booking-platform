@@ -54,41 +54,59 @@ city. The API returns it as `cityGroups`.
 
 ## 3. What this module needs from others
 
-### Person 1 / Malak: authors (ACC-12)
+### Person 1 / Malak: account statuses (ACC-11, ACC-12)
 
-Port `ITINERARY_AUTHORS`:
+Port `ITINERARY_ACCOUNT_STATUSES`, matching the agreed shared method exactly:
 
 ```ts
-getAuthors(userIds: string[]): Promise<Map<string, { name: string; status: AccountStatus }>>
+UsersService.getAccountStatuses(userIds: string[]): Promise<Map<string, AccountStatus>>
 ```
 
-The planned shared method is `UsersService.getAccountStatuses(userIds)`, which returns
-statuses only. **Requested adjustment:** also return `name`. Attribution needs it on public
-itineraries and on clones (ITN-21). Without it, the module would have to read the User
-collection directly.
+It returns entries only for users that exist. Every visibility decision uses only this
+port:
 
-How it is used:
+- Visible means the author exists and is not `DEACTIVATED`. `SUSPENDED` authors stay
+  visible. Missing authors are hidden.
+- The authors of **all** matching public itineraries are looked up before pagination.
+  Hidden authors are excluded from the query itself, so `total` and page counts only
+  count itineraries the caller can open.
+- Author status is rechecked when viewing (`/public/:id` and `/:id`), cloning, viewing the
+  budget summary, searching hotels or flights, and downloading images. Hidden itineraries
+  return 404. They stay stored with their `visibility` unchanged.
+- Errors propagate (500), so a failed lookup never grants access. The owner's own access
+  does not depend on this lookup.
+- ACC-11: a private itinerary is owner-only, including for admins. Ownership is checked
+  against `request.user.userId` set by the shared authentication guard.
 
-- The authors of **all** matching public itineraries are looked up before pagination. Hidden
-  authors are then excluded from the query, so `total` and page counts are correct.
-- Visible means the author exists and is not `DEACTIVATED`. `SUSPENDED` authors stay visible.
-- Author status is rechecked when viewing, cloning, viewing the budget summary,
-  searching hotels or flights, and downloading images.
-- Errors propagate, so a failed lookup never grants access.
+Temporary binding: `InterimAccountStatusesAdapter`, with the same signature and
+semantics, reads only `_id` and `status` from `users`. When the shared method lands, the
+only change is in `ItinerariesModule`: import `UsersModule` and bind
+`{ provide: ITINERARY_ACCOUNT_STATUSES, useExisting: UsersService }`.
 
-Temporary binding: `InterimAuthorsAdapter` reads only `_id`, `name` and `status` from
-`users`. Once the shared method exists, replace it with an adapter that calls `UsersService`.
+**Adjustment needed: author names.** The shared method returns statuses only, but the
+module shows the author's name on public itineraries and stores it in clone attribution
+(ITN-21). Until UsersService offers a name lookup, port `ITINERARY_AUTHOR_NAMES`
+(`UserAuthorNamesAdapter`) reads only `_id` and `name` from `users`. It is never used to
+decide visibility: names are requested only for authors the status port allows, and
+everyone else is shown as "Deleted user". Proposal: add
+`UsersService.getDisplayNames(userIds: string[]): Promise<Map<string, string>>`, or accept
+the read-only lookup.
 
 ### CurrenciesModule (PR #10)
 
-Port `ITINERARY_CURRENCIES`: `listSupported()` and `isSupported(code)`. Temporary binding:
-`InterimCurrenciesAdapter`, with the same seeded codes (AED, EGP, EUR, GBP, JPY, SAR, USD).
-When synchronizing with `develop`, bind the port to `CurrenciesService` and import
-`CurrenciesModule`. Currency conversion and FXRatesAPI handling stay in this module.
+Port `ITINERARY_CURRENCIES` (`listSupported()` and `isSupported(code)`) is bound with
+`useExisting: CurrenciesService`, and `CurrenciesModule` is imported. The catalog is seeded
+with AED, EGP, EUR, GBP, JPY, SAR and USD (`GET /api/currencies`). The itinerary currency
+defaults to the user's `preferredCurrency` when it is in the catalog, else USD. Every
+itinerary, budget, transport and summary currency is checked against the catalog (400
+otherwise, listing the supported codes). Currency conversion and FXRatesAPI handling stay
+in this module. Rates are requested only for catalog codes, and a provider response for a
+different base currency is rejected as a provider failure.
 
 ### Person 3: flight search (ITN-26)
 
-Port `ITINERARY_FLIGHT_SEARCH.search(criteria)`. The criteria are `originCity`,
+`GET /api/itineraries/:id/flights` (ITN-26) reuses the Flights module search (FLT-11,
+FLT-12, FLT-15, `GET /api/flights/search`) through port `ITINERARY_FLIGHT_SEARCH.search(criteria)`. The criteria are `originCity`,
 `originCountryCode`, `destinationCity`, `destinationCountryCode`, `departureDate`
 (YYYY-MM-DD), `adults`, `children`, `infants`, `cabinClass` and `page`. The itinerary
 supplies cities, not airports. Person 3 should say whether FlightsService can search by
@@ -97,7 +115,8 @@ codes itself.
 
 ### Person 5: hotel search (ITN-25)
 
-Port `ITINERARY_HOTEL_SEARCH.search(criteria)`. The criteria are `city`, `countryCode`,
+`GET /api/itineraries/:id/hotels` (ITN-25) reuses the Hotels module search (HTL-11,
+HTL-12, `GET /api/hotels/search`) through port `ITINERARY_HOTEL_SEARCH.search(criteria)`. The criteria are `city`, `countryCode`,
 `checkIn`, `checkOut`, `guests` and `page`. Check-in is the first day of the city stop.
 Check-out is the morning after its last day.
 
@@ -107,7 +126,7 @@ Until the Flights and Hotels modules exist, these two endpoints return 503.
 
 | # | Question | Who | Proposal |
 | --- | --- | --- | --- |
-| 1 | Add `name` to the shared author lookup? | Malak (Person 1) | Yes, as in section 3. |
+| 1 | Author names: the agreed `getAccountStatuses` returns statuses only. | Malak (Person 1) | Add `getDisplayNames`, or accept the read-only name lookup (section 3). Visibility uses statuses only either way. |
 | 2 | How should a clone show its attribution once the original author is deactivated? | Team | Keep the clone visible to its owner, and show the author as "Deleted user" (ACC-12 wording). |
 | 3 | Can flight search take cities? | Person 3 | Yes, through the airports dataset. |
 | 4 | Is there a shared media/upload service (GEN-08)? The blog also needs images. | Team | For now, store bytes in `activityimages`; move them to the shared service if one is agreed. |

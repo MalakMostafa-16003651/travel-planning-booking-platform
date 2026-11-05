@@ -309,9 +309,9 @@ All routes need a login. Another user's booking returns **404**. Booking and can
 
 **Dates and numbering.** Days are stored in order; nothing derived is stored. Day N's date is `startDate + (N - 1)`, and consecutive days in the same city form a city stop. Adding, deleting or reordering days, or changing `startDate`, therefore cannot leave numbers, dates, grouping or per-city budgets out of date. Two simultaneous edits of the same itinerary cannot overwrite each other: the second gets 409 and should reload.
 
-**Access (ACC-11, ACC-12).** Private itineraries are visible only to their owner, including to admins; everyone else gets 404. Public itineraries whose author is deactivated or no longer exists are left unchanged in the database but are hidden from search, viewing, budget summary and cloning (404). They are removed before pagination, so totals only count what can be opened. Suspended authors stay visible.
+**Access (ACC-11, ACC-12).** Private itineraries are visible only to their owner, including to admins; everyone else gets 404. Public itineraries whose author is deactivated or no longer exists are left unchanged in the database but are hidden from search, viewing, budget summary and cloning (404). They are removed before pagination, so totals only count what can be opened. Suspended authors stay visible. Author status comes from the agreed `UsersService.getAccountStatuses(userIds)` interface (an interim adapter with the same signature until it lands); if the lookup fails, the request fails (500) instead of granting access.
 
-**Currency (ITN-18).** Itinerary, budget and transport currencies must be in the shared catalog (AED, EGP, EUR, GBP, JPY, SAR, USD). The summary calls FXRatesAPI from the backend only, caches each base currency's rates for one hour in `exchangerates`, and returns:
+**Currency (ITN-18).** Itinerary, budget, transport and summary currencies must be in the shared catalog from `CurrenciesService` (AED, EGP, EUR, GBP, JPY, SAR, USD; `GET /api/currencies`). The summary calls FXRatesAPI from the backend only, caches each base currency's rates for one hour in `exchangerates`, and returns:
 
 - 400 for a currency outside the catalog;
 - 422 if the provider has no rate for one of the currencies;
@@ -320,7 +320,7 @@ All routes need a login. Another user's booking returns **404**. Booking and can
 
 `FXRATES_API_KEY` is optional (the provider has a keyless tier) and is sent as a bearer header, never in a URL or response.
 
-**Flights and hotels (ITN-25, ITN-26).** The itinerary derives the city and dates and passes them to the Flights and Hotels modules. Until those modules exist, these two endpoints return 503.
+**Flights and hotels (ITN-25, ITN-26).** The itinerary derives the city and dates and passes them to the Hotels search (HTL-11, HTL-12) and the Flights search (FLT-11, FLT-12, FLT-15). Until those modules exist, these two endpoints return 503.
 
 For a manual Swagger check: log in, create an itinerary, add days in Cairo, Cairo and Luxor, then reorder them and confirm day numbers, dates and `cityGroups` follow. Add budget entries in EGP and USD and call `budget-summary?currency=EUR`. Make the itinerary PUBLIC, log in as a second user, then search for it and clone it.
 
