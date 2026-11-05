@@ -7,6 +7,7 @@ import { validateEnvironment } from './config/validate-environment';
 import { FlightBookingsModule } from './flight-bookings/flight-bookings.module';
 import { AirportsModule } from './airports/airports.module';
 import { AirlinesModule } from './airlines/airlines.module';
+import { ItinerariesModule } from './itineraries/itineraries.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { AirlinesModule } from './airlines/airlines.module';
     FlightBookingsModule,
     AirportsModule,
     AirlinesModule,
+    ItinerariesModule,
   ],
 })
 export class AppModule {}
