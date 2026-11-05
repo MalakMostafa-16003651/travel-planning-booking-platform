@@ -17,7 +17,10 @@ import {
   BudgetCategory, DAY_MS, dateOfDay, escapeRegex, formatDateOnly, ITINERARY_PAGE_SIZE, ItineraryVisibility, MAX_ACTIVITIES_PER_DAY,
   MAX_BUDGETS_PER_DAY, MAX_DAYS, MAX_IMAGES_PER_ACTIVITY, MAX_TRANSPORT_COSTS, parseDateOnly, roundMoney,
 } from './itinerary.rules';
-import { ITINERARY_AUTHORS, ItineraryAuthor, ItineraryAuthorsPort, isVisibleAuthor } from './ports/itinerary-authors.port';
+import { AccountStatus } from '../common/enums/account-status.enum';
+import {
+  ITINERARY_ACCOUNT_STATUSES, ITINERARY_AUTHOR_NAMES, ItineraryAccountStatusesPort, ItineraryAuthorNamesPort, isVisibleStatus,
+} from './ports/itinerary-authors.port';
 import { ITINERARY_CURRENCIES, ItineraryCurrenciesPort } from './ports/itinerary-currencies.port';
 import { FlightSearchPort, HotelSearchPort, ITINERARY_FLIGHT_SEARCH, ITINERARY_HOTEL_SEARCH, ItineraryFlightSearch, ItineraryHotelSearch } from './ports/travel-search.port';
 import { ActivityImage } from './schemas/activity-image.schema';
@@ -46,7 +49,8 @@ export class ItinerariesService {
     @InjectModel(Itinerary.name) private readonly itineraries: Model<Itinerary>,
     @InjectModel(ActivityImage.name) private readonly images: Model<ActivityImage>,
     @InjectModel(User.name) private readonly users: Model<User>,
-    @Inject(ITINERARY_AUTHORS) private readonly authors: ItineraryAuthorsPort,
+    @Inject(ITINERARY_ACCOUNT_STATUSES) private readonly accountStatuses: ItineraryAccountStatusesPort,
+    @Inject(ITINERARY_AUTHOR_NAMES) private readonly authorNames: ItineraryAuthorNamesPort,
     @Inject(ITINERARY_CURRENCIES) private readonly currencies: ItineraryCurrenciesPort,
     @Inject(ITINERARY_FLIGHT_SEARCH) private readonly flights: FlightSearchPort,
     @Inject(ITINERARY_HOTEL_SEARCH) private readonly hotels: HotelSearchPort,
@@ -418,8 +422,8 @@ export class ItinerariesService {
     if (sizeConditions.length > 0) filter.$expr = { $and: sizeConditions };
 
     const candidateAuthors = (await this.itineraries.distinct('userId', filter).exec()) as Types.ObjectId[];
-    const authors = await this.authors.getAuthors(candidateAuthors.map((id) => id.toString()));
-    const visibleAuthors = candidateAuthors.filter((id) => isVisibleAuthor(authors.get(id.toString())));
+    const statuses = await this.accountStatuses.getAccountStatuses(candidateAuthors.map((id) => id.toString()));
+    const visibleAuthors = candidateAuthors.filter((id) => isVisibleStatus(statuses.get(id.toString())));
     const visibleFilter: QueryFilter<Itinerary> = { ...filter, userId: { $in: visibleAuthors } };
 
     const sort = SORTS[query.sort ?? PublicItinerarySort.NEWEST];
@@ -436,15 +440,18 @@ export class ItinerariesService {
       ]).exec(),
       this.itineraries.countDocuments(visibleFilter).exec(),
     ]);
-    const names = await this.attributionNames(rows, authors);
+    const names = await this.attributionNames(rows, statuses);
     return pageOf(rows.map((row) => ItinerarySummaryDto.from(row, names)), page, total);
   }
 
   /** ITN-21: an independent private copy. Author status is rechecked at clone time. */
   async clone(itineraryId: string, viewer: NonNullable<Viewer>): Promise<ItineraryDto> {
     const source = await this.findReadable(itineraryId, undefined);
-    const author = (await this.authors.getAuthors([source.userId.toString()])).get(source.userId.toString());
-    if (!isVisibleAuthor(author)) throw new NotFoundException(NOT_FOUND);
+    const sourceAuthorId = source.userId.toString();
+    if (!isVisibleStatus((await this.accountStatuses.getAccountStatuses([sourceAuthorId])).get(sourceAuthorId))) {
+      throw new NotFoundException(NOT_FOUND);
+    }
+    const authorName = (await this.authorNames.getNames([sourceAuthorId])).get(sourceAuthorId) ?? DELETED_USER_NAME;
 
     const newCloneId = new Types.ObjectId();
     const dayIdMap = new Map<string, Types.ObjectId>();
@@ -514,7 +521,7 @@ export class ItinerariesService {
         clonedFrom: {
           itineraryId: source._id,
           userId: source.userId,
-          authorName: author.name,
+          authorName,
           title: source.title,
           clonedAt: new Date(),
         },
@@ -592,8 +599,8 @@ export class ItinerariesService {
   private async canRead(itinerary: ItineraryDocument, viewer: Viewer): Promise<boolean> {
     if (viewer && itinerary.userId.toString() === viewer.userId) return true;
     if (itinerary.visibility !== ItineraryVisibility.PUBLIC) return false;
-    const authors = await this.authors.getAuthors([itinerary.userId.toString()]);
-    return isVisibleAuthor(authors.get(itinerary.userId.toString()));
+    const authorId = itinerary.userId.toString();
+    return isVisibleStatus((await this.accountStatuses.getAccountStatuses([authorId])).get(authorId));
   }
 
   private findOwned(itineraryId: string, userId: string): Promise<ItineraryDocument> {
@@ -634,14 +641,18 @@ export class ItinerariesService {
   }
 
   /** Names for authors and clone attributions; deactivated or missing authors show as "Deleted user". */
-  private async attributionNames(rows: Pick<Itinerary, 'userId' | 'clonedFrom'>[], known = new Map<string, ItineraryAuthor>()): Promise<AuthorNames> {
+  private async attributionNames(
+    rows: Pick<Itinerary, 'userId' | 'clonedFrom'>[], knownStatuses = new Map<string, AccountStatus>(),
+  ): Promise<AuthorNames> {
     const ids = [...new Set(rows.flatMap((row) => [row.userId.toString(), ...(row.clonedFrom ? [row.clonedFrom.userId.toString()] : [])]))];
-    const unknown = ids.filter((id) => !known.has(id));
-    const authors = unknown.length > 0 ? new Map([...known, ...(await this.authors.getAuthors(unknown))]) : known;
-    return new Map(ids.map((id) => {
-      const author = authors.get(id);
-      return [id, isVisibleAuthor(author) ? author.name : DELETED_USER_NAME];
-    }));
+    if (ids.length === 0) return new Map();
+    const unknown = ids.filter((id) => !knownStatuses.has(id));
+    const statuses = unknown.length > 0
+      ? new Map([...knownStatuses, ...(await this.accountStatuses.getAccountStatuses(unknown))])
+      : knownStatuses;
+    const visible = ids.filter((id) => isVisibleStatus(statuses.get(id)));
+    const names = visible.length > 0 ? await this.authorNames.getNames(visible) : new Map<string, string>();
+    return new Map(ids.map((id) => [id, names.get(id) ?? DELETED_USER_NAME]));
   }
 
   private async assertCurrency(code: string, field: string): Promise<string> {

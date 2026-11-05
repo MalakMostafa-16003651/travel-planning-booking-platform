@@ -16,6 +16,7 @@ import { CurrenciesService } from '../src/currencies/currencies.service';
 import { configureApplication } from '../src/configure-application';
 import { FxRatesClient, FxRatesUnavailableError } from '../src/itineraries/currency/fx-rates.client';
 import { ItinerariesModule } from '../src/itineraries/itineraries.module';
+import { ITINERARY_ACCOUNT_STATUSES, ItineraryAccountStatusesPort } from '../src/itineraries/ports/itinerary-authors.port';
 import { ITINERARY_FLIGHT_SEARCH, ITINERARY_HOTEL_SEARCH, ItineraryFlightSearch, ItineraryHotelSearch } from '../src/itineraries/ports/travel-search.port';
 import { Itinerary } from '../src/itineraries/schemas/itinerary.schema';
 import { User, UserDocument } from '../src/users/schemas/user.schema';
@@ -60,6 +61,7 @@ describe('Itineraries, activities and budgeting', { concurrency: false }, () => 
   let app: INestApplication;
   let connection: Connection;
   let users: Model<UserDocument>;
+  let accountStatuses: ItineraryAccountStatusesPort;
   const fx = new FakeFxClient();
   const flights = new FakeSearch<ItineraryFlightSearch>();
   const hotels = new FakeSearch<ItineraryHotelSearch>();
@@ -112,6 +114,7 @@ describe('Itineraries, activities and budgeting', { concurrency: false }, () => 
     await app.init();
     connection = moduleRef.get(getConnectionToken());
     users = moduleRef.get(getModelToken(User.name));
+    accountStatuses = moduleRef.get(ITINERARY_ACCOUNT_STATUSES);
     await Promise.all([users.init(), moduleRef.get<Model<Itinerary>>(getModelToken(Itinerary.name)).init()]);
     await moduleRef.get(CurrenciesService).seedSupported();
   }, { timeout: 30 * 60_000 });
@@ -550,6 +553,23 @@ describe('Itineraries, activities and budgeting', { concurrency: false }, () => 
       await setStatus('alice@example.com', AccountStatus.DEACTIVATED);
       const attributed = (await http().get(`/api/itineraries/${clone.itineraryId}`).set('Cookie', bob).expect(200)).body;
       assert.equal(attributed.clonedFrom.authorName, 'Deleted user');
+    });
+
+    it('fails closed when the account-status lookup fails', async () => {
+      const id = await publicItinerary(alice, 'Nile cruise', ['Luxor']);
+      const original = accountStatuses.getAccountStatuses;
+      accountStatuses.getAccountStatuses = async () => { throw new Error('users collection unavailable'); };
+      try {
+        await http().get('/api/itineraries/public/search').expect(500);
+        await http().get(`/api/itineraries/public/${id}`).expect(500);
+        await http().get(`/api/itineraries/${id}`).set('Cookie', bob).expect(500);
+        await http().post(`/api/itineraries/${id}/clone`).set('Cookie', bob).expect(500);
+        assert.equal(await connection.collection('itineraries').countDocuments(), 1, 'nothing was cloned');
+        // The owner's own access does not depend on the author lookup.
+        await http().get(`/api/itineraries/${id}`).set('Cookie', alice).expect(200);
+      } finally {
+        accountStatuses.getAccountStatuses = original;
+      }
     });
 
     it('does not clone private itineraries', async () => {
