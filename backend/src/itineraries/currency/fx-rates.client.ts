@@ -45,9 +45,16 @@ export class FxRatesClient {
     if (body.success === false || typeof body.rates !== 'object' || body.rates === null) {
       throw new FxRatesUnavailableError('Exchange-rate provider returned an error');
     }
+    // Rates quoted against another base would silently produce wrong totals.
+    if (typeof body.base === 'string' && body.base.trim().toUpperCase() !== base) {
+      throw new FxRatesUnavailableError('Exchange-rate provider returned rates for a different base currency');
+    }
+    // Keep only the supported codes that were requested, with usable positive rates.
+    const requested = new Set(symbols);
     const rates: Record<string, number> = {};
     for (const [code, value] of Object.entries(body.rates as Record<string, unknown>)) {
-      if (typeof value === 'number' && Number.isFinite(value) && value > 0) rates[code.toUpperCase()] = value;
+      const normalized = code.trim().toUpperCase();
+      if (requested.has(normalized) && typeof value === 'number' && Number.isFinite(value) && value > 0) rates[normalized] = value;
     }
     const rateDate = typeof body.date === 'string' ? new Date(body.date) : new Date();
     return { base, rateDate: Number.isNaN(rateDate.getTime()) ? new Date() : rateDate, rates };
