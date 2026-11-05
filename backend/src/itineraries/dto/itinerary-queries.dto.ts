@@ -71,7 +71,7 @@ export class BudgetSummaryQueryDto {
   currency?: string;
 }
 
-/** ITN-25 */
+/** ITN-25: hotel search for a city stop, reusing HTL-11/HTL-12. */
 export class ItineraryHotelsQueryDto extends PageQueryDto {
   @ApiProperty({ description: 'Any day of the stop to search hotels for. Check-in/out come from that stop.' })
   @IsMongoId({ message: 'dayId must be a valid id' })

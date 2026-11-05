@@ -23,7 +23,11 @@ export interface FlightSearchPort {
   search(criteria: ItineraryFlightSearch): Promise<unknown>;
 }
 
-/** ITN-25: what the itinerary needs from the Hotels module (Person 5). */
+/**
+ * ITN-25: what the itinerary needs from the Hotels module (Person 5). Backed by the same
+ * search as HTL-11/HTL-12 (GET /api/hotels/search); availability, filtering and sorting stay
+ * owned by HotelsService.
+ */
 export interface ItineraryHotelSearch {
   city: string;
   countryCode?: string;
