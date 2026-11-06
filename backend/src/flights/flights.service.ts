@@ -1,9 +1,8 @@
 
 
-import {BadRequestException,ConflictException,ForbiddenException, Injectable,Logger,NotFoundException,OnModuleInit,ServiceUnavailableException,} from '@nestjs/common';
-
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import {BadRequestException,ConflictException,ForbiddenException,Injectable,Logger,NotFoundException,OnModuleInit,ServiceUnavailableException,} from '@nestjs/common';
+import { InjectConnection, InjectModel } from '@nestjs/mongoose';
+import { Connection, Model, Types } from 'mongoose';
 import { AirlinesService } from '../airlines/airlines.service';
 import { Airline } from '../airlines/schemas/airline.schema';
 import { Airport } from '../airports/schemas/airport.schema';
@@ -21,6 +20,9 @@ import { localDateTimeToUtc } from './flight-time.util';
 export class FlightsService implements OnModuleInit {
   private readonly logger = new Logger(FlightsService.name);
   constructor(
+    @InjectConnection()
+    private readonly connection: Connection,
+
     @InjectModel(Flight.name)
     private readonly flights: Model<Flight>,
 
@@ -166,7 +168,7 @@ async onModuleInit(): Promise<void> {
 
   // FLT-04: Create cabin inventory
 
-  async createCabins(
+   async createCabins(
     moderatorId: string,
     flightId: string,
     input: CreateCabinsDto,
@@ -186,19 +188,27 @@ async onModuleInit(): Promise<void> {
       );
     }
 
+    const session = await this.connection.startSession();
+
     try {
-      // An ordered batch can still insert earlier rows before a duplicate fails.
-      // The existing unique index resolves races; the transaction rolls the entire
-      // request back, including those earlier rows, before reporting a conflict.
-      return await this.cabins.db.transaction((session) => this.cabins.insertMany(
-        input.cabins.map((item) => ({
-          ...item,
-          flightId: flight._id,
-          bookedSeats: 0,
-          heldSeats: 0,
-        })),
-        { ordered: true, session },
-      ));
+      let createdCabins: CabinInventory[] = [];
+
+      await session.withTransaction(async () => {
+        createdCabins = await this.cabins.insertMany(
+          input.cabins.map((item) => ({
+            ...item,
+            flightId: flight._id,
+            bookedSeats: 0,
+            heldSeats: 0,
+          })),
+          {
+            session,
+            ordered: true,
+          },
+        );
+      });
+
+      return createdCabins;
     } catch (error) {
       if ((error as { code?: number }).code === 11000) {
         throw new ConflictException(
@@ -207,10 +217,11 @@ async onModuleInit(): Promise<void> {
       }
 
       throw error;
+    } finally {
+      await session.endSession();
     }
   }
-
-  // Helper: Get a flight owned by the moderator
+ // Helper: Verify flight ownership and status
 
   private async getOwnedScheduledFlight(
     moderatorId: string,

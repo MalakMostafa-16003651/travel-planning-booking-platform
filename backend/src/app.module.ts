@@ -31,6 +31,7 @@ import { FlightsModule } from './flights/flights.module';
     AirlinesModule,
     FlightsModule,
     ItinerariesModule,
+    FlightsModule,
   ],
 })
 export class AppModule {}
