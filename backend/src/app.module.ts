@@ -6,10 +6,12 @@ import { AuthModule } from './auth/auth.module';
 import { validateEnvironment } from './config/validate-environment';
 import { BlogModule } from './blog/blog.module';
 import { FlightBookingsModule } from './flight-bookings/flight-bookings.module';
+import { PaymentsModule } from './payments/payments.module';
 import { AirportsModule } from './airports/airports.module';
 import { AirlinesModule } from './airlines/airlines.module';
 import { ItinerariesModule } from './itineraries/itineraries.module';
 import { FlightsModule } from './flights/flights.module';
+import { HotelsModule } from './hotels/hotels.module';
 
 @Module({
   imports: [
@@ -29,11 +31,13 @@ import { FlightsModule } from './flights/flights.module';
     AuthModule,
     FlightBookingsModule,
     BlogModule,
+    PaymentsModule,
     AirportsModule,
     AirlinesModule,
     FlightsModule,
     ItinerariesModule,
     FlightsModule,
+    HotelsModule,
   ],
 })
 export class AppModule {}

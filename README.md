@@ -37,8 +37,17 @@ The [flight booking contract proposal](docs/requirements/flight-booking-contract
 records what flight booking and seat holds need from Flights and Payments, along with
 the decisions still open for the team.
 
+The [hotel contract proposal](docs/requirements/hotel-contract-proposal.md) records
+the proposed Hotel/Room/RoomAvailability schemas, the HTL-01 through HTL-22
+endpoints, and what Hotels needs from and exports to Payments and the (not yet
+built) hotel-booking module.
+
 ## Student workflow record
 
 The [Person 1 workflow record](docs/work-logs/16003651.md) contains the agreed rules,
 requirements, AI collaboration history, verification, learning checks, and reusable
 team prompt. Each student keeps one continuous file named with their confirmed ID.
+
+The [Person 7 workflow record](docs/work-logs/16001313.md) and the
+[Person 5 workflow record](docs/work-logs/16002622.md) follow the same format for
+Itineraries and Hotels respectively.
