@@ -4,6 +4,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { resolve } from 'node:path';
 import { AuthModule } from './auth/auth.module';
 import { validateEnvironment } from './config/validate-environment';
+import { BlogModule } from './blog/blog.module';
 import { FlightBookingsModule } from './flight-bookings/flight-bookings.module';
 import { PaymentsModule } from './payments/payments.module';
 import { AirportsModule } from './airports/airports.module';
@@ -29,6 +30,7 @@ import { HotelsModule } from './hotels/hotels.module';
     }),
     AuthModule,
     FlightBookingsModule,
+    BlogModule,
     PaymentsModule,
     AirportsModule,
     AirlinesModule,
