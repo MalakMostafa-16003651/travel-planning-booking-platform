@@ -1,10 +1,11 @@
-import { Controller, Get, Header, HttpCode, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Header, HttpCode, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { ApiBadRequestResponse, ApiConflictResponse, ApiCookieAuth, ApiForbiddenResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags, ApiUnauthorizedResponse } from '@nestjs/swagger';
 import { AuthGuard, AuthenticatedRequest } from '../auth/auth.guard';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { ApiErrorDto } from '../common/dto/api-error.dto';
 import { UserRole } from '../common/enums/user-role.enum';
+import { AcceptPoliciesDto } from './dto/accept-policies.dto';
 import { BookingParamsDto } from './dto/booking-params.dto';
 import { PoliciesService } from './policies.service';
 
@@ -33,11 +34,12 @@ export class PoliciesController {
   @Header('Cache-Control', 'no-store')
   @ApiOperation({
     summary: 'PAY-02: accept the booking policies',
-    description: 'Required before POST /api/payments. If the provider changes the policies, they must be accepted again.',
+    description: 'Send { "accepted": true } (the acceptance checkbox). Stored with a timestamp. Required before POST /api/payments; if the provider changes the policies, they must be accepted again.',
   })
-  @ApiOkResponse({ description: 'The stored PolicyAcceptance.' })
+  @ApiOkResponse({ description: 'The stored PolicyAcceptance, with acceptedAt.' })
   @ApiConflictResponse({ type: ApiErrorDto, description: 'The booking is not PENDING.' })
-  acceptPolicies(@Param() params: BookingParamsDto, @Req() request: AuthenticatedRequest) {
+  // The body is validated as the checkbox; only its presence as true matters.
+  acceptPolicies(@Param() params: BookingParamsDto, @Body() _body: AcceptPoliciesDto, @Req() request: AuthenticatedRequest) {
     return this.policies.acceptPolicies(params.type, params.id, request.user!.userId);
   }
 }

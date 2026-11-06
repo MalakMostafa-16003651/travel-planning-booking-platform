@@ -49,7 +49,7 @@ describe('PAY-02 booking policy acceptance', { concurrency: false }, () => {
     await fixture.http().get(`/api/bookings/flight/${bookingId}/policies`).set('Cookie', admin.cookie).expect(403);
     // Another user's booking is 404, so its existence is not leaked.
     await fixture.http().get(`/api/bookings/flight/${bookingId}/policies`).set('Cookie', stranger.cookie).expect(404);
-    await fixture.http().post(`/api/bookings/flight/${bookingId}/accept-policies`).set('Cookie', stranger.cookie).expect(404);
+    await fixture.http().post(`/api/bookings/flight/${bookingId}/accept-policies`).set('Cookie', stranger.cookie).send({ accepted: true }).expect(404);
     await fixture.http().get(`/api/bookings/flight/${new Types.ObjectId().toString()}/policies`).set('Cookie', owner.cookie).expect(404);
     // Hotel bookings do not exist yet (Person 6).
     await fixture.http().get(`/api/bookings/hotel/${bookingId}/policies`).set('Cookie', owner.cookie).expect(404);
@@ -60,7 +60,7 @@ describe('PAY-02 booking policy acceptance', { concurrency: false }, () => {
   });
 
   it('stores one acceptance per booking, even when accepted twice or in parallel', async () => {
-    const accept = () => fixture.http().post(`/api/bookings/flight/${bookingId}/accept-policies`).set('Cookie', owner.cookie);
+    const accept = () => fixture.http().post(`/api/bookings/flight/${bookingId}/accept-policies`).set('Cookie', owner.cookie).send({ accepted: true });
     const first = await accept().expect(200);
     assert.equal(first.body.userId, owner.userId);
     assert.equal(first.body.flightBookingId, bookingId);
@@ -69,8 +69,23 @@ describe('PAY-02 booking policy acceptance', { concurrency: false }, () => {
     assert.equal(await acceptances().countDocuments(), 1);
   });
 
+  it('requires the acceptance checkbox and stores the acceptance with a timestamp', async () => {
+    const url = `/api/bookings/flight/${bookingId}/accept-policies`;
+    for (const body of [{}, { accepted: false }, { accepted: 'true' }, { accepted: true, extra: 1 }]) {
+      await fixture.http().post(url).set('Cookie', owner.cookie).send(body).expect(400);
+    }
+    const missing = await fixture.http().post(url).set('Cookie', owner.cookie).send({}).expect(400);
+    assert.deepEqual(missing.body.errors, { accepted: ['You must accept the booking policies'] });
+    assert.equal(await acceptances().countDocuments(), 0);
+
+    const before = Date.now();
+    await fixture.http().post(url).set('Cookie', owner.cookie).send({ accepted: true }).expect(200);
+    const stored = await acceptances().findOne();
+    assert.ok(stored!.acceptedAt instanceof Date && stored!.acceptedAt.getTime() >= before - 1000);
+  });
+
   it('counts an acceptance only while the policies are unchanged', async () => {
-    await fixture.http().post(`/api/bookings/flight/${bookingId}/accept-policies`).set('Cookie', owner.cookie).expect(200);
+    await fixture.http().post(`/api/bookings/flight/${bookingId}/accept-policies`).set('Cookie', owner.cookie).send({ accepted: true }).expect(200);
     const current = (await fixture.http().get(`/api/bookings/flight/${bookingId}/policies`).set('Cookie', owner.cookie)).body.policies;
     assert.equal(await policies.hasAccepted(owner.userId, 'flight', bookingId, current), true);
     // A stored snapshot equals the same policies with an undefined optional field.
@@ -81,14 +96,14 @@ describe('PAY-02 booking policy acceptance', { concurrency: false }, () => {
     await fixture.connection.collection('airlines').updateOne({ _id: fixture.airlineId }, { $set: { cancellationTiers: [] } });
     const changed = (await fixture.http().get(`/api/bookings/flight/${bookingId}/policies`).set('Cookie', owner.cookie)).body.policies;
     assert.equal(await policies.hasAccepted(owner.userId, 'flight', bookingId, changed), false);
-    await fixture.http().post(`/api/bookings/flight/${bookingId}/accept-policies`).set('Cookie', owner.cookie).expect(200);
+    await fixture.http().post(`/api/bookings/flight/${bookingId}/accept-policies`).set('Cookie', owner.cookie).send({ accepted: true }).expect(200);
     assert.equal(await policies.hasAccepted(owner.userId, 'flight', bookingId, changed), true);
     assert.equal(await acceptances().countDocuments(), 1);
   });
 
   it('refuses acceptance once the booking is no longer PENDING', async () => {
     await fixture.connection.collection('flightbookings').updateOne({ _id: new Types.ObjectId(bookingId) }, { $set: { status: 'EXPIRED' } });
-    const response = await fixture.http().post(`/api/bookings/flight/${bookingId}/accept-policies`).set('Cookie', owner.cookie).expect(409);
+    const response = await fixture.http().post(`/api/bookings/flight/${bookingId}/accept-policies`).set('Cookie', owner.cookie).send({ accepted: true }).expect(409);
     assert.equal(response.body.message, 'Policies can only be accepted while the booking is PENDING');
     assert.equal(await acceptances().countDocuments(), 0);
   });
