@@ -119,3 +119,13 @@ export class AuthorIdParamDto {
   id!: string;
 }
 
+
+export class PostImageParamsDto {
+  @ApiProperty({ description: 'postId', example: '507f1f77bcf86cd799439011' })
+  @IsMongoId({ message: 'id must be a valid id' })
+  id!: string;
+
+  @ApiProperty({ example: '507f1f77bcf86cd799439012' })
+  @IsMongoId({ message: 'imageId must be a valid id' })
+  imageId!: string;
+}

@@ -9,6 +9,7 @@ import { CreateBlogPostDto, ListPostsQueryDto, UpdateBlogPostDto } from './dto/b
 import { BlogPost, BlogPostDocument } from './schemas/blog-post.schema';
 import { Comment } from './schemas/comment.schema';
 import { Like } from './schemas/like.schema';
+import { PostImage } from './schemas/post-image.schema';
 
 export interface Viewer {
   userId: string;
@@ -46,6 +47,7 @@ export class BlogService {
     @InjectModel(BlogPost.name) private readonly posts: Model<BlogPost>,
     @InjectModel(Comment.name) private readonly comments: Model<Comment>,
     @InjectModel(Like.name) private readonly likes: Model<Like>,
+    @InjectModel(PostImage.name) private readonly images: Model<PostImage>,
     // Read-only: author name, status and join date.
     @InjectModel(User.name) private readonly users: Model<User>,
   ) {}
@@ -188,6 +190,14 @@ export class BlogService {
       content: post.content,
       status: post.status,
       tags: post.tags,
+      // BLG-10: each image is served by URL with the post's visibility.
+      images: post.images.map((image) => ({
+        imageId: image._id.toString(),
+        url: `/api/posts/${post._id.toString()}/images/${image._id.toString()}`,
+        contentType: image.contentType,
+        size: image.size,
+        uploadedAt: image.uploadedAt,
+      })),
       likesCount: post.likesCount,
       commentsCount: post.commentsCount,
       isHidden: post.isHidden,
@@ -198,10 +208,11 @@ export class BlogService {
     };
   }
 
-  // Deleting a post also deletes its comments and likes.
+  // Deleting a post also deletes its comments, likes and images.
   private async deletePost(post: BlogPostDocument): Promise<void> {
     await this.comments.deleteMany({ postId: post._id }).exec();
     await this.likes.deleteMany({ postId: post._id }).exec();
+    await this.images.deleteMany({ postId: post._id }).exec();
     await this.posts.deleteOne({ _id: post._id }).exec();
   }
 
