@@ -6,7 +6,8 @@ import { AppModule } from './app.module';
 import { configureApplication } from './configure-application';
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule);
+  // rawBody: the Stripe webhook (PAY-01) verifies its signature against the exact request bytes.
+  const app = await NestFactory.create(AppModule, { rawBody: true });
   try {
     configureApplication(app);
     app.enableShutdownHooks();
