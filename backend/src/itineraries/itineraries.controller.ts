@@ -202,7 +202,7 @@ export class ItinerariesController {
   @ApiCookieAuth('accessToken')
   @ApiOperation({
     summary: 'ITN-14/ITN-18: budget summary in a chosen currency',
-    description: 'Totals per category, day, city stop and intercity transport, converted with FXRatesAPI rates (cached for 1 hour). If the provider fails, cached rates up to 7 days old are used and ratesStale is true.',
+    description: 'Totals per category, day, city stop and intercity transport, converted with FXRatesAPI rates cached daily. If the provider fails, the last cached rates are used and ratesStale is true.',
   })
   @ApiOkResponse({ type: BudgetSummaryDto })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'Unsupported currency.' })
@@ -241,7 +241,7 @@ export class ItinerariesController {
   @Get(':id/flights')
   @UseGuards(OptionalAuthGuard)
   @ApiCookieAuth('accessToken')
-  @ApiOperation({ summary: 'ITN-26: search flights into a city stop', description: 'dayId must be the first day of a stop. Origin is the previous stop (or originCity for the first stop); the date is that day. Reuses the Flights module search (FLT-11, FLT-12, FLT-15, GET /api/flights/search). Returns 503 until the Flights module is available.' })
+  @ApiOperation({ summary: 'ITN-26: search flights to the first itinerary city', description: 'Select an origin airport and one-way or round-trip search. Destination airports come from the first day city; departure defaults to itinerary start and return to its last day. Reuses Flights search; returns 503 until its adapter is connected.' })
   @ApiOkResponse({ description: '{ itineraryId, criteria, results } where results come from flight search.' })
   @ApiBadRequestResponse({ type: ApiErrorDto })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: READ_NOT_FOUND_DOC })

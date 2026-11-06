@@ -14,6 +14,7 @@ export class DayBudgetDto {
   @ApiProperty() date!: string;
   @ApiProperty() city!: string;
   @ApiProperty({ type: CategoryTotalsDto }) categories!: CategoryTotalsDto;
+  @ApiProperty({ description: 'Intercity transport assigned to this day, included in total.' }) transport!: number;
   @ApiProperty() total!: number;
 }
 
@@ -57,5 +58,5 @@ export class BudgetSummaryDto {
   @ApiProperty({ type: [ConvertedTransportCostDto] }) transportCosts!: ConvertedTransportCostDto[];
   @ApiProperty({ type: [OriginalCurrencyTotalDto], description: 'Unconverted sums per entered currency.' }) originalTotals!: OriginalCurrencyTotalDto[];
   @ApiPropertyOptional({ nullable: true, description: 'Provider date of the rates used; null when no conversion was needed.' }) rateDate!: string | null;
-  @ApiProperty({ description: 'True when FXRatesAPI failed and cached rates (up to 7 days old) were used.' }) ratesStale!: boolean;
+  @ApiProperty({ description: 'True when the provider failed and the last cached snapshot was used.' }) ratesStale!: boolean;
 }

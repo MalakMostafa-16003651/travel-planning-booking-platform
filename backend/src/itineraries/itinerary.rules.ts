@@ -27,7 +27,7 @@ export enum TransportMode {
 }
 
 export const ITINERARY_PAGE_SIZE = 10; // GEN-05, same as flight bookings
-export const MAX_DAYS = 90; // assumed
+export const MAX_DAYS = 60; // ITN-05
 export const MAX_ACTIVITIES_PER_DAY = 30; // assumed
 export const MAX_BUDGETS_PER_DAY = 50; // assumed
 export const MAX_TRANSPORT_COSTS = 100; // assumed

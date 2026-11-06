@@ -56,7 +56,7 @@ export class ItineraryItemsController {
   @ApiBody({ schema: { type: 'object', required: ['image'], properties: { image: { type: 'string', format: 'binary' } } } })
   @ApiOperation({
     summary: 'ITN-12/GEN-08: upload an activity image',
-    description: `JPEG, PNG or WebP, checked by file content, at most ${MAX_IMAGE_BYTES / 1024 / 1024} MB, at most ${MAX_IMAGES_PER_ACTIVITY} per activity.`,
+    description: `JPEG or PNG, checked by file content, at most ${MAX_IMAGE_BYTES / 1024 / 1024} MB, at most ${MAX_IMAGES_PER_ACTIVITY} per activity.`,
   })
   @ApiCreatedResponse({ type: ItineraryDto })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'Missing file or not a supported image.' })
@@ -71,7 +71,7 @@ export class ItineraryItemsController {
   @Get('activities/:id/images/:imageId')
   @UseGuards(OptionalAuthGuard)
   @ApiCookieAuth('accessToken')
-  @ApiProduces('image/jpeg', 'image/png', 'image/webp')
+  @ApiProduces('image/jpeg', 'image/png')
   @ApiOperation({ summary: 'ITN-12: download an activity image', description: 'Same visibility as the itinerary.' })
   @ApiOkResponse({ description: 'Image bytes.' })
   @ApiNotFoundResponse({ type: ApiErrorDto })

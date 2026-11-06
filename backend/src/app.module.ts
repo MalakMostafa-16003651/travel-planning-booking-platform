@@ -29,6 +29,7 @@ import { FlightsModule } from './flights/flights.module';
     FlightBookingsModule,
     AirportsModule,
     AirlinesModule,
+    FlightsModule,
     ItinerariesModule,
     FlightsModule,
   ],

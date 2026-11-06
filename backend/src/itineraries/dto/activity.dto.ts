@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
-import { IsOptional, IsString, Length, Matches, MaxLength } from 'class-validator';
-import { TIME_OF_DAY, Trim } from './transforms';
+import { IsOptional, IsString, Length, Matches, MaxLength, IsNumber, Min, Max, ValidateIf } from 'class-validator';
+import { CURRENCY_CODE, TIME_OF_DAY, Trim, TrimUpper } from './transforms';
+import { MAX_AMOUNT } from '../itinerary.rules';
 
 export class CreateActivityDto {
   @ApiProperty({ example: 'Visit the Egyptian Museum' })
@@ -39,6 +40,17 @@ export class CreateActivityDto {
   @IsOptional()
   @Matches(TIME_OF_DAY, { message: 'End time must be HH:mm' })
   endTime?: string;
+
+  @ApiPropertyOptional({ minimum: 0, description: 'Optional activity cost, included once under Activities in budget totals.' })
+  @ValidateIf((_object, value) => value !== undefined)
+  @IsNumber({ allowNaN: false, allowInfinity: false, maxDecimalPlaces: 2 })
+  @Min(0) @Max(MAX_AMOUNT)
+  cost?: number;
+
+  @ApiPropertyOptional({ description: 'Cost currency from the shared catalog; defaults to itinerary currency when a cost is supplied.' })
+  @ValidateIf((_object, value) => value !== undefined)
+  @TrimUpper() @Matches(CURRENCY_CODE)
+  currency?: string;
 }
 
-export class UpdateActivityDto extends PartialType(CreateActivityDto) {}
+export class UpdateActivityDto extends PartialType(CreateActivityDto, { skipNullProperties: false }) {}

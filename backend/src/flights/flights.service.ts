@@ -1,7 +1,9 @@
 
-import { BadRequestException,ConflictException,ForbiddenException,Injectable,NotFoundException,} from '@nestjs/common';
+
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, Types } from 'mongoose';
+
 import { AirlinesService } from '../airlines/airlines.service';
 import { Airline } from '../airlines/schemas/airline.schema';
 import { Airport } from '../airports/schemas/airport.schema';
@@ -13,7 +15,7 @@ import { Flight } from './schemas/flight.schema';
 import { localDateTimeToUtc } from './flight-time.util';
 
 @Injectable()
-export class FlightsService {
+export class FlightsService implements OnModuleInit {
   constructor(
     @InjectConnection()
     private readonly connection: Connection,
@@ -32,6 +34,12 @@ export class FlightsService {
 
     private readonly airlines: AirlinesService,
   ) {}
+
+  async onModuleInit(): Promise<void> {
+    // Both uniqueness constraints must exist before accepting writes. In particular,
+    // create the cabin collection/index outside the transaction's first request.
+    await Promise.all([this.flights.init(), this.cabins.init()]);
+  }
 
   private objectId(
     id: string,
@@ -137,59 +145,59 @@ export class FlightsService {
 
   // FLT-04: Create cabin inventory
 
- async createCabins(
-  moderatorId: string,
-  flightId: string,
-  input: CreateCabinsDto,
-): Promise<CabinInventory[]> {
-  const flight = await this.getOwnedScheduledFlight(
-    moderatorId,
-    flightId,
-  );
-
-  const classes = input.cabins.map(
-    (item) => item.cabinClass,
-  );
-
-  if (new Set(classes).size !== classes.length) {
-    throw new BadRequestException(
-      'Each cabin class may be defined only once per flight',
+   async createCabins(
+    moderatorId: string,
+    flightId: string,
+    input: CreateCabinsDto,
+  ): Promise<CabinInventory[]> {
+    const flight = await this.getOwnedScheduledFlight(
+      moderatorId,
+      flightId,
     );
-  }
 
-  const session = await this.connection.startSession();
+    const classes = input.cabins.map(
+      (item) => item.cabinClass,
+    );
 
-  try {
-    let createdCabins: CabinInventory[] = [];
-
-    await session.withTransaction(async () => {
-      createdCabins = await this.cabins.insertMany(
-        input.cabins.map((item) => ({
-          ...item,
-          flightId: flight._id,
-          bookedSeats: 0,
-          heldSeats: 0,
-        })),
-        {
-          session,
-          ordered: true,
-        },
-      );
-    });
-
-    return createdCabins;
-  } catch (error) {
-    if ((error as { code?: number }).code === 11000) {
-      throw new ConflictException(
-        'A cabin class already exists for this flight',
+    if (new Set(classes).size !== classes.length) {
+      throw new BadRequestException(
+        'Each cabin class may be defined only once per flight',
       );
     }
 
-    throw error;
-  } finally {
-    await session.endSession();
+    const session = await this.connection.startSession();
+
+    try {
+      let createdCabins: CabinInventory[] = [];
+
+      await session.withTransaction(async () => {
+        createdCabins = await this.cabins.insertMany(
+          input.cabins.map((item) => ({
+            ...item,
+            flightId: flight._id,
+            bookedSeats: 0,
+            heldSeats: 0,
+          })),
+          {
+            session,
+            ordered: true,
+          },
+        );
+      });
+
+      return createdCabins;
+    } catch (error) {
+      if ((error as { code?: number }).code === 11000) {
+        throw new ConflictException(
+          'A cabin class already exists for this flight',
+        );
+      }
+
+      throw error;
+    } finally {
+      await session.endSession();
+    }
   }
-}
   // Helper: Verify flight ownership and status
 
   private async getOwnedScheduledFlight(

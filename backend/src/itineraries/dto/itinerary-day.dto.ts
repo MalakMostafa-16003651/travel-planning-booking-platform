@@ -31,7 +31,7 @@ export class CreateItineraryDayDto {
   position?: number;
 }
 
-export class UpdateItineraryDayDto extends PartialType(OmitType(CreateItineraryDayDto, ['position'] as const)) {}
+export class UpdateItineraryDayDto extends PartialType(OmitType(CreateItineraryDayDto, ['position'] as const), { skipNullProperties: false }) {}
 
 export class ReorderItineraryDaysDto {
   @ApiProperty({ type: [String], description: 'Every dayId of the itinerary, in the new order.' })
