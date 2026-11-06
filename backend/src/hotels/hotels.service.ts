@@ -8,6 +8,7 @@ import { CreateHotelDto } from './dto/create-hotel.dto';
 import { CreateRoomDto } from './dto/create-room.dto';
 import { HotelAvailabilityQueryDto } from './dto/hotel-availability-query.dto';
 import { UpdateHotelDto } from './dto/update-hotel.dto';
+import { UpdateHotelPoliciesDto } from './dto/update-hotel-policies.dto';
 import { UpdateRoomAvailabilityDto } from './dto/update-room-availability.dto';
 import { UpdateRoomDto } from './dto/update-room.dto';
 import { BlockedRange, BookedRange, RoomAvailability } from './schemas/room-availability.schema';
@@ -113,6 +114,26 @@ export class HotelsService {
       set.city = city.name;
       set.countryCode = city.countryCode;
     }
+
+    const updated = await this.hotels.findByIdAndUpdate(assignedId, { $set: set }, { new: true, runValidators: true }).exec();
+    if (!updated) throw new NotFoundException('Hotel not found for your assignment');
+    return updated;
+  }
+
+  /** HTL-09, HTL-10. */
+  async updatePoliciesOwn(moderatorId: string, hotelId: string, input: UpdateHotelPoliciesDto): Promise<Hotel> {
+    const hasField = [input.checkInTime, input.checkOutTime, input.cancellationTiers].some((value) => value !== undefined);
+    if (!hasField) throw new BadRequestException('Supply checkInTime, checkOutTime, cancellationTiers, or a combination');
+    if (input.cancellationTiers) {
+      const thresholds = input.cancellationTiers.map((tier) => tier.daysBeforeCheckIn);
+      if (new Set(thresholds).size !== thresholds.length) throw new BadRequestException('Cancellation tier thresholds must be unique');
+    }
+    const assignedId = await this.assertOwnHotel(moderatorId, hotelId);
+
+    const set: Record<string, unknown> = {};
+    if (input.checkInTime !== undefined) set.checkInTime = input.checkInTime;
+    if (input.checkOutTime !== undefined) set.checkOutTime = input.checkOutTime;
+    if (input.cancellationTiers) set.cancellationTiers = [...input.cancellationTiers].sort((a, b) => b.daysBeforeCheckIn - a.daysBeforeCheckIn);
 
     const updated = await this.hotels.findByIdAndUpdate(assignedId, { $set: set }, { new: true, runValidators: true }).exec();
     if (!updated) throw new NotFoundException('Hotel not found for your assignment');

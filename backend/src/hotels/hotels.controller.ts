@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiCookieAuth,
@@ -22,6 +22,7 @@ import { CreateHotelDto } from './dto/create-hotel.dto';
 import { CreateRoomDto } from './dto/create-room.dto';
 import { HotelAvailabilityQueryDto } from './dto/hotel-availability-query.dto';
 import { UpdateHotelDto } from './dto/update-hotel.dto';
+import { UpdateHotelPoliciesDto } from './dto/update-hotel-policies.dto';
 import { UpdateRoomAvailabilityDto } from './dto/update-room-availability.dto';
 import { UpdateRoomDto } from './dto/update-room.dto';
 import { Hotel } from './schemas/hotel.schema';
@@ -69,6 +70,19 @@ export class HotelsController {
   @ApiNotFoundResponse({ type: ApiErrorDto, description: ':id is not the caller\'s assigned hotel.' })
   updateOwn(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: UpdateHotelDto): Promise<Hotel> {
     return this.hotels.updateOwn(req.user!.userId, id, body);
+  }
+
+  @Put(':id/policies')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(UserRole.HOTEL_MODERATOR)
+  @ApiCookieAuth('accessToken')
+  @ApiOperation({ summary: "Update check-in/check-out times and cancellation tiers (HTL-09, HTL-10)" })
+  @ApiOkResponse({ description: 'Updated hotel policies' })
+  @ApiUnauthorizedResponse({ type: ApiErrorDto })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'Hotel moderator role and one assigned hotel are required.' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: ':id is not the caller\'s assigned hotel.' })
+  updatePolicies(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: UpdateHotelPoliciesDto): Promise<Hotel> {
+    return this.hotels.updatePoliciesOwn(req.user!.userId, id, body);
   }
 
   @Post(':id/rooms')

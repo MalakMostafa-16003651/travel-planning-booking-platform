@@ -525,4 +525,79 @@ describe('Hotels E2E', { concurrency: false }, () => {
       await http().get(`/api/hotels/${hotelId}/availability`).set('Cookie', ordinaryUser).expect(403);
     });
   });
+
+  describe('Hotel policies - HTL-09, HTL-10', () => {
+    it('updates check-in/check-out times and registers the route in Swagger', async () => {
+      const response = await http()
+        .put(`/api/hotels/${hotelId}/policies`)
+        .set('Cookie', moderatorCookie)
+        .send({ checkInTime: '15:00', checkOutTime: '10:00' })
+        .expect(200);
+
+      assert.equal(response.body.checkInTime, '15:00');
+      assert.equal(response.body.checkOutTime, '10:00');
+
+      const doc = (await http().get('/api/docs-json').expect(200)).body;
+      assert.ok(doc.paths['/api/hotels/{id}/policies'].put);
+    });
+
+    it('updates cancellation tiers, sorted by days before check-in descending', async () => {
+      const response = await http()
+        .put(`/api/hotels/${hotelId}/policies`)
+        .set('Cookie', moderatorCookie)
+        .send({
+          cancellationTiers: [
+            { daysBeforeCheckIn: 1, refundPercentage: 0 },
+            { daysBeforeCheckIn: 14, refundPercentage: 100 },
+            { daysBeforeCheckIn: 7, refundPercentage: 50 },
+          ],
+        })
+        .expect(200);
+
+      assert.deepEqual(
+        response.body.cancellationTiers.map((tier: { daysBeforeCheckIn: number }) => tier.daysBeforeCheckIn),
+        [14, 7, 1],
+      );
+    });
+
+    it('rejects duplicate cancellation tier thresholds', async () => {
+      await http()
+        .put(`/api/hotels/${hotelId}/policies`)
+        .set('Cookie', moderatorCookie)
+        .send({
+          cancellationTiers: [
+            { daysBeforeCheckIn: 7, refundPercentage: 50 },
+            { daysBeforeCheckIn: 7, refundPercentage: 100 },
+          ],
+        })
+        .expect(400);
+    });
+
+    it('rejects a malformed time', async () => {
+      await http()
+        .put(`/api/hotels/${hotelId}/policies`)
+        .set('Cookie', moderatorCookie)
+        .send({ checkInTime: '27:00' })
+        .expect(400);
+    });
+
+    it('rejects an empty policies update', async () => {
+      await http().put(`/api/hotels/${hotelId}/policies`).set('Cookie', moderatorCookie).send({}).expect(400);
+    });
+
+    it('rejects updating policies for a hotel that is not the caller\'s own', async () => {
+      const otherModerator = await login('other-hotel-moderator@example.com', UserRole.HOTEL_MODERATOR);
+      await http()
+        .put(`/api/hotels/${hotelId}/policies`)
+        .set('Cookie', otherModerator)
+        .send({ checkInTime: '15:00' })
+        .expect(403);
+    });
+
+    it('requires an authenticated hotel moderator', async () => {
+      await http().put(`/api/hotels/${hotelId}/policies`).send({ checkInTime: '15:00' }).expect(401);
+      const ordinaryUser = await login('user@example.com');
+      await http().put(`/api/hotels/${hotelId}/policies`).set('Cookie', ordinaryUser).send({ checkInTime: '15:00' }).expect(403);
+    });
+  });
 });
