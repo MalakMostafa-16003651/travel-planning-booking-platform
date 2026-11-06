@@ -4,8 +4,11 @@ import { Connection, Model, Types } from 'mongoose';
 import { UserRole } from '../common/enums/user-role.enum';
 import { ReferenceDataService } from '../reference-data/reference-data.service';
 import { CreateHotelDto } from './dto/create-hotel.dto';
+import { CreateRoomDto } from './dto/create-room.dto';
 import { UpdateHotelDto } from './dto/update-hotel.dto';
+import { UpdateRoomDto } from './dto/update-room.dto';
 import { Hotel } from './schemas/hotel.schema';
+import { Room } from './schemas/room.schema';
 
 export interface Requester {
   userId: string;
@@ -16,6 +19,7 @@ export interface Requester {
 export class HotelsService {
   constructor(
     @InjectModel(Hotel.name) private readonly hotels: Model<Hotel>,
+    @InjectModel(Room.name) private readonly rooms: Model<Room>,
     @InjectConnection() private readonly connection: Connection,
     private readonly references: ReferenceDataService,
   ) {}
@@ -68,15 +72,21 @@ export class HotelsService {
     return new Types.ObjectId(String(assignments[0].hotelId));
   }
 
+  /** :id must be the moderator's own assigned hotel, the same way getOwnedScheduledFlight hides another airline's flight. */
+  private async assertOwnHotel(moderatorId: string, hotelId: string): Promise<Types.ObjectId> {
+    if (!Types.ObjectId.isValid(hotelId)) throw new NotFoundException('Hotel not found for your assignment');
+    const assignedId = await this.getAssignedHotelId(moderatorId);
+    if (!assignedId.equals(hotelId)) throw new NotFoundException('Hotel not found for your assignment');
+    return assignedId;
+  }
+
   /** HTL-01. The moderator can only ever edit their own assigned hotel, by its own :id. */
   async updateOwn(moderatorId: string, hotelId: string, input: UpdateHotelDto): Promise<Hotel> {
     // Object.keys(input) is unreliable here: with useDefineForClassFields (TS target ES2022+),
     // every declared optional DTO field is already an own `undefined` property on the instance.
     const hasField = [input.name, input.city, input.countryCode, input.address, input.description].some((value) => value !== undefined);
     if (!hasField) throw new BadRequestException('At least one hotel profile field must be supplied');
-    if (!Types.ObjectId.isValid(hotelId)) throw new NotFoundException('Hotel not found for your assignment');
-    const assignedId = await this.getAssignedHotelId(moderatorId);
-    if (!assignedId.equals(hotelId)) throw new NotFoundException('Hotel not found for your assignment');
+    const assignedId = await this.assertOwnHotel(moderatorId, hotelId);
 
     const set: Record<string, unknown> = {};
     if (input.name !== undefined) set.name = input.name.trim();
@@ -95,5 +105,48 @@ export class HotelsService {
     const updated = await this.hotels.findByIdAndUpdate(assignedId, { $set: set }, { new: true, runValidators: true }).exec();
     if (!updated) throw new NotFoundException('Hotel not found for your assignment');
     return updated;
+  }
+
+  /** HTL-03. */
+  async createRoom(moderatorId: string, hotelId: string, input: CreateRoomDto): Promise<Room> {
+    const assignedId = await this.assertOwnHotel(moderatorId, hotelId);
+    return this.rooms.create({
+      hotelId: assignedId,
+      name: input.name.trim(),
+      capacity: input.capacity,
+      pricePerNight: input.pricePerNight,
+      isActive: true,
+    });
+  }
+
+  /** Shared by update/deactivate: the room must belong to the caller's own assigned hotel. */
+  private async getOwnRoom(moderatorId: string, hotelId: string, roomId: string): Promise<Room> {
+    const assignedId = await this.assertOwnHotel(moderatorId, hotelId);
+    if (!Types.ObjectId.isValid(roomId)) throw new NotFoundException('Room not found for this hotel');
+    const room = await this.rooms.findOne({ _id: roomId, hotelId: assignedId }).exec();
+    if (!room) throw new NotFoundException('Room not found for this hotel');
+    return room;
+  }
+
+  /** HTL-05. */
+  async updateRoom(moderatorId: string, hotelId: string, roomId: string, input: UpdateRoomDto): Promise<Room> {
+    const hasField = [input.name, input.capacity, input.pricePerNight].some((value) => value !== undefined);
+    if (!hasField) throw new BadRequestException('At least one room field must be supplied');
+    const room = await this.getOwnRoom(moderatorId, hotelId, roomId);
+
+    const set: Record<string, unknown> = {};
+    if (input.name !== undefined) set.name = input.name.trim();
+    if (input.capacity !== undefined) set.capacity = input.capacity;
+    if (input.pricePerNight !== undefined) set.pricePerNight = input.pricePerNight;
+
+    const updated = await this.rooms.findByIdAndUpdate(room._id, { $set: set }, { new: true, runValidators: true }).exec();
+    if (!updated) throw new NotFoundException('Room not found for this hotel');
+    return updated;
+  }
+
+  /** HTL-06. A soft deactivation, so a room referenced by a past/eventual booking keeps a valid id. */
+  async deactivateRoom(moderatorId: string, hotelId: string, roomId: string): Promise<void> {
+    const room = await this.getOwnRoom(moderatorId, hotelId, roomId);
+    await this.rooms.updateOne({ _id: room._id }, { $set: { isActive: false } }).exec();
   }
 }
