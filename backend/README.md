@@ -257,6 +257,30 @@ Start the backend, open Swagger UI, expand `POST /api/auth/register`, and select
 | Role injection | Add `"role": "ADMIN"` to the sample body. | 400; registration cannot assign privileged roles. |
 | Unknown property | Add an extra field such as `"unexpected": true`. | 400; the field is rejected. |
 
+## Flight creation and cabin inventory
+
+The root AppModule imports FlightsModule, so Swagger and the running backend expose
+POST /api/flights (FLT-03) and POST /api/flights/:flightId/cabins (FLT-04).
+Both require a valid AIRLINE_MODERATOR session and the moderator's own airline
+assignment. Flight creation also requires the assigned airline to be active and
+the airports to exist in the official airport catalog. Date-times are entered in
+each airport's local time and stored in UTC. Other users cannot add cabins to an
+unassigned airline's flight; only future Scheduled flights accept cabin creation.
+
+The flight/cabin unique indexes are initialized before requests are accepted.
+Cabin creation is one transaction: a duplicate anywhere in the batch returns 409
+and rolls back every cabin in that request, preserving existing inventory.
+Concurrent overlapping batches cannot leave a losing batch partially stored.
+The same MongoDB replica-set requirement already used for booking holds applies.
+Reference annotations use Mongoose Schema.Types.ObjectId, matching the shared
+booking adapter's BSON identifiers; field/collection names are unchanged.
+
+The flights.e2e suite imports the actual root AppModule with an isolated test
+configuration (no .env), disables only periodic booking maintenance, and verifies
+Swagger/routes, guards, ownership, UTC storage, conflicts, rollback and concurrent
+batches against its own temporary replica set. This does not certify real search
+integration; itinerary Flights/Hotels search adapters remain pending.
+
 ## Flight booking and inventory holds
 
 `backend/src/flight-bookings` implements FLT-19, FLT-21, FLT-22, FLT-23, FLT-25, FLT-26, the booking side of FLT-12, and GEN-11. It is built against the [flight booking contract proposal](../docs/requirements/flight-booking-contract-proposal.md), which lists the fields it needs from other modules and the open team decisions.

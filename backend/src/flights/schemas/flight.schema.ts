@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { HydratedDocument, Types } from 'mongoose';
+import { HydratedDocument, Schema as MongooseSchema, Types } from 'mongoose';
 import { FlightStatus } from '../../common/enums/flight-status.enum';
 
 export type FlightDocument = HydratedDocument<Flight>;
@@ -8,13 +8,13 @@ export type FlightDocument = HydratedDocument<Flight>;
 export class Flight {
   declare _id: Types.ObjectId;
 
-  @Prop({ type: Types.ObjectId, ref: 'Airline', required: true, index: true }) airlineId!: Types.ObjectId;
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'Airline', required: true, index: true }) airlineId!: Types.ObjectId;
   @Prop({ type: String, required: true, trim: true, uppercase: true, match: /^[A-Z0-9]{2,10}$/ }) flightNumber!: string;
   @Prop({ type: String, enum: FlightStatus, default: FlightStatus.SCHEDULED, required: true, index: true }) status!: FlightStatus;
   @Prop({ type: Date, required: true }) departureAt!: Date;
   @Prop({ type: Date, required: true }) arrivalAt!: Date;
-  @Prop({ type: Types.ObjectId, ref: 'Airport', required: true }) departureAirportId!: Types.ObjectId;
-  @Prop({ type: Types.ObjectId, ref: 'Airport', required: true }) arrivalAirportId!: Types.ObjectId;
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'Airport', required: true }) departureAirportId!: Types.ObjectId;
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'Airport', required: true }) arrivalAirportId!: Types.ObjectId;
   @Prop({ type: String, required: true, match: /^\d{4}-\d{2}-\d{2}$/ }) departureLocalDate!: string;
   declare createdAt: Date;
   declare updatedAt: Date;
