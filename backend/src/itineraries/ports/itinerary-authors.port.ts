@@ -20,10 +20,10 @@ export interface ItineraryAccountStatusesPort {
  * visibility. A missing entry is shown as "Deleted user".
  */
 export interface ItineraryAuthorNamesPort {
-  getNames(userIds: string[]): Promise<Map<string, string>>;
+  getDisplayNames(userIds: string[]): Promise<Map<string, string>>;
 }
 
 /** Authors whose public itineraries may be listed, viewed or cloned: existing and not DEACTIVATED. */
 export function isVisibleStatus(status: AccountStatus | undefined): status is AccountStatus {
-  return status !== undefined && status !== AccountStatus.DEACTIVATED;
+  return status === AccountStatus.ACTIVE || status === AccountStatus.SUSPENDED;
 }

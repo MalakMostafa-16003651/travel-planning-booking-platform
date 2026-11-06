@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, OnModuleInit, UnauthorizedException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { FAILED_LOGIN_LIMIT, LOGIN_LOCKOUT_MS } from '../auth/auth.constants';
 import { AccountStatus } from '../common/enums/account-status.enum';
 import { UserRole } from '../common/enums/user-role.enum';
@@ -54,6 +54,28 @@ export class UsersService implements OnModuleInit {
   async onModuleInit(): Promise<void> {
     // Requests must not arrive before MongoDB enforces email uniqueness.
     await this.users.init();
+  }
+
+  /** Shared internal lookup: no credentials or whole User documents leave this service. */
+  async getAccountStatuses(userIds: string[]): Promise<Map<string, AccountStatus>> {
+    const ids = this.lookupIds(userIds);
+    if (ids.length === 0) return new Map();
+    const rows = await this.users.find({ _id: { $in: ids } }, { status: 1 }).lean().exec();
+    return new Map(rows.filter((row) => Object.values(AccountStatus).includes(row.status))
+      .map((row) => [row._id.toString(), row.status]));
+  }
+
+  /** Public attribution only. Missing/deactivated accounts have no display-name entry. */
+  async getDisplayNames(userIds: string[]): Promise<Map<string, string>> {
+    const ids = this.lookupIds(userIds);
+    if (ids.length === 0) return new Map();
+    const rows = await this.users.find({ _id: { $in: ids }, status: { $in: [AccountStatus.ACTIVE, AccountStatus.SUSPENDED] } }, { name: 1 }).lean().exec();
+    return new Map(rows.map((row) => [row._id.toString(), row.name]));
+  }
+
+  private lookupIds(userIds: string[]): Types.ObjectId[] {
+    return [...new Set(userIds.filter((id) => typeof id === 'string' && /^[a-f\d]{24}$/i.test(id))
+      .map((id) => id.toLowerCase()))].map((id) => new Types.ObjectId(id));
   }
 
   async findForAuthentication(email: string): Promise<UserDocument | null> {

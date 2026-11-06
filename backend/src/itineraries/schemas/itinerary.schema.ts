@@ -50,6 +50,12 @@ export class Activity {
   @Prop({ type: String })
   endTime?: string;
 
+  @Prop({ type: Number, min: 0 })
+  cost?: number;
+
+  @Prop({ type: String, match: /^[A-Z]{3}$/ })
+  currency?: string;
+
   @Prop({ type: [ActivityImageRefSchema], default: [] })
   images!: ActivityImageRef[];
 
@@ -99,7 +105,7 @@ export class TransportCost {
   @Prop({ required: true, uppercase: true })
   currency!: string;
 
-  /** Optional travel day. If that day is deleted the cost stays, unlinked. */
+  /** Required by create/update services. Optional in storage for pre-fix legacy rows. */
   @Prop({ type: Types.ObjectId })
   dayId?: Types.ObjectId;
 
@@ -165,7 +171,7 @@ export class Itinerary {
   @Prop({ type: Types.ObjectId, required: true, index: true })
   userId!: Types.ObjectId;
 
-  @Prop({ required: true, trim: true })
+  @Prop({ required: true, trim: true, maxlength: 100 })
   title!: string;
 
   @Prop({ type: String, trim: true })

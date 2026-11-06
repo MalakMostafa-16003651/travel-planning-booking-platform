@@ -2648,7 +2648,7 @@ describe('ACC-01 registration and ACC-04/05/06 authentication', { concurrency: f
     }
   });
 
-  it('uses the public profile currency catalog as database membership and seeds it idempotently without deleting extra rows', async () => {
+  it('enforces official currencies while seeding preserves unrelated stored rows', async () => {
     const expectedCodes = ['AED', 'EGP', 'EUR', 'GBP', 'JPY', 'SAR', 'USD'];
     const service = app.get(CurrenciesService);
     const currencies = app.get<Model<{ code: string; name: string; createdAt: Date; updatedAt: Date }>>(getModelToken('Currency'));
@@ -2673,17 +2673,18 @@ describe('ACC-01 registration and ACC-04/05/06 authentication', { concurrency: f
       assert.equal(after.updatedAt.getTime(), before.updatedAt.getTime());
       assert.equal((await currencies.findOne({ code: 'CHF' }).orFail().lean().exec()).name, 'Swiss franc');
       const expanded = await request(app.getHttpServer()).get('/api/currencies').expect(200);
-      assert.deepEqual(expanded.body.map((entry: { code: string }) => entry.code), ['AED', 'CHF', 'EGP', 'EUR', 'GBP', 'JPY', 'SAR', 'USD']);
+      assert.deepEqual(expanded.body.map((entry: { code: string }) => entry.code), expectedCodes);
       const fixture = await registerAndLogin();
-      const accepted = await patchProfile(fixture.cookies.cookieHeader, { preferredCurrency: ' chf ' }).expect(200);
-      assert.equal(accepted.body.preferredCurrency, 'CHF');
+      await patchProfile(fixture.cookies.cookieHeader, { preferredCurrency: ' chf ' }).expect(400);
+      const accepted = await patchProfile(fixture.cookies.cookieHeader, { preferredCurrency: ' egp ' }).expect(200);
+      assert.equal(accepted.body.preferredCurrency, 'EGP');
       await currencies.deleteOne({ code: 'GBP' }).exec();
       const missing = await patchProfile(fixture.cookies.cookieHeader, { name: 'Must not persist', preferredCurrency: 'GBP' });
       assert.equal(missing.status, 400);
       assert.ok(Array.isArray(missing.body.errors?.preferredCurrency));
       const stored = await credentialState(fixture.registered.body.userId);
       assert.equal(stored.name, 'Example Traveler');
-      assert.equal(stored.preferredCurrency, 'CHF');
+      assert.equal(stored.preferredCurrency, 'EGP');
     } finally {
       await currencies.deleteOne({ code: 'CHF' }).exec();
       await service.seedSupported();

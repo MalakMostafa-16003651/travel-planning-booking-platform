@@ -27,4 +27,4 @@ export class CreateBudgetEntryDto {
   description?: string;
 }
 
-export class UpdateBudgetEntryDto extends PartialType(CreateBudgetEntryDto) {}
+export class UpdateBudgetEntryDto extends PartialType(CreateBudgetEntryDto, { skipNullProperties: false }) {}

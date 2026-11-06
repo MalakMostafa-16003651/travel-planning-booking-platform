@@ -89,16 +89,14 @@ Kiki (Person 7) to reuse. `Currency` uses collection `currencies`, fields `_id`,
 `code`, `name`, `createdAt`, `updatedAt`; code is unique, uppercase and three
 letters. Initial codes are AED/EGP/EUR/GBP/JPY/SAR/USD, derived from the PDF-linked
 [Countries.csv](https://docs.google.com/spreadsheets/d/1SlKUTRqlHuBJAMC-Z-QOZzSrzKpGHT_TgQUI5gVm-BA/edit?gid=2042930643).
-This is the team's initial supported set, not an assertion that the source
-declares an exhaustive currency policy. Additional supported codes need shared
-coordination rather than private lists in each module.
+The revised PDF section 5.1 explicitly defines supported currencies as the codes in Countries.csv. Supported queries and validation enforce this official set; extra stored rows are not automatically supported. Any future official dataset update must be coordinated once in this shared catalog.
 
 Import CurrenciesModule and inject its exported CurrenciesService to call
 `listSupported()` or exact-canonical `isSupported(code)`. Public
 `GET /api/currencies` returns sorted `{ code, name }` pairs for selectors. Run
 `npm.cmd run seed:currencies` from backend for explicit setup; startup does not
 seed automatically. The idempotent seed preserves existing rows/names/timestamps
-and does not delete additional coordinated codes. No public currency-write API,
+and does not delete extra stored rows; supported queries exclude unofficial codes. No public currency-write API,
 FX conversion, new secret name or payment-currency change is introduced.
 
 Malak implements profile preference storage/validation and the requested shared
@@ -273,8 +271,7 @@ content follows ACC-12.
   `PENDING` for the unpaid hold. This records the integrated source, not a claim
   that every booking owner accepted its proposal. Flight/hotel/payment owners
   must coordinate remaining contract decisions; Person 1 does not redefine it.
-- ACC-03 is referenced by the PDF registration endpoint table but absent from the
-  reviewed workbook. Do not invent its meaning.
+- The revised PDF corrects registration mapping to ACC-01 only, resolving the old unexplained ACC-03 reference. GET /api/auth/me maps to ACC-04/ACC-19; GET /api/users/me remains the own-profile authorization endpoint.
 
 ## Approval and incremental implementation
 
@@ -293,3 +290,9 @@ requirement awaiting TA confirmation. Synchronize by merging updated `develop`
 before opening a PR.
 All changes go through PR review into `develop`; stable milestones reach `main`
 through a release PR. Never force-push.
+
+## Shared internal Users helpers (2026-11-06)
+
+UsersModule exports UsersService.getAccountStatuses(userIds): Promise<Map<string, AccountStatus>> and getDisplayNames(userIds): Promise<Map<string, string>>. Both select only requested fields, validate/normalize/deduplicate IDs and omit missing records; names also omit DEACTIVATED users. They return no credentials and expose no public user-directory endpoint. Itineraries binds its attribution/status ports to this service instance. Public author access fails closed on status errors; a proven owner's own response does not need a second eligibility lookup.
+
+The team leader approved ReferenceDataModule with Country {code,name,currency} and City {cityId,name,countryCode}, timestamps and unique official identifiers. Reuse it for reference validation; setup is explicit via seed:references.
