@@ -1,8 +1,25 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Types } from 'mongoose';
-import { CONTENT_LENGTH, MAX_TAGS_PER_POST, PostStatus, TITLE_LENGTH } from '../blog.rules';
+import { CONTENT_LENGTH, MAX_IMAGES_PER_POST, MAX_TAGS_PER_POST, PostStatus, TITLE_LENGTH } from '../blog.rules';
 
 export type BlogPostDocument = HydratedDocument<BlogPost>;
+
+/** BLG-10: what the post lists about each image. Its _id is the imageId of the PostImage holding the bytes. */
+@Schema({ _id: false, versionKey: false })
+export class PostImageRef {
+  @Prop({ type: Types.ObjectId, required: true })
+  _id!: Types.ObjectId;
+
+  @Prop({ type: String, required: true })
+  contentType!: string;
+
+  @Prop({ type: Number, required: true })
+  size!: number;
+
+  @Prop({ type: Date, required: true })
+  uploadedAt!: Date;
+}
+const PostImageRefSchema = SchemaFactory.createForClass(PostImageRef);
 
 @Schema({ timestamps: true, versionKey: false })
 export class BlogPost {
@@ -26,6 +43,13 @@ export class BlogPost {
     validate: { validator: (tags: string[]) => tags.length <= MAX_TAGS_PER_POST, message: `A post can have at most ${MAX_TAGS_PER_POST} tags` },
   })
   tags!: string[];
+
+  @Prop({
+    type: [PostImageRefSchema],
+    default: [],
+    validate: { validator: (images: PostImageRef[]) => images.length <= MAX_IMAGES_PER_POST, message: `A post can have at most ${MAX_IMAGES_PER_POST} images` },
+  })
+  images!: PostImageRef[];
 
   // Counters kept with the post for list ordering (BLG-09 interaction score); updated by likes and comments.
   @Prop({ type: Number, default: 0, min: 0 })

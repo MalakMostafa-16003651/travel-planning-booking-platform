@@ -1,5 +1,7 @@
-import { Body, Controller, Delete, Get, Header, HttpCode, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
-import { ApiBadRequestResponse, ApiConflictResponse, ApiCookieAuth, ApiCreatedResponse, ApiForbiddenResponse, ApiNoContentResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags, ApiUnauthorizedResponse } from '@nestjs/swagger';
+import { Body, Controller, Delete, Get, Header, HttpCode, Param, Patch, Post, Query, Req, Res, StreamableFile, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiBadRequestResponse, ApiBody, ApiConflictResponse, ApiConsumes, ApiCookieAuth, ApiCreatedResponse, ApiForbiddenResponse, ApiNoContentResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiPayloadTooLargeResponse, ApiProduces, ApiTags, ApiUnauthorizedResponse } from '@nestjs/swagger';
+import type { Response } from 'express';
 import { AuthGuard, AuthenticatedRequest } from '../auth/auth.guard';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
@@ -7,16 +9,23 @@ import { ApiErrorDto } from '../common/dto/api-error.dto';
 import { Types } from 'mongoose';
 import { UserRole } from '../common/enums/user-role.enum';
 import { OptionalAuthGuard } from '../itineraries/optional-auth.guard';
+import { MAX_IMAGE_BYTES, MAX_IMAGES_PER_POST } from './blog.rules';
 import { BlogService } from './blog.service';
 import { CommentsService } from './comments.service';
-import { CreateBlogPostDto, ListPostsQueryDto, PageQueryDto, PostIdParamDto, UpdateBlogPostDto } from './dto/blog-post.dto';
+import { CreateBlogPostDto, ListPostsQueryDto, PageQueryDto, PostIdParamDto, PostImageParamsDto, UpdateBlogPostDto } from './dto/blog-post.dto';
 import { CreateCommentDto } from './dto/comment.dto';
 import { LikesService } from './likes.service';
+import { PostImagesService, UploadedImage } from './post-images.service';
 
 @ApiTags('Blog')
 @Controller('posts')
 export class BlogController {
-  constructor(private readonly blog: BlogService, private readonly comments: CommentsService, private readonly likes: LikesService) {}
+  constructor(
+    private readonly blog: BlogService,
+    private readonly comments: CommentsService,
+    private readonly likes: LikesService,
+    private readonly images: PostImagesService,
+  ) {}
 
   @Post()
   @UseGuards(AuthGuard, RolesGuard)
@@ -154,5 +163,54 @@ export class BlogController {
   @ApiNotFoundResponse({ type: ApiErrorDto, description: 'You have not liked this post.' })
   unlike(@Param() params: PostIdParamDto, @Req() request: AuthenticatedRequest) {
     return this.likes.unlike(params.id, request.user!);
+  }
+
+  @Post(':id/images')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(UserRole.USER)
+  @UseInterceptors(FileInterceptor('image', { limits: { fileSize: MAX_IMAGE_BYTES, files: 1 } }))
+  @ApiCookieAuth('accessToken')
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({ schema: { type: 'object', required: ['image'], properties: { image: { type: 'string', format: 'binary' } } } })
+  @ApiOperation({
+    summary: 'BLG-10/GEN-08: attach an image to my post',
+    description: `JPG or PNG (checked by file content), at most ${MAX_IMAGE_BYTES / 1024 / 1024} MB, at most ${MAX_IMAGES_PER_POST} per post. Returns the post with its image URLs.`,
+  })
+  @ApiCreatedResponse({ description: 'The post.' })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'Missing file, not a JPG or PNG, or 5 images already.' })
+  @ApiPayloadTooLargeResponse({ type: ApiErrorDto, description: 'File larger than 5 MB.' })
+  @ApiUnauthorizedResponse({ type: ApiErrorDto, description: 'Missing, invalid or expired session.' })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'Not your post, or role not USER.' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'No such post you may read.' })
+  addImage(@Param() params: PostIdParamDto, @UploadedFile() file: UploadedImage | undefined, @Req() request: AuthenticatedRequest) {
+    return this.images.addImage(params.id, file, request.user!);
+  }
+
+  @Get(':id/images/:imageId')
+  @UseGuards(OptionalAuthGuard)
+  @ApiProduces('image/jpeg', 'image/png')
+  @ApiOperation({ summary: 'BLG-10/GEN-08: view an image of a post', description: 'Same visibility as the post: drafts and hidden posts only for those allowed to read them.' })
+  @ApiOkResponse({ description: 'Image bytes.' })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'Invalid id.' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'No such image you may see.' })
+  async getImage(@Param() params: PostImageParamsDto, @Req() request: AuthenticatedRequest, @Res({ passthrough: true }) response: Response): Promise<StreamableFile> {
+    const image = await this.images.getImage(params.id, params.imageId, request.user);
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.setHeader('Cache-Control', 'private, no-cache');
+    return new StreamableFile(image.data, { type: image.contentType, length: image.data.length });
+  }
+
+  @Delete(':id/images/:imageId')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(UserRole.USER)
+  @ApiCookieAuth('accessToken')
+  @ApiOperation({ summary: 'BLG-10: remove an image from my post' })
+  @ApiOkResponse({ description: 'The post.' })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'Invalid id.' })
+  @ApiUnauthorizedResponse({ type: ApiErrorDto, description: 'Missing, invalid or expired session.' })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'Not your post, or role not USER.' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'No such post or image.' })
+  removeImage(@Param() params: PostImageParamsDto, @Req() request: AuthenticatedRequest) {
+    return this.images.removeImage(params.id, params.imageId, request.user!);
   }
 }
