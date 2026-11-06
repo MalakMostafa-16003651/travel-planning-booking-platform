@@ -1,12 +1,16 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, Types } from 'mongoose';
 import { UserRole } from '../common/enums/user-role.enum';
 import { ReferenceDataService } from '../reference-data/reference-data.service';
+import { BlockRoomDatesDto } from './dto/block-room-dates.dto';
 import { CreateHotelDto } from './dto/create-hotel.dto';
 import { CreateRoomDto } from './dto/create-room.dto';
+import { HotelAvailabilityQueryDto } from './dto/hotel-availability-query.dto';
 import { UpdateHotelDto } from './dto/update-hotel.dto';
+import { UpdateRoomAvailabilityDto } from './dto/update-room-availability.dto';
 import { UpdateRoomDto } from './dto/update-room.dto';
+import { BlockedRange, BookedRange, RoomAvailability } from './schemas/room-availability.schema';
 import { Hotel } from './schemas/hotel.schema';
 import { Room } from './schemas/room.schema';
 
@@ -15,11 +19,19 @@ export interface Requester {
   role: UserRole;
 }
 
+export interface RoomAvailabilityOverview {
+  roomId: string;
+  roomName: string;
+  blockedRanges: BlockedRange[];
+  bookedRanges: BookedRange[];
+}
+
 @Injectable()
 export class HotelsService {
   constructor(
     @InjectModel(Hotel.name) private readonly hotels: Model<Hotel>,
     @InjectModel(Room.name) private readonly rooms: Model<Room>,
+    @InjectModel(RoomAvailability.name) private readonly roomAvailabilities: Model<RoomAvailability>,
     @InjectConnection() private readonly connection: Connection,
     private readonly references: ReferenceDataService,
   ) {}
@@ -148,5 +160,105 @@ export class HotelsService {
   async deactivateRoom(moderatorId: string, hotelId: string, roomId: string): Promise<void> {
     const room = await this.getOwnRoom(moderatorId, hotelId, roomId);
     await this.rooms.updateOne({ _id: room._id }, { $set: { isActive: false } }).exec();
+  }
+
+  private static overlapFilter(startDate: string, endDate: string): Record<string, unknown> {
+    return { startDate: { $lt: endDate }, endDate: { $gt: startDate } };
+  }
+
+  /** HTL-04. Blocks a date range for one room, if it does not overlap an existing blocked or booked range. */
+  async blockDates(moderatorId: string, hotelId: string, roomId: string, input: BlockRoomDatesDto): Promise<RoomAvailability> {
+    const room = await this.getOwnRoom(moderatorId, hotelId, roomId);
+    if (input.startDate >= input.endDate) throw new BadRequestException('startDate must be before endDate');
+
+    // Ensure a RoomAvailability document exists for this room first (idempotent), so the conditional
+    // push below is a plain non-upsert update: combining upsert with an overlap condition would try to
+    // insert a second document (and fail on the unique roomId index) whenever an overlap is found.
+    try {
+      await this.roomAvailabilities.updateOne(
+        { roomId: room._id },
+        { $setOnInsert: { roomId: room._id, hotelId: room.hotelId, blockedRanges: [], bookedRanges: [] } },
+        { upsert: true },
+      ).exec();
+    } catch (error) {
+      if ((error as { code?: number }).code !== 11000) throw error;
+    }
+
+    const overlap = HotelsService.overlapFilter(input.startDate, input.endDate);
+    const updated = await this.roomAvailabilities.findOneAndUpdate(
+      {
+        roomId: room._id,
+        blockedRanges: { $not: { $elemMatch: overlap } },
+        bookedRanges: { $not: { $elemMatch: overlap } },
+      },
+      { $push: { blockedRanges: { startDate: input.startDate, endDate: input.endDate, reason: input.reason } } },
+      { new: true, runValidators: true },
+    ).exec();
+    if (!updated) throw new ConflictException('These dates overlap an existing blocked or booked range');
+    return updated;
+  }
+
+  /** HTL-05 (edit a blocked range's dates) and HTL-06 (unblock it). */
+  async updateBlockedRange(moderatorId: string, hotelId: string, roomId: string, input: UpdateRoomAvailabilityDto): Promise<RoomAvailability> {
+    const room = await this.getOwnRoom(moderatorId, hotelId, roomId);
+    const availability = await this.roomAvailabilities.findOne({ roomId: room._id }).exec();
+    const target = availability?.blockedRanges.find((range) => range._id.equals(input.blockedRangeId));
+    if (!target) throw new NotFoundException('Blocked range not found for this room');
+
+    if (input.remove) {
+      if (input.startDate !== undefined || input.endDate !== undefined) {
+        throw new BadRequestException('Supply either remove or new dates, not both');
+      }
+      const updated = await this.roomAvailabilities.findOneAndUpdate(
+        { roomId: room._id },
+        { $pull: { blockedRanges: { _id: new Types.ObjectId(input.blockedRangeId) } } },
+        { new: true },
+      ).exec();
+      return updated!;
+    }
+
+    if (input.startDate === undefined || input.endDate === undefined) {
+      throw new BadRequestException('Supply both startDate and endDate to edit a blocked range, or remove: true to unblock it');
+    }
+    if (input.startDate >= input.endDate) throw new BadRequestException('startDate must be before endDate');
+
+    const overlap = HotelsService.overlapFilter(input.startDate, input.endDate);
+    const updated = await this.roomAvailabilities.findOneAndUpdate(
+      {
+        roomId: room._id,
+        blockedRanges: { $not: { $elemMatch: { _id: { $ne: target._id }, ...overlap } } },
+        bookedRanges: { $not: { $elemMatch: overlap } },
+      },
+      { $set: { 'blockedRanges.$[target].startDate': input.startDate, 'blockedRanges.$[target].endDate': input.endDate } },
+      { new: true, runValidators: true, arrayFilters: [{ 'target._id': target._id }] },
+    ).exec();
+    if (!updated) throw new ConflictException('These dates overlap another existing blocked or booked range');
+    return updated;
+  }
+
+  /** HTL-08. Every active room of the hotel, with its blocked/booked ranges optionally filtered to a window. */
+  async getHotelAvailability(moderatorId: string, hotelId: string, query: HotelAvailabilityQueryDto): Promise<RoomAvailabilityOverview[]> {
+    if (query.from !== undefined && query.to !== undefined && query.from >= query.to) {
+      throw new BadRequestException('from must be before to');
+    }
+    const assignedId = await this.assertOwnHotel(moderatorId, hotelId);
+    const [rooms, availabilities] = await Promise.all([
+      this.rooms.find({ hotelId: assignedId, isActive: true }).sort({ name: 1 }).exec(),
+      this.roomAvailabilities.find({ hotelId: assignedId }).exec(),
+    ]);
+    const byRoom = new Map(availabilities.map((availability) => [availability.roomId.toString(), availability]));
+
+    const inWindow = (range: { startDate: string; endDate: string }) =>
+      (query.from === undefined || range.endDate > query.from) && (query.to === undefined || range.startDate < query.to);
+
+    return rooms.map((room) => {
+      const availability = byRoom.get(room._id.toString());
+      return {
+        roomId: room._id.toString(),
+        roomName: room.name,
+        blockedRanges: (availability?.blockedRanges ?? []).filter(inWindow),
+        bookedRanges: (availability?.bookedRanges ?? []).filter(inWindow),
+      };
+    });
   }
 }

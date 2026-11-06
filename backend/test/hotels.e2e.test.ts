@@ -92,7 +92,7 @@ describe('Hotels E2E', { concurrency: false }, () => {
     await Promise.all([
       users.deleteMany({}).exec(),
       sessions.deleteMany({}).exec(),
-      ...['hotels', 'rooms', 'moderatorassignments'].map((name) => connection.collection(name).deleteMany({})),
+      ...['hotels', 'rooms', 'roomavailabilities', 'moderatorassignments'].map((name) => connection.collection(name).deleteMany({})),
     ]);
 
     adminCookie = await login('admin@example.com', UserRole.ADMIN);
@@ -320,6 +320,209 @@ describe('Hotels E2E', { concurrency: false }, () => {
         .delete(`/api/hotels/${hotelId}/rooms/${new Types.ObjectId().toString()}`)
         .set('Cookie', moderatorCookie)
         .expect(404);
+    });
+  });
+
+  describe('Room availability - HTL-04, HTL-05, HTL-06, HTL-08', () => {
+    async function createRoom() {
+      const response = await http()
+        .post(`/api/hotels/${hotelId}/rooms`)
+        .set('Cookie', moderatorCookie)
+        .send({ name: 'Deluxe King', capacity: 2, pricePerNight: 15000 })
+        .expect(201);
+      return response.body._id as string;
+    }
+
+    it('blocks a date range and registers the route in Swagger', async () => {
+      const roomId = await createRoom();
+      const response = await http()
+        .post(`/api/hotels/${hotelId}/rooms/${roomId}/availability`)
+        .set('Cookie', moderatorCookie)
+        .send({ startDate: '2026-12-20', endDate: '2026-12-27', reason: 'Maintenance' })
+        .expect(201);
+
+      assert.equal(response.body.roomId, roomId);
+      assert.equal(response.body.blockedRanges.length, 1);
+      assert.equal(response.body.blockedRanges[0].startDate, '2026-12-20');
+      assert.equal(response.body.blockedRanges[0].endDate, '2026-12-27');
+      assert.equal(response.body.blockedRanges[0].reason, 'Maintenance');
+
+      const doc = (await http().get('/api/docs-json').expect(200)).body;
+      assert.ok(doc.paths['/api/hotels/{id}/rooms/{roomId}/availability'].post);
+      assert.ok(doc.paths['/api/hotels/{id}/rooms/{roomId}/availability'].patch);
+      assert.ok(doc.paths['/api/hotels/{id}/availability'].get);
+    });
+
+    it('rejects an end date on or before the start date', async () => {
+      const roomId = await createRoom();
+      await http()
+        .post(`/api/hotels/${hotelId}/rooms/${roomId}/availability`)
+        .set('Cookie', moderatorCookie)
+        .send({ startDate: '2026-12-27', endDate: '2026-12-20' })
+        .expect(400);
+    });
+
+    it('rejects a new blocked range that overlaps an existing one', async () => {
+      const roomId = await createRoom();
+      await http()
+        .post(`/api/hotels/${hotelId}/rooms/${roomId}/availability`)
+        .set('Cookie', moderatorCookie)
+        .send({ startDate: '2026-12-20', endDate: '2026-12-27' })
+        .expect(201);
+
+      await http()
+        .post(`/api/hotels/${hotelId}/rooms/${roomId}/availability`)
+        .set('Cookie', moderatorCookie)
+        .send({ startDate: '2026-12-25', endDate: '2026-12-30' })
+        .expect(409);
+
+      // Touching the existing range's checkout date does not overlap it (half-open ranges).
+      await http()
+        .post(`/api/hotels/${hotelId}/rooms/${roomId}/availability`)
+        .set('Cookie', moderatorCookie)
+        .send({ startDate: '2026-12-27', endDate: '2026-12-30' })
+        .expect(201);
+    });
+
+    it('edits a blocked range\'s dates', async () => {
+      const roomId = await createRoom();
+      const created = await http()
+        .post(`/api/hotels/${hotelId}/rooms/${roomId}/availability`)
+        .set('Cookie', moderatorCookie)
+        .send({ startDate: '2026-12-20', endDate: '2026-12-27' })
+        .expect(201);
+      const blockedRangeId = created.body.blockedRanges[0]._id;
+
+      const response = await http()
+        .patch(`/api/hotels/${hotelId}/rooms/${roomId}/availability`)
+        .set('Cookie', moderatorCookie)
+        .send({ blockedRangeId, startDate: '2026-12-21', endDate: '2026-12-28' })
+        .expect(200);
+
+      assert.equal(response.body.blockedRanges.length, 1);
+      assert.equal(response.body.blockedRanges[0].startDate, '2026-12-21');
+      assert.equal(response.body.blockedRanges[0].endDate, '2026-12-28');
+    });
+
+    it('rejects editing a blocked range onto dates that overlap another one', async () => {
+      const roomId = await createRoom();
+      const first = await http()
+        .post(`/api/hotels/${hotelId}/rooms/${roomId}/availability`)
+        .set('Cookie', moderatorCookie)
+        .send({ startDate: '2026-12-01', endDate: '2026-12-05' })
+        .expect(201);
+      await http()
+        .post(`/api/hotels/${hotelId}/rooms/${roomId}/availability`)
+        .set('Cookie', moderatorCookie)
+        .send({ startDate: '2026-12-10', endDate: '2026-12-15' })
+        .expect(201);
+
+      const blockedRangeId = first.body.blockedRanges[0]._id;
+      await http()
+        .patch(`/api/hotels/${hotelId}/rooms/${roomId}/availability`)
+        .set('Cookie', moderatorCookie)
+        .send({ blockedRangeId, startDate: '2026-12-04', endDate: '2026-12-11' })
+        .expect(409);
+    });
+
+    it('unblocks (removes) a blocked range', async () => {
+      const roomId = await createRoom();
+      const created = await http()
+        .post(`/api/hotels/${hotelId}/rooms/${roomId}/availability`)
+        .set('Cookie', moderatorCookie)
+        .send({ startDate: '2026-12-20', endDate: '2026-12-27' })
+        .expect(201);
+      const blockedRangeId = created.body.blockedRanges[0]._id;
+
+      const response = await http()
+        .patch(`/api/hotels/${hotelId}/rooms/${roomId}/availability`)
+        .set('Cookie', moderatorCookie)
+        .send({ blockedRangeId, remove: true })
+        .expect(200);
+
+      assert.equal(response.body.blockedRanges.length, 0);
+
+      // The dates are free again.
+      await http()
+        .post(`/api/hotels/${hotelId}/rooms/${roomId}/availability`)
+        .set('Cookie', moderatorCookie)
+        .send({ startDate: '2026-12-20', endDate: '2026-12-27' })
+        .expect(201);
+    });
+
+    it('rejects remove combined with new dates, and an unknown blockedRangeId', async () => {
+      const roomId = await createRoom();
+      const created = await http()
+        .post(`/api/hotels/${hotelId}/rooms/${roomId}/availability`)
+        .set('Cookie', moderatorCookie)
+        .send({ startDate: '2026-12-20', endDate: '2026-12-27' })
+        .expect(201);
+      const blockedRangeId = created.body.blockedRanges[0]._id;
+
+      await http()
+        .patch(`/api/hotels/${hotelId}/rooms/${roomId}/availability`)
+        .set('Cookie', moderatorCookie)
+        .send({ blockedRangeId, remove: true, startDate: '2026-12-21', endDate: '2026-12-28' })
+        .expect(400);
+
+      await http()
+        .patch(`/api/hotels/${hotelId}/rooms/${roomId}/availability`)
+        .set('Cookie', moderatorCookie)
+        .send({ blockedRangeId: new Types.ObjectId().toString(), remove: true })
+        .expect(404);
+    });
+
+    it('rejects a moderator blocking dates for a room that is not theirs', async () => {
+      const roomId = await createRoom();
+      const otherModerator = await login('other-hotel-moderator@example.com', UserRole.HOTEL_MODERATOR);
+      await http()
+        .post(`/api/hotels/${hotelId}/rooms/${roomId}/availability`)
+        .set('Cookie', otherModerator)
+        .send({ startDate: '2026-12-20', endDate: '2026-12-27' })
+        .expect(403);
+    });
+
+    it('lists every active room\'s availability for the hotel, optionally windowed', async () => {
+      const blockedRoomId = await createRoom();
+      const freeRoomResponse = await http()
+        .post(`/api/hotels/${hotelId}/rooms`)
+        .set('Cookie', moderatorCookie)
+        .send({ name: 'Standard Twin', capacity: 2, pricePerNight: 9000 })
+        .expect(201);
+      const freeRoomId = freeRoomResponse.body._id as string;
+
+      await http()
+        .post(`/api/hotels/${hotelId}/rooms/${blockedRoomId}/availability`)
+        .set('Cookie', moderatorCookie)
+        .send({ startDate: '2026-12-20', endDate: '2026-12-27' })
+        .expect(201);
+
+      const full = await http().get(`/api/hotels/${hotelId}/availability`).set('Cookie', moderatorCookie).expect(200);
+      assert.equal(full.body.length, 2);
+      const blockedEntry = full.body.find((entry: { roomId: string }) => entry.roomId === blockedRoomId);
+      const freeEntry = full.body.find((entry: { roomId: string }) => entry.roomId === freeRoomId);
+      assert.equal(blockedEntry.blockedRanges.length, 1);
+      assert.equal(freeEntry.blockedRanges.length, 0);
+
+      const outsideWindow = await http()
+        .get(`/api/hotels/${hotelId}/availability?from=2027-01-01&to=2027-01-10`)
+        .set('Cookie', moderatorCookie)
+        .expect(200);
+      const blockedEntryOutside = outsideWindow.body.find((entry: { roomId: string }) => entry.roomId === blockedRoomId);
+      assert.equal(blockedEntryOutside.blockedRanges.length, 0);
+
+      const insideWindow = await http()
+        .get(`/api/hotels/${hotelId}/availability?from=2026-12-22&to=2026-12-23`)
+        .set('Cookie', moderatorCookie)
+        .expect(200);
+      const blockedEntryInside = insideWindow.body.find((entry: { roomId: string }) => entry.roomId === blockedRoomId);
+      assert.equal(blockedEntryInside.blockedRanges.length, 1);
+    });
+
+    it('requires an authenticated hotel moderator to view hotel availability', async () => {
+      await http().get(`/api/hotels/${hotelId}/availability`).expect(401);
+      const ordinaryUser = await login('user@example.com');
+      await http().get(`/api/hotels/${hotelId}/availability`).set('Cookie', ordinaryUser).expect(403);
     });
   });
 });
