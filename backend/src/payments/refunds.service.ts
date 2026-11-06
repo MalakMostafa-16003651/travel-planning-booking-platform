@@ -1,7 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import Stripe from 'stripe';
+import { UserRole } from '../common/enums/user-role.enum';
 import { bookingRef } from './booking-ref';
 import { BookingType } from './bookings-port';
 import { toMinorUnits } from './money';
@@ -26,11 +27,44 @@ export function toRefundStatus(status: string | null): RefundStatus {
 
 @Injectable()
 export class RefundsService {
+  private readonly logger = new Logger(RefundsService.name);
+
   constructor(
     @InjectModel(Refund.name) private readonly refunds: Model<Refund>,
     @InjectModel(Payment.name) private readonly payments: Model<Payment>,
     private readonly stripe: StripeService,
   ) {}
+
+  /** PAY-03: reads a refund (owner or ADMIN). A PENDING one is checked with Stripe first. */
+  async findOne(id: string, user: { userId: string; role: UserRole }) {
+    const refund = await this.refunds.findById(id).exec();
+    if (!refund || (refund.userId.toString() !== user.userId && user.role !== UserRole.ADMIN)) {
+      throw new NotFoundException('Refund not found');
+    }
+    if (refund.status !== RefundStatus.PENDING) return refund;
+    // Also covers a refund.updated webhook that arrived before this record was saved.
+    try {
+      await this.syncStripeRefund(await this.stripe.retrieveRefund(refund.stripeRefundId));
+    } catch {
+      // Stripe is unreachable: show the stored status instead of failing the read.
+      this.logger.error(`Could not check refund ${id} with Stripe`);
+      return refund;
+    }
+    return this.refunds.findById(id).exec();
+  }
+
+  /**
+   * PAY-03 for the booking modules: refunds a cancelled booking. Idempotent per booking and reason,
+   * because Person 4 retries failed requests: a repeated call returns the refund already created.
+   */
+  async refundCancelledBooking(input: CreateRefundInput) {
+    const existing = await this.refunds.findOne({
+      ...bookingRef(input.bookingType, input.bookingId),
+      reason: input.reason,
+      status: { $in: [RefundStatus.PENDING, RefundStatus.REFUNDED] },
+    }).exec();
+    return existing ?? this.createRefund(input);
+  }
 
   /** Refunds part or all of a booking's successful payment. */
   async createRefund(input: CreateRefundInput) {

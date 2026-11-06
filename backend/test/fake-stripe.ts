@@ -14,6 +14,8 @@ export class FakeStripe {
   private refundsByKey = new Map<string, Stripe.Refund>();
   calls = { createIntent: 0, createRefund: 0 };
   failNextCancel = false;
+  failNextRefund = false;
+  failNextRetrieve = false;
   refundStatus: Stripe.Refund['status'] = 'pending';
   private sequence = 0;
 
@@ -39,13 +41,23 @@ export class FakeStripe {
       // Stripe replays the same refund for a repeated idempotency key.
       const replay = this.refundsByKey.get(idempotencyKey);
       if (replay) return { ...replay };
+      if (this.failNextRefund) {
+        this.failNextRefund = false;
+        throw new Error('Stripe is unavailable');
+      }
       this.calls.createRefund += 1;
       const refund = { id: `re_test_${++this.sequence}`, object: 'refund', amount, payment_intent: paymentIntentId, metadata, status: this.refundStatus } as unknown as Stripe.Refund;
       this.refunds.set(refund.id, refund);
       this.refundsByKey.set(idempotencyKey, refund);
       return { ...refund };
     };
-    service.retrieveRefund = async (id) => ({ ...this.refunds.get(id)! });
+    service.retrieveRefund = async (id) => {
+      if (this.failNextRetrieve) {
+        this.failNextRetrieve = false;
+        throw new Error('Stripe is unavailable');
+      }
+      return { ...this.refunds.get(id)! };
+    };
     service.listRefunds = async (paymentIntentId) => [...this.refunds.values()].filter((refund) => refund.payment_intent === paymentIntentId);
   }
 

@@ -10,6 +10,7 @@ import { PaymentsController } from './payments.controller';
 import { PaymentsService } from './payments.service';
 import { PoliciesController } from './policies.controller';
 import { PoliciesService } from './policies.service';
+import { RefundsController } from './refunds.controller';
 import { RefundsService } from './refunds.service';
 import { Payment, PaymentSchema } from './schemas/payment.schema';
 import { PolicyAcceptance, PolicyAcceptanceSchema } from './schemas/policy-acceptance.schema';
@@ -27,7 +28,7 @@ import { StripeService } from './stripe.service';
       { name: Refund.name, schema: RefundSchema },
     ]),
   ],
-  controllers: [PoliciesController, PaymentsController],
+  controllers: [PoliciesController, PaymentsController, RefundsController],
   providers: [
     PoliciesService,
     PaymentsService,
