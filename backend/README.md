@@ -351,10 +351,10 @@ For a manual Swagger check: log in, create an itinerary, add days in Cairo, Cair
 ## Hotel profiles
 
 `backend/src/hotels` implements HTL-01/HTL-02 (hotel profiles), HTL-03/
-HTL-05/HTL-06 (rooms), HTL-04/HTL-05/HTL-06/HTL-08 (room availability) and
-HTL-09/HTL-10 (policies), per the
-[hotel contract proposal](../docs/requirements/hotel-contract-proposal.md).
-Search follows in a later requirement branch.
+HTL-05/HTL-06 (rooms), HTL-04/HTL-05/HTL-06/HTL-08 (room availability),
+HTL-09/HTL-10 (policies) and HTL-22 (moderator reservations, stubbed), per
+the [hotel contract proposal](../docs/requirements/hotel-contract-proposal.md).
+Search (HTL-11/12/15) is in a separate branch/PR.
 
 | Method | Endpoint | Who | Result |
 | --- | --- | --- | --- |
@@ -368,6 +368,7 @@ Search follows in a later requirement branch.
 | PATCH | `/api/hotels/:id/rooms/:roomId/availability` | assigned HOTEL_MODERATOR | Edit a blocked range's dates (`blockedRangeId` + new `startDate`/`endDate`), or unblock it (`blockedRangeId` + `remove: true`). |
 | GET | `/api/hotels/:id/availability` | assigned HOTEL_MODERATOR | Every active room's blocked/booked ranges, optionally windowed by `from`/`to`. |
 | PUT | `/api/hotels/:id/policies` | assigned HOTEL_MODERATOR | Update `checkInTime`/`checkOutTime` (`HH:mm`), `cancellationTiers`, or both. Tiers are stored sorted by `daysBeforeCheckIn` descending; duplicate thresholds are rejected, the same rule `AirlinesService.updatePoliciesMine` uses for `cancellationTiers`. |
+| GET | `/api/hotels/:id/reservations` | assigned HOTEL_MODERATOR | Ownership is checked first (404/403, same as every other moderator route); the actual listing is 503 until Person 6's hotel-bookings module exists. `HotelReservationsPort`/`PendingHotelReservationsAdapter` in `backend/src/hotels/ports` and `adapters` mirror the itineraries module's pending search adapters — swap the adapter binding in `HotelsModule` once that module lands. |
 
 New hotels default to `isActive: true`, `checkInTime: '14:00'`, `checkOutTime: '11:00'` and no cancellation tiers. Changing `city` re-resolves the country from the reference catalog from scratch; changing only `countryCode` re-resolves against the existing city. Rooms carry no inventory count of their own (HTL-03 "individually bookable rooms"); each room's `RoomAvailability` document instead holds `blockedRanges` (written here) and `bookedRanges` (reserved for the not-yet-built hotel-bookings module — see the contract's section 3 for the overlap-array design and why a hold is a single conditional write).
 
