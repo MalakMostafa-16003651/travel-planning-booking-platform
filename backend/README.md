@@ -351,9 +351,10 @@ For a manual Swagger check: log in, create an itinerary, add days in Cairo, Cair
 ## Hotel profiles
 
 `backend/src/hotels` implements HTL-01/HTL-02 (hotel profiles), HTL-03/
-HTL-05/HTL-06 (rooms) and HTL-04/HTL-05/HTL-06/HTL-08 (room availability),
-per the [hotel contract proposal](../docs/requirements/hotel-contract-proposal.md).
-Policies and search follow in later requirement branches.
+HTL-05/HTL-06 (rooms), HTL-04/HTL-05/HTL-06/HTL-08 (room availability) and
+HTL-09/HTL-10 (policies), per the
+[hotel contract proposal](../docs/requirements/hotel-contract-proposal.md).
+Search follows in a later requirement branch.
 
 | Method | Endpoint | Who | Result |
 | --- | --- | --- | --- |
@@ -366,8 +367,9 @@ Policies and search follow in later requirement branches.
 | POST | `/api/hotels/:id/rooms/:roomId/availability` | assigned HOTEL_MODERATOR | Block a `startDate`/`endDate` range (half-open: `endDate` is checkout) for one room. 409 if it overlaps an existing blocked or booked range. |
 | PATCH | `/api/hotels/:id/rooms/:roomId/availability` | assigned HOTEL_MODERATOR | Edit a blocked range's dates (`blockedRangeId` + new `startDate`/`endDate`), or unblock it (`blockedRangeId` + `remove: true`). |
 | GET | `/api/hotels/:id/availability` | assigned HOTEL_MODERATOR | Every active room's blocked/booked ranges, optionally windowed by `from`/`to`. |
+| PUT | `/api/hotels/:id/policies` | assigned HOTEL_MODERATOR | Update `checkInTime`/`checkOutTime` (`HH:mm`), `cancellationTiers`, or both. Tiers are stored sorted by `daysBeforeCheckIn` descending; duplicate thresholds are rejected, the same rule `AirlinesService.updatePoliciesMine` uses for `cancellationTiers`. |
 
-New hotels default to `isActive: true`, `checkInTime: '14:00'`, `checkOutTime: '11:00'` and no cancellation tiers; `PUT /api/hotels/:id/policies` (HTL-09, HTL-10) is a later branch. Changing `city` re-resolves the country from the reference catalog from scratch; changing only `countryCode` re-resolves against the existing city. Rooms carry no inventory count of their own (HTL-03 "individually bookable rooms"); each room's `RoomAvailability` document instead holds `blockedRanges` (written here) and `bookedRanges` (reserved for the not-yet-built hotel-bookings module — see the contract's section 3 for the overlap-array design and why a hold is a single conditional write).
+New hotels default to `isActive: true`, `checkInTime: '14:00'`, `checkOutTime: '11:00'` and no cancellation tiers. Changing `city` re-resolves the country from the reference catalog from scratch; changing only `countryCode` re-resolves against the existing city. Rooms carry no inventory count of their own (HTL-03 "individually bookable rooms"); each room's `RoomAvailability` document instead holds `blockedRanges` (written here) and `bookedRanges` (reserved for the not-yet-built hotel-bookings module — see the contract's section 3 for the overlap-array design and why a hold is a single conditional write).
 
 For a manual Swagger check: log in as the seeded administrator, create a hotel with `city: "Cairo"`, confirm `GET /api/hotels/:id` is public, then log in as a hotel moderator with a matching `moderatorassignments` row, add a room with `POST /api/hotels/:id/rooms`, block a date range with `POST .../availability`, confirm a second overlapping block is rejected (409) while a touching one (same checkout date as the next check-in) is accepted, and confirm `GET /api/hotels/:id/availability` lists it.
 
