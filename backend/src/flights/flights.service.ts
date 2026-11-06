@@ -1,5 +1,7 @@
 
-import {BadRequestException,ConflictException, ForbiddenException,Injectable, Logger,NotFoundException, ServiceUnavailableException,} from '@nestjs/common';
+
+import {BadRequestException,ConflictException,ForbiddenException, Injectable,Logger,NotFoundException,OnModuleInit,ServiceUnavailableException,} from '@nestjs/common';
+
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { AirlinesService } from '../airlines/airlines.service';
@@ -16,9 +18,8 @@ import { Flight } from './schemas/flight.schema';
 import { localDateTimeToUtc } from './flight-time.util';
 
 @Injectable()
-export class FlightsService {
+export class FlightsService implements OnModuleInit {
   private readonly logger = new Logger(FlightsService.name);
-
   constructor(
     @InjectModel(Flight.name)
     private readonly flights: Model<Flight>,
@@ -37,7 +38,13 @@ export class FlightsService {
     private readonly bookings: FlightBookingsService,
   ) {}
 
-  // Helper: Validate MongoDB ObjectId
+async onModuleInit(): Promise<void> {
+  // Both uniqueness constraints must exist before accepting writes.
+  // In particular, create the cabin collection/index outside the transaction's first request.
+  await Promise.all([this.flights.init(), this.cabins.init()]);
+}
+
+// Helper: Validate MongoDB ObjectId
 
   private objectId(
     id: string,
@@ -180,15 +187,18 @@ export class FlightsService {
     }
 
     try {
-      return await this.cabins.insertMany(
+      // An ordered batch can still insert earlier rows before a duplicate fails.
+      // The existing unique index resolves races; the transaction rolls the entire
+      // request back, including those earlier rows, before reporting a conflict.
+      return await this.cabins.db.transaction((session) => this.cabins.insertMany(
         input.cabins.map((item) => ({
           ...item,
           flightId: flight._id,
           bookedSeats: 0,
           heldSeats: 0,
         })),
-        { ordered: true },
-      );
+        { ordered: true, session },
+      ));
     } catch (error) {
       if ((error as { code?: number }).code === 11000) {
         throw new ConflictException(
@@ -246,6 +256,7 @@ export class FlightsService {
 
     return flight;
   }
+
 
   // FLT-05: Update flight schedule
 
@@ -545,3 +556,4 @@ export class FlightsService {
     };
   }
 }
+

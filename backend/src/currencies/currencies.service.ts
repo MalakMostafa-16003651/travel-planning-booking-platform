@@ -13,13 +13,13 @@ export class CurrenciesService implements OnModuleInit {
   }
 
   async listSupported(): Promise<Currency[]> {
-    return this.currencies.find().sort({ code: 1 }).exec();
+    return this.currencies.find({ code: { $in: SUPPORTED_CURRENCY_SEEDS.map(({ code }) => code) } }).sort({ code: 1 }).exec();
   }
 
   async isSupported(code: string): Promise<boolean> {
     // Membership is exact. Do not let Mongoose's uppercase setter silently make
     // a noncanonical input match a different supplied code.
-    if (typeof code !== 'string' || !/^[A-Z]{3}$/.test(code)) return false;
+    if (typeof code !== 'string' || !SUPPORTED_CURRENCY_SEEDS.some((seed) => seed.code === code)) return false;
     return await this.currencies.exists({ code }).exec() !== null;
   }
 
