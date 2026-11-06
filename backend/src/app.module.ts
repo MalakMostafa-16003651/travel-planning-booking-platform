@@ -8,6 +8,7 @@ import { FlightBookingsModule } from './flight-bookings/flight-bookings.module';
 import { AirportsModule } from './airports/airports.module';
 import { AirlinesModule } from './airlines/airlines.module';
 import { ItinerariesModule } from './itineraries/itineraries.module';
+import { FlightsModule } from './flights/flights.module';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { ItinerariesModule } from './itineraries/itineraries.module';
     AirportsModule,
     AirlinesModule,
     ItinerariesModule,
+    FlightsModule,
   ],
 })
 export class AppModule {}
