@@ -279,6 +279,51 @@ All routes need a login. Another user's booking returns **404**. Booking and can
 
 **Integration:** `ports/` defines what this module needs from Flights, Payments and Notifications. The inventory adapter already uses the agreed `flights`, `cabininventories`, `airports` and `airlines` collections, so holds return 404 until those contain data. `adapters/pending-integration.adapters.ts` holds temporary Payments and Notifications bindings: until Person 8's module calls `confirmPaidBooking`, a booking can be held but not confirmed outside the automated tests.
 
+## Itineraries, activities and budgeting
+
+`backend/src/itineraries` implements ITN-01, ITN-03, ITN-05, ITN-07, ITN-08, ITN-10, ITN-12, ITN-14, ITN-16, ITN-18, ITN-20, ITN-21, ITN-25 and ITN-26, plus the itinerary parts of ACC-11 and ACC-12. The interfaces it needs from other modules and the open questions are in the [itinerary contract proposal](../docs/requirements/itinerary-contract-proposal.md).
+
+| Method | Endpoint | Who | Result |
+| --- | --- | --- | --- |
+| POST | `/api/itineraries` | USER | Create. Currency defaults to `preferredCurrency`, else USD. |
+| GET | `/api/itineraries` | signed in | Your itineraries, page size 10. |
+| GET | `/api/itineraries/:id` | owner, or anyone if public | Full itinerary with days, city stops and transport costs. |
+| PATCH / DELETE | `/api/itineraries/:id` | owner | Update (including `visibility`) or delete. |
+| POST | `/api/itineraries/:id/days` | owner | Append a day, or insert at `position`. |
+| PATCH | `/api/itineraries/:id/days/reorder` | owner | Body `{ "dayIds": [...] }` with every day once. |
+| PATCH / DELETE | `/api/itineraries/:id/days/:dayId` | owner | Edit or remove a day. |
+| POST | `/api/itineraries/:id/days/:dayId/activities` | owner | Add an activity. |
+| PATCH / DELETE | `/api/activities/:id` | owner | Edit or remove an activity. |
+| POST | `/api/activities/:id/images` | owner | Multipart field `image`: JPEG, PNG or WebP, at most 5 MB, 5 per activity. |
+| GET / DELETE | `/api/activities/:id/images/:imageId` | read: like the itinerary; delete: owner | Download or remove an image. |
+| POST | `/api/itineraries/:id/days/:dayId/budgets` | owner | FOOD, ACCOMMODATION, ACTIVITIES or LOCAL_TRANSPORT. |
+| PATCH / DELETE | `/api/budgets/:id` | owner | Edit or remove a budget entry. |
+| POST | `/api/itineraries/:id/transport-costs` | owner | Intercity transport cost. |
+| PATCH / DELETE | `/api/transport-costs/:id` | owner | Edit or remove it. |
+| GET | `/api/itineraries/:id/budget-summary?currency=EUR` | like the itinerary | Totals per category, day, city and transport, converted. |
+| GET | `/api/itineraries/public/search` | anyone | `q`, `country`, `city`, `minDays`, `maxDays`, `sort`, `page`. |
+| GET | `/api/itineraries/public/:id` | anyone | A public itinerary. |
+| POST | `/api/itineraries/:id/clone` | USER | Private copy with `clonedFrom` attribution. |
+| GET | `/api/itineraries/:id/hotels?dayId=` | like the itinerary | Hotel search for that city stop. |
+| GET | `/api/itineraries/:id/flights?dayId=` | like the itinerary | Flight search into that city stop. |
+
+**Dates and numbering.** Days are stored in order; nothing derived is stored. Day N's date is `startDate + (N - 1)`, and consecutive days in the same city form a city stop. Adding, deleting or reordering days, or changing `startDate`, therefore cannot leave numbers, dates, grouping or per-city budgets out of date. Two simultaneous edits of the same itinerary cannot overwrite each other: the second gets 409 and should reload.
+
+**Access (ACC-11, ACC-12).** Private itineraries are visible only to their owner, including to admins; everyone else gets 404. Public itineraries whose author is deactivated or no longer exists are left unchanged in the database but are hidden from search, viewing, budget summary and cloning (404). They are removed before pagination, so totals only count what can be opened. Suspended authors stay visible. Author status comes from the agreed `UsersService.getAccountStatuses(userIds)` interface (an interim adapter with the same signature until it lands); if the lookup fails, the request fails (500) instead of granting access.
+
+**Currency (ITN-18).** Itinerary, budget, transport and summary currencies must be in the shared catalog from `CurrenciesService` (AED, EGP, EUR, GBP, JPY, SAR, USD; `GET /api/currencies`). The summary calls FXRatesAPI from the backend only, caches each base currency's rates for one hour in `exchangerates`, and returns:
+
+- 400 for a currency outside the catalog;
+- 422 if the provider has no rate for one of the currencies;
+- 200 with `ratesStale: true` if the provider fails but cached rates under 7 days old exist;
+- 503 if the provider fails and there is no usable cache.
+
+`FXRATES_API_KEY` is optional (the provider has a keyless tier) and is sent as a bearer header, never in a URL or response.
+
+**Flights and hotels (ITN-25, ITN-26).** The itinerary derives the city and dates and passes them to the Hotels search (HTL-11, HTL-12) and the Flights search (FLT-11, FLT-12, FLT-15). Until those modules exist, these two endpoints return 503.
+
+For a manual Swagger check: log in, create an itinerary, add days in Cairo, Cairo and Luxor, then reorder them and confirm day numbers, dates and `cityGroups` follow. Add budget entries in EGP and USD and call `budget-summary?currency=EUR`. Make the itinerary PUBLIC, log in as a second user, then search for it and clone it.
+
 ## Automated tests
 
 From `backend/`, run:
