@@ -92,7 +92,7 @@ describe('Hotels E2E', { concurrency: false }, () => {
     await Promise.all([
       users.deleteMany({}).exec(),
       sessions.deleteMany({}).exec(),
-      ...['hotels', 'moderatorassignments'].map((name) => connection.collection(name).deleteMany({})),
+      ...['hotels', 'rooms', 'moderatorassignments'].map((name) => connection.collection(name).deleteMany({})),
     ]);
 
     adminCookie = await login('admin@example.com', UserRole.ADMIN);
@@ -219,6 +219,107 @@ describe('Hotels E2E', { concurrency: false }, () => {
 
     it('rejects an empty update', async () => {
       await http().patch(`/api/hotels/${hotelId}`).set('Cookie', moderatorCookie).send({}).expect(400);
+    });
+  });
+
+  describe('Rooms - HTL-03, HTL-05, HTL-06', () => {
+    async function createRoom(overrides: Partial<{ name: string; capacity: number; pricePerNight: number }> = {}) {
+      const response = await http()
+        .post(`/api/hotels/${hotelId}/rooms`)
+        .set('Cookie', moderatorCookie)
+        .send({ name: 'Deluxe King', capacity: 2, pricePerNight: 15000, ...overrides })
+        .expect(201);
+      return response.body;
+    }
+
+    it('creates a room for the moderator\'s own hotel', async () => {
+      const room = await createRoom();
+      assert.equal(room.hotelId, hotelId);
+      assert.equal(room.name, 'Deluxe King');
+      assert.equal(room.capacity, 2);
+      assert.equal(room.pricePerNight, 15000);
+      assert.equal(room.isActive, true);
+
+      const doc = (await http().get('/api/docs-json').expect(200)).body;
+      assert.ok(doc.paths['/api/hotels/{id}/rooms'].post);
+      assert.ok(doc.paths['/api/hotels/{id}/rooms/{roomId}'].patch);
+      assert.ok(doc.paths['/api/hotels/{id}/rooms/{roomId}'].delete);
+    });
+
+    it('rejects room creation for another moderator\'s hotel', async () => {
+      const otherModerator = await login('other-hotel-moderator@example.com', UserRole.HOTEL_MODERATOR);
+      await http()
+        .post(`/api/hotels/${hotelId}/rooms`)
+        .set('Cookie', otherModerator)
+        .send({ name: 'Hijacked Room', capacity: 2, pricePerNight: 1000 })
+        .expect(403);
+    });
+
+    it('requires an authenticated hotel moderator to create a room', async () => {
+      await http().post(`/api/hotels/${hotelId}/rooms`).send({ name: 'x', capacity: 1, pricePerNight: 1 }).expect(401);
+      const ordinaryUser = await login('user@example.com');
+      await http()
+        .post(`/api/hotels/${hotelId}/rooms`)
+        .set('Cookie', ordinaryUser)
+        .send({ name: 'x', capacity: 1, pricePerNight: 1 })
+        .expect(403);
+    });
+
+    it('updates a room of the moderator\'s own hotel', async () => {
+      const room = await createRoom();
+      const response = await http()
+        .patch(`/api/hotels/${hotelId}/rooms/${room._id}`)
+        .set('Cookie', moderatorCookie)
+        .send({ capacity: 4, pricePerNight: 18000 })
+        .expect(200);
+
+      assert.equal(response.body.capacity, 4);
+      assert.equal(response.body.pricePerNight, 18000);
+      assert.equal(response.body.name, 'Deluxe King');
+    });
+
+    it('rejects an empty room update', async () => {
+      const room = await createRoom();
+      await http().patch(`/api/hotels/${hotelId}/rooms/${room._id}`).set('Cookie', moderatorCookie).send({}).expect(400);
+    });
+
+    it('rejects editing a room that does not belong to this hotel', async () => {
+      const otherModerator = await login('other-hotel-moderator@example.com', UserRole.HOTEL_MODERATOR);
+      const other = await users.findOne({ email: 'other-hotel-moderator@example.com' }).orFail().exec();
+      const otherHotelId = new Types.ObjectId();
+      await connection.collection('hotels').insertOne({
+        _id: otherHotelId, name: 'Other Hotel', city: 'Dubai', countryCode: 'AE', address: 'Marina',
+        isActive: true, checkInTime: '14:00', checkOutTime: '11:00', cancellationTiers: [],
+      });
+      await connection.collection('moderatorassignments').insertOne({ moderatorId: other._id, hotelId: otherHotelId });
+
+      const room = await createRoom();
+      await http()
+        .patch(`/api/hotels/${otherHotelId.toString()}/rooms/${room._id}`)
+        .set('Cookie', otherModerator)
+        .send({ capacity: 9 })
+        .expect(404);
+    });
+
+    it('deactivates a room instead of deleting it', async () => {
+      const room = await createRoom();
+      await http().delete(`/api/hotels/${hotelId}/rooms/${room._id}`).set('Cookie', moderatorCookie).expect(204);
+
+      const stored = await connection.collection('rooms').findOne({ _id: new Types.ObjectId(room._id) });
+      assert.ok(stored, 'the room document is kept, not removed');
+      assert.equal(stored!.isActive, false);
+    });
+
+    it('returns 404 for a room id that does not exist', async () => {
+      await http()
+        .patch(`/api/hotels/${hotelId}/rooms/${new Types.ObjectId().toString()}`)
+        .set('Cookie', moderatorCookie)
+        .send({ capacity: 3 })
+        .expect(404);
+      await http()
+        .delete(`/api/hotels/${hotelId}/rooms/${new Types.ObjectId().toString()}`)
+        .set('Cookie', moderatorCookie)
+        .expect(404);
     });
   });
 });
