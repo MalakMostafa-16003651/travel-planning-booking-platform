@@ -350,19 +350,23 @@ For a manual Swagger check: log in, create an itinerary, add days in Cairo, Cair
 
 ## Hotel profiles
 
-`backend/src/hotels` implements the first slice of HTL-01/HTL-02, per the
+`backend/src/hotels` implements HTL-01/HTL-02 (hotel profiles) and HTL-03/
+HTL-05/HTL-06 (rooms), per the
 [hotel contract proposal](../docs/requirements/hotel-contract-proposal.md).
-Rooms, availability, policies and search follow in later requirement branches.
+Availability, policies and search follow in later requirement branches.
 
 | Method | Endpoint | Who | Result |
 | --- | --- | --- | --- |
 | POST | `/api/hotels` | ADMIN | Create a hotel profile. `city`/`countryCode` are resolved through the shared `ReferenceDataService`, the same catalog Itineraries uses. |
 | GET | `/api/hotels/:id` | anyone | View a hotel. A deactivated hotel (`isActive: false`) returns 404 for everyone except its assigned moderator and admins, so ACC-15 deactivation hides it without revealing its existence. |
 | PATCH | `/api/hotels/:id` | assigned HOTEL_MODERATOR | Edit the moderator's own hotel. `:id` must match their `moderatorassignments` record, the same adapter pattern `AirlinesService.getAssignedAirlineId` uses, with `hotelId` in place of `airlineId`. A mismatched or missing assignment returns 404/403 the same way `FlightsService.getOwnedScheduledFlight` hides another airline's flight. |
+| POST | `/api/hotels/:id/rooms` | assigned HOTEL_MODERATOR | Add a room (name, capacity, `pricePerNight` in integer minor units) to the moderator's own hotel. |
+| PATCH | `/api/hotels/:id/rooms/:roomId` | assigned HOTEL_MODERATOR | Edit a room. 404 if the room does not exist or does not belong to the caller's own hotel. |
+| DELETE | `/api/hotels/:id/rooms/:roomId` | assigned HOTEL_MODERATOR | Soft-deactivates the room (`isActive: false`, 204 No Content) rather than removing the document, so a room referenced by a past/eventual booking keeps a valid id. |
 
-New hotels default to `isActive: true`, `checkInTime: '14:00'`, `checkOutTime: '11:00'` and no cancellation tiers; `PUT /api/hotels/:id/policies` (HTL-09, HTL-10) is a later branch. Changing `city` re-resolves the country from the reference catalog from scratch; changing only `countryCode` re-resolves against the existing city.
+New hotels default to `isActive: true`, `checkInTime: '14:00'`, `checkOutTime: '11:00'` and no cancellation tiers; `PUT /api/hotels/:id/policies` (HTL-09, HTL-10) is a later branch. Changing `city` re-resolves the country from the reference catalog from scratch; changing only `countryCode` re-resolves against the existing city. Rooms carry no inventory count of their own (HTL-03 "individually bookable rooms"); per-date blocking and booking holds are `RoomAvailability`, in the next branch.
 
-For a manual Swagger check: log in as the seeded administrator, create a hotel with `city: "Cairo"`, confirm `GET /api/hotels/:id` is public, then log in as a hotel moderator with a matching `moderatorassignments` row and confirm `PATCH /api/hotels/:id` succeeds only for that hotel's own id.
+For a manual Swagger check: log in as the seeded administrator, create a hotel with `city: "Cairo"`, confirm `GET /api/hotels/:id` is public, then log in as a hotel moderator with a matching `moderatorassignments` row, add a room with `POST /api/hotels/:id/rooms`, and confirm `PATCH`/`DELETE` on that room succeed only for the caller's own hotel.
 
 ## Automated tests
 
