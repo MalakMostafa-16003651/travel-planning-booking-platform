@@ -5,8 +5,8 @@ export const ITINERARY_AUTHOR_NAMES = 'ITINERARY_AUTHOR_NAMES';
 
 /**
  * ACC-12: the shared interface agreed with Person 1, matching
- * `UsersService.getAccountStatuses(userIds)` exactly so the binding can become
- * `useExisting: UsersService` once it is implemented. Returns entries only for users that
+ * `UsersService.getAccountStatuses(userIds)` exactly. The module binds both ports
+ * directly to the shared UsersService instance. Returns entries only for users that
  * exist; a missing entry means the author is hidden. Errors must propagate (fail closed).
  *
  * Every visibility decision (listing, search, viewing, cloning) uses only this port.
