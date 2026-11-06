@@ -9,6 +9,7 @@ import {
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
+  ApiServiceUnavailableResponse,
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
@@ -21,10 +22,12 @@ import { BlockRoomDatesDto } from './dto/block-room-dates.dto';
 import { CreateHotelDto } from './dto/create-hotel.dto';
 import { CreateRoomDto } from './dto/create-room.dto';
 import { HotelAvailabilityQueryDto } from './dto/hotel-availability-query.dto';
+import { PageQueryDto } from './dto/page-query.dto';
 import { UpdateHotelDto } from './dto/update-hotel.dto';
 import { UpdateHotelPoliciesDto } from './dto/update-hotel-policies.dto';
 import { UpdateRoomAvailabilityDto } from './dto/update-room-availability.dto';
 import { UpdateRoomDto } from './dto/update-room.dto';
+import { HotelReservationsPage } from './ports/hotel-reservations.port';
 import { Hotel } from './schemas/hotel.schema';
 import { Room } from './schemas/room.schema';
 import { RoomAvailability } from './schemas/room-availability.schema';
@@ -181,5 +184,23 @@ export class HotelsController {
     @Query() query: HotelAvailabilityQueryDto,
   ): Promise<RoomAvailabilityOverview[]> {
     return this.hotels.getHotelAvailability(req.user!.userId, id, query);
+  }
+
+  @Get(':id/reservations')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(UserRole.HOTEL_MODERATOR)
+  @ApiCookieAuth('accessToken')
+  @ApiOperation({ summary: "List reservations for the moderator's own hotel (HTL-22)", description: 'Pending Person 6\'s hotel-bookings module; returns 503 until it exists. Ownership is still checked first.' })
+  @ApiOkResponse({ description: 'A page of reservations', type: Object })
+  @ApiUnauthorizedResponse({ type: ApiErrorDto })
+  @ApiForbiddenResponse({ type: ApiErrorDto })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: ':id is not the caller\'s assigned hotel.' })
+  @ApiServiceUnavailableResponse({ type: ApiErrorDto, description: 'Hotel reservations are not available yet.' })
+  getReservations(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Query() query: PageQueryDto,
+  ): Promise<HotelReservationsPage> {
+    return this.hotels.getReservations(req.user!.userId, id, query.page ?? 1);
   }
 }

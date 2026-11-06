@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, Types } from 'mongoose';
 import { UserRole } from '../common/enums/user-role.enum';
@@ -11,6 +11,7 @@ import { UpdateHotelDto } from './dto/update-hotel.dto';
 import { UpdateHotelPoliciesDto } from './dto/update-hotel-policies.dto';
 import { UpdateRoomAvailabilityDto } from './dto/update-room-availability.dto';
 import { UpdateRoomDto } from './dto/update-room.dto';
+import { HOTEL_RESERVATIONS, HotelReservationsPage, HotelReservationsPort } from './ports/hotel-reservations.port';
 import { BlockedRange, BookedRange, RoomAvailability } from './schemas/room-availability.schema';
 import { Hotel } from './schemas/hotel.schema';
 import { Room } from './schemas/room.schema';
@@ -35,6 +36,7 @@ export class HotelsService {
     @InjectModel(RoomAvailability.name) private readonly roomAvailabilities: Model<RoomAvailability>,
     @InjectConnection() private readonly connection: Connection,
     private readonly references: ReferenceDataService,
+    @Inject(HOTEL_RESERVATIONS) private readonly reservations: HotelReservationsPort,
   ) {}
 
   async create(input: CreateHotelDto): Promise<Hotel> {
@@ -281,5 +283,14 @@ export class HotelsService {
         bookedRanges: (availability?.bookedRanges ?? []).filter(inWindow),
       };
     });
+  }
+
+  /**
+   * HTL-22. Ownership is checked here, independent of the bookings port, so a moderator never
+   * gets a 503 for a hotel that isn't even theirs: the 404/403 case always wins over "not built yet".
+   */
+  async getReservations(moderatorId: string, hotelId: string, page: number): Promise<HotelReservationsPage> {
+    await this.assertOwnHotel(moderatorId, hotelId);
+    return this.reservations.listForHotel(hotelId, page);
   }
 }
