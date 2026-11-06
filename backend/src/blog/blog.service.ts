@@ -7,6 +7,8 @@ import { User } from '../users/schemas/user.schema';
 import { BLOG_PAGE_SIZE, DELETED_USER_NAME, escapeRegex, excerpt, PostStatus } from './blog.rules';
 import { CreateBlogPostDto, ListPostsQueryDto, UpdateBlogPostDto } from './dto/blog-post.dto';
 import { BlogPost, BlogPostDocument } from './schemas/blog-post.schema';
+import { Comment } from './schemas/comment.schema';
+import { Like } from './schemas/like.schema';
 
 export interface Viewer {
   userId: string;
@@ -42,6 +44,8 @@ function page<T>(items: T[], pageNumber: number, total: number): Page<T> {
 export class BlogService {
   constructor(
     @InjectModel(BlogPost.name) private readonly posts: Model<BlogPost>,
+    @InjectModel(Comment.name) private readonly comments: Model<Comment>,
+    @InjectModel(Like.name) private readonly likes: Model<Like>,
     // Read-only: author name, status and join date.
     @InjectModel(User.name) private readonly users: Model<User>,
   ) {}
@@ -194,7 +198,10 @@ export class BlogService {
     };
   }
 
+  // Deleting a post also deletes its comments and likes.
   private async deletePost(post: BlogPostDocument): Promise<void> {
+    await this.comments.deleteMany({ postId: post._id }).exec();
+    await this.likes.deleteMany({ postId: post._id }).exec();
     await this.posts.deleteOne({ _id: post._id }).exec();
   }
 

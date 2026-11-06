@@ -8,6 +8,7 @@ export const BLOG_PAGE_SIZE = 10; // GEN-05
 export const MAX_TAGS_PER_POST = 5; // BLG-08
 export const MAX_TAG_LENGTH = 30; // BLG-08
 export const EXCERPT_LENGTH = 200; // BLG-09 search results show an excerpt.
+export const MAX_COMMENT_LENGTH = 500; // BLG-05
 
 export const TITLE_LENGTH = { min: 3, max: 150 };
 export const CONTENT_LENGTH = { min: 1, max: 20000 };
