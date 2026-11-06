@@ -6,12 +6,12 @@ export const ITINERARY_HOTEL_SEARCH = 'ITINERARY_HOTEL_SEARCH';
  * derives the route and date; filtering, sorting and results stay owned by FlightsService.
  */
 export interface ItineraryFlightSearch {
-  originCity: string;
-  originCountryCode?: string;
-  destinationCity: string;
-  destinationCountryCode?: string;
-  /** YYYY-MM-DD */
+  departureAirportCode: string;
+  arrivalAirportCodes: string[];
+  roundTrip: boolean;
+  /** Airport-local date, YYYY-MM-DD; defaults to itinerary start. */
   departureDate: string;
+  returnDate?: string;
   adults: number;
   children: number;
   infants: number;
@@ -36,6 +36,7 @@ export interface ItineraryHotelSearch {
   /** YYYY-MM-DD */
   checkOut: string;
   guests: number;
+  rooms: number;
   page?: number;
 }
 
