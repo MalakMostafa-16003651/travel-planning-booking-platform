@@ -1,18 +1,22 @@
 import { Body, Controller, Delete, Get, Header, HttpCode, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
-import { ApiBadRequestResponse, ApiCookieAuth, ApiCreatedResponse, ApiForbiddenResponse, ApiNoContentResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags, ApiUnauthorizedResponse } from '@nestjs/swagger';
+import { ApiBadRequestResponse, ApiConflictResponse, ApiCookieAuth, ApiCreatedResponse, ApiForbiddenResponse, ApiNoContentResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags, ApiUnauthorizedResponse } from '@nestjs/swagger';
 import { AuthGuard, AuthenticatedRequest } from '../auth/auth.guard';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { ApiErrorDto } from '../common/dto/api-error.dto';
+import { Types } from 'mongoose';
 import { UserRole } from '../common/enums/user-role.enum';
 import { OptionalAuthGuard } from '../itineraries/optional-auth.guard';
 import { BlogService } from './blog.service';
+import { CommentsService } from './comments.service';
 import { CreateBlogPostDto, ListPostsQueryDto, PageQueryDto, PostIdParamDto, UpdateBlogPostDto } from './dto/blog-post.dto';
+import { CreateCommentDto } from './dto/comment.dto';
+import { LikesService } from './likes.service';
 
 @ApiTags('Blog')
 @Controller('posts')
 export class BlogController {
-  constructor(private readonly blog: BlogService) {}
+  constructor(private readonly blog: BlogService, private readonly comments: CommentsService, private readonly likes: LikesService) {}
 
   @Post()
   @UseGuards(AuthGuard, RolesGuard)
@@ -56,13 +60,18 @@ export class BlogController {
   @UseGuards(OptionalAuthGuard)
   @ApiOperation({
     summary: 'BLG-02: view a post',
-    description: 'Guests see published posts. The author also sees drafts and hidden posts; admins also see hidden posts (GEN-10). Others get 404.',
+    description: 'Guests see published posts. The author also sees drafts and hidden posts; admins also see hidden posts (GEN-10). Others get 404. Includes the like count, likedByMe, and the first page of comments (oldest first); later pages come from GET /api/posts/{id}/comments.',
   })
   @ApiOkResponse({ description: 'The post.' })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'Invalid id.' })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: 'No such post you may read.' })
-  findOne(@Param() params: PostIdParamDto, @Req() request: AuthenticatedRequest) {
-    return this.blog.findOne(params.id, request.user);
+  async findOne(@Param() params: PostIdParamDto, @Req() request: AuthenticatedRequest) {
+    const post = await this.blog.findOne(params.id, request.user);
+    const [comments, likedByMe] = await Promise.all([
+      this.comments.listForPost(params.id, 1, request.user),
+      this.likes.hasLiked(new Types.ObjectId(post.postId), request.user),
+    ]);
+    return { ...post, likedByMe, comments };
   }
 
   @Patch(':id')
@@ -92,5 +101,58 @@ export class BlogController {
   @ApiNotFoundResponse({ type: ApiErrorDto, description: 'No such post you may read.' })
   remove(@Param() params: PostIdParamDto, @Req() request: AuthenticatedRequest) {
     return this.blog.remove(params.id, request.user!);
+  }
+
+  @Post(':id/comments')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(UserRole.USER)
+  @ApiCookieAuth('accessToken')
+  @ApiOperation({ summary: 'BLG-05: comment on a published post', description: 'Non-empty, at most 500 characters.' })
+  @ApiCreatedResponse({ description: 'The comment.' })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'Invalid id or body.' })
+  @ApiUnauthorizedResponse({ type: ApiErrorDto, description: 'Missing, invalid or expired session.' })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'Only role USER can comment.' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'No such published post.' })
+  addComment(@Param() params: PostIdParamDto, @Body() dto: CreateCommentDto, @Req() request: AuthenticatedRequest) {
+    return this.comments.create(params.id, dto, request.user!);
+  }
+
+  @Get(':id/comments')
+  @UseGuards(OptionalAuthGuard)
+  @ApiOperation({ summary: 'BLG-05: list the comments of a post (oldest first)', description: 'Guests allowed. Page size 10. Hidden comments only for their author and admins (GEN-10).' })
+  @ApiOkResponse({ description: '{ items, page, pageSize, total, totalPages }' })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'Invalid id or page.' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'No such post you may read.' })
+  listComments(@Param() params: PostIdParamDto, @Query() query: PageQueryDto, @Req() request: AuthenticatedRequest) {
+    return this.comments.listForPost(params.id, query.page, request.user);
+  }
+
+  @Post(':id/like')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(UserRole.USER)
+  @ApiCookieAuth('accessToken')
+  @ApiOperation({ summary: 'BLG-06: like a post (once)' })
+  @ApiCreatedResponse({ description: '{ liked: true, likesCount }' })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'Invalid id.' })
+  @ApiUnauthorizedResponse({ type: ApiErrorDto, description: 'Missing, invalid or expired session.' })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'Only role USER can like.' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'No such published post.' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'Already liked.' })
+  like(@Param() params: PostIdParamDto, @Req() request: AuthenticatedRequest) {
+    return this.likes.like(params.id, request.user!);
+  }
+
+  @Delete(':id/like')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(UserRole.USER)
+  @ApiCookieAuth('accessToken')
+  @ApiOperation({ summary: 'BLG-06: remove my like' })
+  @ApiOkResponse({ description: '{ liked: false, likesCount }' })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'Invalid id.' })
+  @ApiUnauthorizedResponse({ type: ApiErrorDto, description: 'Missing, invalid or expired session.' })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'Only role USER can like.' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'You have not liked this post.' })
+  unlike(@Param() params: PostIdParamDto, @Req() request: AuthenticatedRequest) {
+    return this.likes.unlike(params.id, request.user!);
   }
 }
