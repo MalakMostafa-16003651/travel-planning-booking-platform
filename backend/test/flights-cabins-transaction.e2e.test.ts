@@ -3,23 +3,13 @@ import { after, before, describe, it } from 'node:test';
 import { ConflictException } from '@nestjs/common';
 import { MongoMemoryReplSet } from 'mongodb-memory-server';
 import { Connection, Model, Types, createConnection } from 'mongoose';
-
 import { AirlinesService } from '../src/airlines/airlines.service';
-import {
-  Airline,
-  AirlineSchema,
-} from '../src/airlines/schemas/airline.schema';
-import {
-  Airport,
-  AirportSchema,
-} from '../src/airports/schemas/airport.schema';
+import {Airline,AirlineSchema,} from '../src/airlines/schemas/airline.schema';
+import {Airport,AirportSchema,} from '../src/airports/schemas/airport.schema';
 import { FlightStatus } from '../src/common/enums/flight-status.enum';
 import { FlightsService } from '../src/flights/flights.service';
-import {
-  CabinClass,
-  CabinInventory,
-  CabinInventorySchema,
-} from '../src/flights/schemas/cabin-inventory.schema';
+import { FlightBookingsService } from '../src/flight-bookings/flight-bookings.service';
+import {CabinClass,CabinInventory,CabinInventorySchema,} from '../src/flights/schemas/cabin-inventory.schema';
 import { Flight, FlightSchema } from '../src/flights/schemas/flight.schema';
 
 describe('FlightsService - cabin transaction', () => {
@@ -59,7 +49,7 @@ describe('FlightsService - cabin transaction', () => {
     const airlinesService = {
       getAssignedAirlineId: async () => airlineId,
     } as unknown as AirlinesService;
-
+    const bookingsService = {} as FlightBookingsService;
     service = new FlightsService(
       connection,
       flights,
@@ -67,6 +57,7 @@ describe('FlightsService - cabin transaction', () => {
       airports,
       airlinesModel,
       airlinesService,
+       bookingsService,
     );
 
     await Promise.all([flights.init(), cabins.init()]);
