@@ -600,4 +600,189 @@ describe('Hotels E2E', { concurrency: false }, () => {
       await http().put(`/api/hotels/${hotelId}/policies`).set('Cookie', ordinaryUser).send({ checkInTime: '15:00' }).expect(403);
     });
   });
+
+  describe('Hotel search - HTL-11, HTL-12', () => {
+    async function createHotelWithModerator(overrides: Partial<{ name: string; city: string }> = {}, moderatorEmail: string) {
+      const created = await http()
+        .post('/api/hotels')
+        .set('Cookie', adminCookie)
+        .send({ name: 'Second Hotel', city: 'Cairo', address: 'Zamalek', ...overrides })
+        .expect(201);
+      const cookie = await login(moderatorEmail, UserRole.HOTEL_MODERATOR);
+      const moderator = await users.findOne({ email: moderatorEmail }).orFail().exec();
+      await connection.collection('moderatorassignments').insertOne({ moderatorId: moderator._id, hotelId: new Types.ObjectId(created.body._id) });
+      return { hotelId: created.body._id as string, cookie };
+    }
+
+    async function addRoom(cookie: string, forHotelId: string, overrides: Partial<{ name: string; capacity: number; pricePerNight: number }> = {}) {
+      const response = await http()
+        .post(`/api/hotels/${forHotelId}/rooms`)
+        .set('Cookie', cookie)
+        .send({ name: 'Room', capacity: 2, pricePerNight: 10000, ...overrides })
+        .expect(201);
+      return response.body._id as string;
+    }
+
+    it('finds an active hotel with enough free capacity for the stay', async () => {
+      await addRoom(moderatorCookie, hotelId, { capacity: 2, pricePerNight: 12000 });
+
+      const response = await http()
+        .get('/api/hotels/search')
+        .query({ city: 'Cairo', checkIn: '2026-12-20', checkOut: '2026-12-27', guests: 2 })
+        .expect(200);
+
+      assert.equal(response.body.total, 1);
+      assert.equal(response.body.items[0].hotelId, hotelId);
+      assert.equal(response.body.items[0].fromPrice, 12000);
+      assert.equal(response.body.pageSize, 10);
+    });
+
+    it('excludes a hotel without enough combined room capacity for the guest count', async () => {
+      await addRoom(moderatorCookie, hotelId, { capacity: 1, pricePerNight: 8000 });
+
+      const response = await http()
+        .get('/api/hotels/search')
+        .query({ city: 'Cairo', checkIn: '2026-12-20', checkOut: '2026-12-27', guests: 4, rooms: 1 })
+        .expect(200);
+
+      assert.equal(response.body.total, 0);
+    });
+
+    it('excludes a deactivated hotel', async () => {
+      await addRoom(moderatorCookie, hotelId, { capacity: 2, pricePerNight: 9000 });
+      await connection.collection('hotels').updateOne({ _id: new Types.ObjectId(hotelId) }, { $set: { isActive: false } });
+
+      const response = await http()
+        .get('/api/hotels/search')
+        .query({ city: 'Cairo', checkIn: '2026-12-20', checkOut: '2026-12-27', guests: 1 })
+        .expect(200);
+
+      assert.equal(response.body.total, 0);
+    });
+
+    it('excludes a hotel whose only room is blocked for the requested dates', async () => {
+      const roomId = await addRoom(moderatorCookie, hotelId, { capacity: 2, pricePerNight: 9000 });
+      await http()
+        .post(`/api/hotels/${hotelId}/rooms/${roomId}/availability`)
+        .set('Cookie', moderatorCookie)
+        .send({ startDate: '2026-12-18', endDate: '2026-12-25' })
+        .expect(201);
+
+      const overlapping = await http()
+        .get('/api/hotels/search')
+        .query({ city: 'Cairo', checkIn: '2026-12-20', checkOut: '2026-12-27', guests: 1 })
+        .expect(200);
+      assert.equal(overlapping.body.total, 0);
+
+      const afterBlock = await http()
+        .get('/api/hotels/search')
+        .query({ city: 'Cairo', checkIn: '2026-12-25', checkOut: '2026-12-30', guests: 1 })
+        .expect(200);
+      assert.equal(afterBlock.body.total, 1);
+    });
+
+    it('sorts by price ascending and descending across hotels', async () => {
+      await addRoom(moderatorCookie, hotelId, { capacity: 2, pricePerNight: 20000 });
+      const second = await createHotelWithModerator({ name: 'Cheaper Hotel' }, 'second-hotel-moderator@example.com');
+      await addRoom(second.cookie, second.hotelId, { capacity: 2, pricePerNight: 8000 });
+
+      const ascending = await http()
+        .get('/api/hotels/search')
+        .query({ city: 'Cairo', checkIn: '2026-12-20', checkOut: '2026-12-27', guests: 1, sort: 'PRICE_ASC' })
+        .expect(200);
+      assert.equal(ascending.body.total, 2);
+      assert.equal(ascending.body.items[0].hotelId, second.hotelId);
+
+      const descending = await http()
+        .get('/api/hotels/search')
+        .query({ city: 'Cairo', checkIn: '2026-12-20', checkOut: '2026-12-27', guests: 1, sort: 'PRICE_DESC' })
+        .expect(200);
+      assert.equal(descending.body.items[0].hotelId, hotelId);
+    });
+
+    it('filters by minPrice and maxPrice', async () => {
+      await addRoom(moderatorCookie, hotelId, { capacity: 2, pricePerNight: 15000 });
+
+      const tooLow = await http()
+        .get('/api/hotels/search')
+        .query({ city: 'Cairo', checkIn: '2026-12-20', checkOut: '2026-12-27', guests: 1, minPrice: 16000 })
+        .expect(200);
+      assert.equal(tooLow.body.total, 0);
+
+      const inRange = await http()
+        .get('/api/hotels/search')
+        .query({ city: 'Cairo', checkIn: '2026-12-20', checkOut: '2026-12-27', guests: 1, minPrice: 10000, maxPrice: 20000 })
+        .expect(200);
+      assert.equal(inRange.body.total, 1);
+    });
+
+    it('rejects a city outside the official reference catalog and an invalid date range', async () => {
+      await http()
+        .get('/api/hotels/search')
+        .query({ city: 'Atlantis', checkIn: '2026-12-20', checkOut: '2026-12-27', guests: 1 })
+        .expect(400);
+
+      await http()
+        .get('/api/hotels/search')
+        .query({ city: 'Cairo', checkIn: '2026-12-27', checkOut: '2026-12-20', guests: 1 })
+        .expect(400);
+    });
+
+    it('registers the search route in Swagger and needs no authentication', async () => {
+      const doc = (await http().get('/api/docs-json').expect(200)).body;
+      assert.ok(doc.paths['/api/hotels/search'].get);
+
+      await http()
+        .get('/api/hotels/search')
+        .query({ city: 'Cairo', checkIn: '2026-12-20', checkOut: '2026-12-27', guests: 1 })
+        .expect(200);
+    });
+  });
+
+  describe('Available rooms - HTL-15', () => {
+    it('lists only free rooms meeting the guest capacity, cheapest first', async () => {
+      const small = (await http().post(`/api/hotels/${hotelId}/rooms`).set('Cookie', moderatorCookie)
+        .send({ name: 'Small', capacity: 1, pricePerNight: 9000 }).expect(201)).body;
+      const large = (await http().post(`/api/hotels/${hotelId}/rooms`).set('Cookie', moderatorCookie)
+        .send({ name: 'Large', capacity: 4, pricePerNight: 20000 }).expect(201)).body;
+      const largeCheap = (await http().post(`/api/hotels/${hotelId}/rooms`).set('Cookie', moderatorCookie)
+        .send({ name: 'Large Cheap', capacity: 4, pricePerNight: 15000 }).expect(201)).body;
+
+      const response = await http()
+        .get(`/api/hotels/${hotelId}/rooms/available`)
+        .query({ checkIn: '2026-12-20', checkOut: '2026-12-27', guests: 3 })
+        .expect(200);
+
+      const ids = response.body.map((room: { _id: string }) => room._id);
+      assert.ok(!ids.includes(small._id), 'too-small room excluded');
+      assert.deepEqual(ids, [largeCheap._id, large._id], 'cheapest first');
+    });
+
+    it('excludes a room blocked for the requested dates', async () => {
+      const room = (await http().post(`/api/hotels/${hotelId}/rooms`).set('Cookie', moderatorCookie)
+        .send({ name: 'Room', capacity: 2, pricePerNight: 9000 }).expect(201)).body;
+      await http()
+        .post(`/api/hotels/${hotelId}/rooms/${room._id}/availability`)
+        .set('Cookie', moderatorCookie)
+        .send({ startDate: '2026-12-20', endDate: '2026-12-27' })
+        .expect(201);
+
+      const response = await http()
+        .get(`/api/hotels/${hotelId}/rooms/available`)
+        .query({ checkIn: '2026-12-22', checkOut: '2026-12-24' })
+        .expect(200);
+      assert.equal(response.body.length, 0);
+    });
+
+    it('returns 404 for a deactivated or unknown hotel', async () => {
+      await connection.collection('hotels').updateOne({ _id: new Types.ObjectId(hotelId) }, { $set: { isActive: false } });
+      await http().get(`/api/hotels/${hotelId}/rooms/available`).query({ checkIn: '2026-12-20', checkOut: '2026-12-27' }).expect(404);
+      await http().get(`/api/hotels/${new Types.ObjectId().toString()}/rooms/available`).query({ checkIn: '2026-12-20', checkOut: '2026-12-27' }).expect(404);
+    });
+
+    it('registers the route in Swagger', async () => {
+      const doc = (await http().get('/api/docs-json').expect(200)).body;
+      assert.ok(doc.paths['/api/hotels/{id}/rooms/available'].get);
+    });
+  });
 });

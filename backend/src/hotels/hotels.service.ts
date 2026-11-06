@@ -3,10 +3,12 @@ import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, Types } from 'mongoose';
 import { UserRole } from '../common/enums/user-role.enum';
 import { ReferenceDataService } from '../reference-data/reference-data.service';
+import { AvailableRoomsQueryDto } from './dto/available-rooms-query.dto';
 import { BlockRoomDatesDto } from './dto/block-room-dates.dto';
 import { CreateHotelDto } from './dto/create-hotel.dto';
 import { CreateRoomDto } from './dto/create-room.dto';
 import { HotelAvailabilityQueryDto } from './dto/hotel-availability-query.dto';
+import { HotelSearchSort, SearchHotelsQueryDto } from './dto/search-hotels-query.dto';
 import { UpdateHotelDto } from './dto/update-hotel.dto';
 import { UpdateHotelPoliciesDto } from './dto/update-hotel-policies.dto';
 import { UpdateRoomAvailabilityDto } from './dto/update-room-availability.dto';
@@ -26,6 +28,28 @@ export interface RoomAvailabilityOverview {
   blockedRanges: BlockedRange[];
   bookedRanges: BookedRange[];
 }
+
+export interface HotelSearchResult {
+  hotelId: string;
+  name: string;
+  city: string;
+  countryCode: string;
+  checkInTime: string;
+  checkOutTime: string;
+  /** The cheapest qualifying room's nightly price, integer minor units. */
+  fromPrice: number;
+  availableRooms: number;
+}
+
+export interface HotelSearchPage {
+  items: HotelSearchResult[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
+const HOTEL_SEARCH_PAGE_SIZE = 10; // GEN-05, same as flight bookings and itineraries
 
 @Injectable()
 export class HotelsService {
@@ -281,5 +305,94 @@ export class HotelsService {
         bookedRanges: (availability?.bookedRanges ?? []).filter(inWindow),
       };
     });
+  }
+
+  /** True if nothing in either range list overlaps [checkIn, checkOut). */
+  private static isRoomFree(availability: RoomAvailability | undefined, checkIn: string, checkOut: string): boolean {
+    const overlaps = (range: { startDate: string; endDate: string }) => range.startDate < checkOut && range.endDate > checkIn;
+    return !(availability?.blockedRanges ?? []).some(overlaps) && !(availability?.bookedRanges ?? []).some(overlaps);
+  }
+
+  /**
+   * HTL-11, HTL-12. A hotel qualifies if it has at least `rooms` active rooms free for the whole
+   * stay whose combined capacity (best `rooms` by capacity) covers `guests`. Exact room assignment
+   * is a booking-time concern (Person 6), not a search-listing one.
+   */
+  async search(query: SearchHotelsQueryDto): Promise<HotelSearchPage> {
+    if (query.checkIn >= query.checkOut) throw new BadRequestException('checkIn must be before checkOut');
+    if (query.minPrice !== undefined && query.maxPrice !== undefined && query.minPrice > query.maxPrice) {
+      throw new BadRequestException('minPrice must not be greater than maxPrice');
+    }
+    const city = await this.references.resolveCity(query.city, query.countryCode);
+    const roomsNeeded = query.rooms ?? 1;
+    const page = query.page ?? 1;
+
+    const hotels = await this.hotels.find({ city: city.name, countryCode: city.countryCode, isActive: true }).exec();
+    if (hotels.length === 0) return { items: [], page, pageSize: HOTEL_SEARCH_PAGE_SIZE, total: 0, totalPages: 0 };
+
+    const hotelIds = hotels.map((hotel) => hotel._id);
+    const [allRooms, allAvailabilities] = await Promise.all([
+      this.rooms.find({ hotelId: { $in: hotelIds }, isActive: true }).exec(),
+      this.roomAvailabilities.find({ hotelId: { $in: hotelIds } }).exec(),
+    ]);
+    const availabilityByRoom = new Map(allAvailabilities.map((availability) => [availability.roomId.toString(), availability]));
+    const roomsByHotel = new Map<string, Room[]>();
+    for (const room of allRooms) {
+      const key = room.hotelId.toString();
+      if (!roomsByHotel.has(key)) roomsByHotel.set(key, []);
+      roomsByHotel.get(key)!.push(room);
+    }
+
+    const results: HotelSearchResult[] = [];
+    for (const hotel of hotels) {
+      const hotelRooms = roomsByHotel.get(hotel._id.toString()) ?? [];
+      const freeRooms = hotelRooms.filter((room) => HotelsService.isRoomFree(availabilityByRoom.get(room._id.toString()), query.checkIn, query.checkOut));
+      if (freeRooms.length < roomsNeeded) continue;
+
+      const bestFit = [...freeRooms].sort((a, b) => b.capacity - a.capacity).slice(0, roomsNeeded);
+      const totalCapacity = bestFit.reduce((sum, room) => sum + room.capacity, 0);
+      if (totalCapacity < query.guests) continue;
+
+      const fromPrice = Math.min(...freeRooms.map((room) => room.pricePerNight));
+      if (query.minPrice !== undefined && fromPrice < query.minPrice) continue;
+      if (query.maxPrice !== undefined && fromPrice > query.maxPrice) continue;
+
+      results.push({
+        hotelId: hotel._id.toString(),
+        name: hotel.name,
+        city: hotel.city,
+        countryCode: hotel.countryCode,
+        checkInTime: hotel.checkInTime,
+        checkOutTime: hotel.checkOutTime,
+        fromPrice,
+        availableRooms: freeRooms.length,
+      });
+    }
+
+    if (query.sort === HotelSearchSort.PRICE_ASC) results.sort((a, b) => a.fromPrice - b.fromPrice);
+    else if (query.sort === HotelSearchSort.PRICE_DESC) results.sort((a, b) => b.fromPrice - a.fromPrice);
+    else results.sort((a, b) => a.name.localeCompare(b.name));
+
+    const total = results.length;
+    const start = (page - 1) * HOTEL_SEARCH_PAGE_SIZE;
+    const items = results.slice(start, start + HOTEL_SEARCH_PAGE_SIZE);
+    return { items, page, pageSize: HOTEL_SEARCH_PAGE_SIZE, total, totalPages: Math.ceil(total / HOTEL_SEARCH_PAGE_SIZE) };
+  }
+
+  /** HTL-15. Individual rooms (not a hotel-level summary), for picking specific rooms to book. */
+  async getAvailableRooms(hotelId: string, query: AvailableRoomsQueryDto): Promise<Room[]> {
+    if (query.checkIn >= query.checkOut) throw new BadRequestException('checkIn must be before checkOut');
+    if (!Types.ObjectId.isValid(hotelId)) throw new NotFoundException('Hotel not found');
+    const hotel = await this.hotels.findOne({ _id: hotelId, isActive: true }).exec();
+    if (!hotel) throw new NotFoundException('Hotel not found');
+
+    const filter: Record<string, unknown> = { hotelId: hotel._id, isActive: true };
+    if (query.guests !== undefined) filter.capacity = { $gte: query.guests };
+    const rooms = await this.rooms.find(filter).sort({ pricePerNight: 1 }).exec();
+    if (rooms.length === 0) return [];
+
+    const availabilities = await this.roomAvailabilities.find({ roomId: { $in: rooms.map((room) => room._id) } }).exec();
+    const availabilityByRoom = new Map(availabilities.map((availability) => [availability.roomId.toString(), availability]));
+    return rooms.filter((room) => HotelsService.isRoomFree(availabilityByRoom.get(room._id.toString()), query.checkIn, query.checkOut));
   }
 }
