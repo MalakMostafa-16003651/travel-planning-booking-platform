@@ -17,10 +17,12 @@ import { AuthGuard, AuthenticatedRequest } from '../auth/auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { UserRole } from '../common/enums/user-role.enum';
+import { AvailableRoomsQueryDto } from './dto/available-rooms-query.dto';
 import { BlockRoomDatesDto } from './dto/block-room-dates.dto';
 import { CreateHotelDto } from './dto/create-hotel.dto';
 import { CreateRoomDto } from './dto/create-room.dto';
 import { HotelAvailabilityQueryDto } from './dto/hotel-availability-query.dto';
+import { SearchHotelsQueryDto } from './dto/search-hotels-query.dto';
 import { UpdateHotelDto } from './dto/update-hotel.dto';
 import { UpdateHotelPoliciesDto } from './dto/update-hotel-policies.dto';
 import { UpdateRoomAvailabilityDto } from './dto/update-room-availability.dto';
@@ -28,7 +30,7 @@ import { UpdateRoomDto } from './dto/update-room.dto';
 import { Hotel } from './schemas/hotel.schema';
 import { Room } from './schemas/room.schema';
 import { RoomAvailability } from './schemas/room-availability.schema';
-import { HotelsService, RoomAvailabilityOverview } from './hotels.service';
+import { HotelsService, HotelSearchPage, RoomAvailabilityOverview } from './hotels.service';
 import { OptionalAuthGuard } from './optional-auth.guard';
 
 @ApiTags('Hotels')
@@ -48,6 +50,13 @@ export class HotelsController {
   @ApiForbiddenResponse({ type: ApiErrorDto, description: 'Admin role required.' })
   create(@Body() body: CreateHotelDto): Promise<Hotel> {
     return this.hotels.create(body);
+  }
+
+  @Get('search')
+  @ApiOperation({ summary: 'Search hotels by destination, dates and guest count (HTL-11, HTL-12)', description: 'Only active hotels with enough free, unblocked rooms for the whole stay are returned. Page size 10.' })
+  @ApiOkResponse({ description: 'A page of matching hotels', type: Object })
+  search(@Query() query: SearchHotelsQueryDto): Promise<HotelSearchPage> {
+    return this.hotels.search(query);
   }
 
   @Get(':id')
@@ -128,6 +137,14 @@ export class HotelsController {
   @ApiNotFoundResponse({ type: ApiErrorDto, description: 'Not :id\'s hotel, or the room does not belong to it.' })
   async deactivateRoom(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Param('roomId') roomId: string): Promise<void> {
     await this.hotels.deactivateRoom(req.user!.userId, id, roomId);
+  }
+
+  @Get(':id/rooms/available')
+  @ApiOperation({ summary: 'List this hotel\'s individually available rooms for a stay (HTL-15)' })
+  @ApiOkResponse({ description: 'Rooms with no blocked or booked overlap for the stay, cheapest first', type: Object, isArray: true })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'Hotel not found or not active.' })
+  getAvailableRooms(@Param('id') id: string, @Query() query: AvailableRoomsQueryDto): Promise<Room[]> {
+    return this.hotels.getAvailableRooms(id, query);
   }
 
   @Post(':id/rooms/:roomId/availability')
