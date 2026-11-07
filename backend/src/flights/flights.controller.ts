@@ -1,40 +1,18 @@
-import {
-  Body,
-  Controller,
-  Param,
-  Patch,
-  Post,
-  Req,
-  UseGuards,
-} from '@nestjs/common';
+import { Body,Controller,Param, Patch,Post,Req,UseGuards} from '@nestjs/common';
 
-import {
-  ApiBadRequestResponse,
-  ApiConflictResponse,
-  ApiCookieAuth,
-  ApiCreatedResponse,
-  ApiForbiddenResponse,
-  ApiInternalServerErrorResponse,
-  ApiNotFoundResponse,
-  ApiOperation,
-  ApiTags,
-  ApiUnauthorizedResponse,
-} from '@nestjs/swagger';
-
+import { ApiBadRequestResponse,ApiConflictResponse,ApiCookieAuth,ApiCreatedResponse,ApiForbiddenResponse,ApiInternalServerErrorResponse,ApiNotFoundResponse,ApiOperation,ApiTags,ApiUnauthorizedResponse,} from '@nestjs/swagger';
 import { ApiErrorDto } from '../common/dto/api-error.dto';
-import {
-  AuthGuard,
-  AuthenticatedRequest,
-} from '../auth/auth.guard';
+import {AuthGuard,AuthenticatedRequest} from '../auth/auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { UserRole } from '../common/enums/user-role.enum';
-
 import { CreateFlightDto } from './dto/create-flight.dto';
 import { CreateCabinsDto } from './dto/create-cabins.dto';
 import { UpdateFlightDto } from './dto/update-flight.dto';
 import { UpdateCabinDto } from './dto/update-cabin.dto';
 import { FlightsService } from './flights.service';
+import { Get, Query } from '@nestjs/common';
+import { FlightSearchDto, RoundTripSearchDto } from './dto/flight-search.dto';
 
 @ApiTags('Flights')
 @ApiUnauthorizedResponse({
@@ -177,4 +155,21 @@ export class FlightsController {
       flightId,
     );
   }
+ // FLT-11, FLT-15: Search one-way flights.
+@Get('search')
+@ApiOperation({
+  summary: 'Search available one-way flights (FLT-11, FLT-15)',
+})
+search(@Query() query: FlightSearchDto) {
+  return this.flights.search(query);
+}
+
+// FLT-12: Search round-trip flights.
+@Get('search/round-trip')
+@ApiOperation({
+  summary: 'Search outbound and return flights (FLT-12)',
+})
+roundTrip(@Query() query: RoundTripSearchDto) {
+  return this.flights.searchRoundTrip(query);
+}
 }
