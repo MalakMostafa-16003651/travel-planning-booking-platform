@@ -54,13 +54,10 @@ export class FlightSearchDto {
   @Matches(/^[A-Z]{3}$/)
   departureAirportCode!: string;
 
-  @ApiProperty({ example: ['DXB', 'JED'], type: [String] })
-  @IsArray()
-  @ArrayNotEmpty()
-  @ArrayMaxSize(10)
-  @IsString({ each: true })
-  @Matches(/^[A-Z]{3}$/, { each: true })
-  arrivalAirportCodes!: string[];
+@ApiProperty({ example: 'DXB' })
+@IsString()
+@Matches(/^[A-Z]{3}$/)
+arrivalAirportCode!: string;
 
   @ApiProperty({ example: false })
   @Transform(({ value }) =>
@@ -137,4 +134,10 @@ page?: number;
   @IsOptional()
   @IsEnum(FlightSort)
   sortBy?: FlightSort;
+}
+export class RoundTripSearchDto extends FlightSearchDto {
+  @ApiProperty({ example: '2026-12-17' })
+  @IsString()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  declare returnDate: string;
 }
