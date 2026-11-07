@@ -45,6 +45,6 @@ import { AuthSession, AuthSessionSchema } from './schemas/auth-session.schema';
   providers: [AuthService, PasswordService, AuthSessionsService, AuthGuard, RolesGuard, PasswordChangeGuard, PasswordManagementService],
   // Nest creates guard instances in consuming modules, so their injected dependency
   // must also be available there. This exports a provider, not an HTTP endpoint.
-  exports: [AuthGuard, AuthSessionsService, RolesGuard],
+  exports: [AuthGuard, AuthSessionsService, RolesGuard, PasswordService],
 })
 export class AuthModule {}

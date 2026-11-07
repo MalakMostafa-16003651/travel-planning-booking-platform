@@ -1,6 +1,17 @@
 # Hotels, Rooms and Availability: shared contract
 
 Status: **proposal, not yet agreed.** Person 5 (Lama) owns `backend/src/hotels`.
+
+Audit update (2026-11-07): this proposal does not yet cover the complete official
+hotel requirements. Reconcile it with the
+[Milestone 1 ownership matrix](milestone-1-ownership-matrix.md) before HotelBooking
+is built against it. The reviewed workbook also requires hotel photos/star
+class/amenities, room type/beds/name uniqueness, positive bookable ranges,
+reservation-safe room deactivation, country-only search, rating filters/sorting
+and complete room/availability responses. This notice records those gaps; it
+does not approve a replacement shared schema. Lama and Osama must coordinate
+the corrected availability/reservation interface under the team's existing rules.
+
 This mirrors the pattern Person 3 used for Person 4 (see the
 [flight booking contract](flight-booking-contract-proposal.md)): the schemas and
 collection/field names below are the integration surface. HotelBooking (Person 6)
