@@ -244,6 +244,8 @@ Defensive review note: inventory-release false results are ignored, but no ordin
 
 ## Verification and branch state
 
+- Follow-up completed 2026-11-08 on review commit **c0e627a**: production build/test compilation PASS; complete corrected suite **393/393 PASS**, 48 suites, zero failures/skips/cancellations. Includes the actual AppModule graph, audit/auth integration, payment policy/race and refund recovery regressions. The initial merged baseline hit local MongoDB startup timeouts and is not presented as a passing run. This result belongs to the review branch; fixes still await its PR. Details and limitations are in the continuous student log.
+
 - Fresh develop build PASS and full regression **368/368 PASS**, 46 suites, zero failures/skips/cancellations, 572333.8071ms. Local isolated MongoDB 8.3.11; no Atlas writes/live Stripe calls.
 - Main remains the exact afaf8b1 snapshot whose isolated build and **286/286** tests passed in the preceding review; no main source has changed. These branch runs overlap and are not a sum of unique tests.
 - Code/schema/controller/DI inspections and isolated diagnostic probes establish the specific gaps stated above. They do not constitute completed real integrations for absent modules.
