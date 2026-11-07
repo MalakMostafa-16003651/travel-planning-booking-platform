@@ -172,4 +172,7 @@ search(@Query() query: FlightSearchDto) {
 roundTrip(@Query() query: RoundTripSearchDto) {
   return this.flights.searchRoundTrip(query);
 }
+@Get(':flightId')
+  @ApiOperation({ summary: 'Get flight details including local times, cabin inventory and policies (FLT-17, FLT-30)' })
+  details(@Param('flightId') id: string) { return this.flights.details(id); }
 }
