@@ -785,4 +785,30 @@ describe('Hotels E2E', { concurrency: false }, () => {
       assert.ok(doc.paths['/api/hotels/{id}/rooms/available'].get);
     });
   });
+
+  describe('Reservations - HTL-22', () => {
+    it('registers the route in Swagger', async () => {
+      const doc = (await http().get('/api/docs-json').expect(200)).body;
+      assert.ok(doc.paths['/api/hotels/{id}/reservations'].get);
+    });
+
+    it('returns 503 for the caller\'s own hotel, since hotel bookings are not built yet', async () => {
+      await http().get(`/api/hotels/${hotelId}/reservations`).set('Cookie', moderatorCookie).expect(503);
+    });
+
+    it('checks ownership before the pending-bookings 503: no assignment is 403, a mismatched one is 404', async () => {
+      const otherModerator = await login('other-hotel-moderator@example.com', UserRole.HOTEL_MODERATOR);
+      await http().get(`/api/hotels/${hotelId}/reservations`).set('Cookie', otherModerator).expect(403);
+
+      const other = await users.findOne({ email: 'other-hotel-moderator@example.com' }).orFail().exec();
+      await connection.collection('moderatorassignments').insertOne({ moderatorId: other._id, hotelId: new Types.ObjectId() });
+      await http().get(`/api/hotels/${hotelId}/reservations`).set('Cookie', otherModerator).expect(404);
+    });
+
+    it('requires an authenticated hotel moderator', async () => {
+      await http().get(`/api/hotels/${hotelId}/reservations`).expect(401);
+      const ordinaryUser = await login('user@example.com');
+      await http().get(`/api/hotels/${hotelId}/reservations`).set('Cookie', ordinaryUser).expect(403);
+    });
+  });
 });

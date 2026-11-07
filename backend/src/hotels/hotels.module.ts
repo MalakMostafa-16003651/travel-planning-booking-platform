@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AuthModule } from '../auth/auth.module';
 import { ReferenceDataModule } from '../reference-data/reference-data.module';
+import { PendingHotelReservationsAdapter } from './adapters/pending-reservations.adapter';
+import { HOTEL_RESERVATIONS } from './ports/hotel-reservations.port';
 import { Hotel, HotelSchema } from './schemas/hotel.schema';
 import { Room, RoomSchema } from './schemas/room.schema';
 import { RoomAvailability, RoomAvailabilitySchema } from './schemas/room-availability.schema';
@@ -20,7 +22,12 @@ import { OptionalAuthGuard } from './optional-auth.guard';
     ]),
   ],
   controllers: [HotelsController],
-  providers: [HotelsService, OptionalAuthGuard],
+  providers: [
+    HotelsService,
+    OptionalAuthGuard,
+    // Swap this for the real adapter once Person 6's hotel-bookings module exists; nothing else changes.
+    { provide: HOTEL_RESERVATIONS, useClass: PendingHotelReservationsAdapter },
+  ],
   exports: [HotelsService],
 })
 export class HotelsModule {}
