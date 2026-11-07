@@ -153,7 +153,7 @@ Expected callers:
 | Flight schedule changed / flight cancelled | Person 3 |
 | Account suspended / reactivated, provider deactivated / reactivated | Person 2 |
 
-### `AuditLogsModule` → `AuditLogService`
+### `AuditLogsModule` → `AuditLogsService`
 
 ```ts
 log(input: { adminId: string; action: AuditAction; targetType: AuditTargetType; targetId: string; details?: string }): Promise<void>
@@ -167,7 +167,7 @@ admin action later.
 | Owner | Needed | Status |
 | --- | --- | --- |
 | Person 1 | `AuthGuard`, `RolesGuard`, `@Roles`, `User` schema | Merged and exported |
-| Person 1 | `PasswordService` (salted scrypt hashing) for the moderator's temporary password, so passwords are hashed one way across the project | **Pending**: exists but is not exported from `AuthModule`; needs a one-line export |
+| Person 1 | `PasswordService` (salted scrypt hashing) for the moderator's temporary password, so passwords are hashed one way across the project | Exported from `AuthModule` in the integration review branch; available after its PR is merged |
 | Persons 3 and 5 | `Airline.isActive` / `Hotel.isActive` enforced in search, detail and booking | Merged |
 | Person 4 | `FlightBookingsService.listForAdmin({ status, from, to, page })` for ACC-17 | Merged and exported; reused, not duplicated |
 | Person 4 | A method returning the `userId`s with `CONFIRMED` bookings on a given airline (for example `listConfirmedUserIdsForAirline(airlineId)`), for ACC-15 notifications | **Pending**: to be requested |

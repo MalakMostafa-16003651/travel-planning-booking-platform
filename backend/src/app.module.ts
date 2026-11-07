@@ -40,7 +40,6 @@ import { HotelsModule } from './hotels/hotels.module';
     AirlinesModule,
     FlightsModule,
     ItinerariesModule,
-    FlightsModule,
     HotelsModule,
     AuditLogsModule,
     AdminModule,

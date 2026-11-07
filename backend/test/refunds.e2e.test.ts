@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { after, before, beforeEach, describe, it } from 'node:test';
+import { after, before, beforeEach, describe, it, mock } from 'node:test';
 import { Types } from 'mongoose';
 import { UserRole } from '../src/common/enums/user-role.enum';
 import { BookingPaymentsAdapter } from '../src/payments/adapters/booking-payments.adapter';
@@ -168,8 +168,104 @@ describe('PAY-03 refunds', { concurrency: false }, () => {
     // The same amount again is a new Stripe refund, not a replay of the failed one.
     const second = await refundsService.createRefund({ bookingType: 'flight', bookingId, amount: 150, reason: 'test' });
     assert.notEqual(second.stripeRefundId, first.stripeRefundId);
+    assert.notEqual(second._id.toString(), first._id.toString());
     assert.equal(stripe.calls.createRefund, 2);
   });
+
+  it('models Stripe rejecting changed parameters on an existing idempotency key', async () => {
+    const service = fixture.app.get(StripeService);
+    const params = { paymentIntentId: intentId, amount: 7500, metadata: { refundId: 'first' } };
+    const first = await service.createRefund(params, 'strict-refund-key');
+    assert.equal((await service.createRefund(params, 'strict-refund-key')).id, first.id);
+    await assert.rejects(service.createRefund({ ...params, metadata: { refundId: 'different' } }, 'strict-refund-key'), /same parameters/);
+    assert.equal(stripe.calls.createRefund, 1);
+  });
+
+  it('recovers a cancellation refund after Stripe accepts it but its response is lost', async () => {
+    stripe.loseNextRefundResponse = true;
+    await fixture.http().post(`/api/flight-bookings/${bookingId}/cancel`).set('Cookie', owner.cookie).expect(200);
+    assert.equal((await booking())!.refundDue, true);
+    assert.equal(stripe.refunds.size, 1);
+    assert.equal(await refunds().countDocuments(), 0);
+    await fixture.flightBookings.retryDueRefunds();
+    const current = await booking();
+    assert.equal(current!.refundDue, false);
+    const stored = await refunds().findOne({ _id: current!.refundId });
+    assert.ok(stored);
+    assert.equal(stripe.calls.createRefund, 1);
+    assert.equal(stripe.refunds.get(stored.stripeRefundId)?.metadata?.refundId, stored._id.toString());
+  });
+
+  it('recovers a refund when its local insert failed after Stripe accepted it', async () => {
+    const model = fixture.connection.models.Refund;
+    const insert = mock.method(model, 'create', async () => { throw new Error('Temporary database insert failure'); });
+    const input = { bookingType: 'flight' as const, bookingId, amount: 75, reason: 'Booking cancelled by the user' };
+    try {
+      await assert.rejects(refundsService.refundCancelledBooking(input), /Temporary database/);
+    } finally {
+      insert.mock.restore();
+    }
+    assert.equal(await refunds().countDocuments(), 0);
+    const stored = await refundsService.refundCancelledBooking(input);
+    assert.equal(stripe.calls.createRefund, 1);
+    assert.equal(await refunds().countDocuments(), 1);
+    assert.equal(stripe.refunds.get(stored.stripeRefundId)?.metadata?.refundId, stored._id.toString());
+  });
+
+  for (const failure of ['lost response', 'local insert'] as const) {
+    it(`recovers a double-payment refund after a ${failure} failure`, async () => {
+      const service = fixture.app.get(StripeService);
+      const extra = await service.createPaymentIntent({ amount: 15000, currency: 'USD', metadata: { paymentId } });
+      const intent = stripe.succeed(extra.id);
+      const paid = await fixture.connection.models.Payment.findById(paymentId).orFail().exec();
+      const insert = failure === 'local insert'
+        ? mock.method(fixture.connection.models.Refund, 'create', async () => { throw new Error('Temporary database insert failure'); })
+        : undefined;
+      stripe.loseNextRefundResponse = failure === 'lost response';
+      try {
+        await assert.rejects(refundsService.refundExtraIntent(paid, intent));
+      } finally {
+        insert?.mock.restore();
+      }
+      const stored = await refundsService.refundExtraIntent(paid, intent);
+      assert.equal(stripe.calls.createRefund, 1);
+      assert.equal(await refunds().countDocuments(), 1);
+      assert.equal(stripe.refunds.get(stored.stripeRefundId)?.metadata?.refundId, stored._id.toString());
+      assert.equal((await payment())!.status, 'SUCCEEDED');
+    });
+  }
+
+  for (const kind of ['cancellation', 'double-payment'] as const) {
+    it(`persists one refund for parallel ${kind} deliveries`, { timeout: 15_000 }, async () => {
+      const model = fixture.connection.models.Refund;
+      let arrived = 0;
+      let release!: () => void;
+      const allArrived = new Promise<void>((resolve) => { release = resolve; });
+      // Both services must reach insertion, forcing the unique-index race deterministically.
+      const insert = mock.method(model, 'create', async (input: unknown) => {
+        if (++arrived === 2) release();
+        await allArrived;
+        return new model(input).save();
+      });
+      try {
+        let run: () => ReturnType<RefundsService['createRefund']>;
+        if (kind === 'cancellation') {
+          run = () => refundsService.refundCancelledBooking({ bookingType: 'flight', bookingId, amount: 75, reason: 'Booking cancelled by the user' });
+        } else {
+          const extra = await fixture.app.get(StripeService).createPaymentIntent({ amount: 15000, currency: 'USD', metadata: { paymentId } });
+          const intent = stripe.succeed(extra.id);
+          const paid = await fixture.connection.models.Payment.findById(paymentId).orFail().exec();
+          run = () => refundsService.refundExtraIntent(paid, intent);
+        }
+        const [first, second] = await Promise.all([run(), run()]);
+        assert.equal(first._id.toString(), second._id.toString());
+        assert.equal(await refunds().countDocuments(), 1);
+        assert.equal(stripe.calls.createRefund, 1);
+      } finally {
+        insert.mock.restore();
+      }
+    });
+  }
 
   it('lists the refund endpoint in Swagger with PAY-03', async () => {
     const document = (await fixture.http().get('/api/docs-json').expect(200)).body;
