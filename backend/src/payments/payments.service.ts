@@ -43,11 +43,11 @@ export class PaymentsService {
     this.assertPayable(booking);
 
     const existing = await this.payments.findOne(bookingRef(bookingType, bookingId)).exec();
+    // A paid or failed payment answers 409 whatever the policies; a PENDING one is reused only while the
+    // current policies are accepted, so a provider change after the first attempt needs a new acceptance.
+    if (existing && existing.status !== PaymentStatus.PENDING) return this.reuseExisting(existing);
+    await this.assertPoliciesAccepted(user.userId, bookingType, booking);
     if (existing) return this.reuseExisting(existing);
-
-    if (!await this.policies.hasAccepted(user.userId, bookingType, bookingId, booking.policies)) {
-      throw new ConflictException('Please accept the current booking policies before paying');
-    }
 
     // The id comes first so it can go into the PaymentIntent metadata.
     const paymentId = new Types.ObjectId();
@@ -89,6 +89,7 @@ export class PaymentsService {
     const booking = await this.bookingsPort.getBooking(bookingType, bookingId, payment.userId.toString());
     if (!booking) throw new NotFoundException('Booking not found');
     this.assertPayable(booking);
+    await this.assertPoliciesAccepted(payment.userId.toString(), bookingType, booking);
 
     // The old intent must not be paid later by mistake. If cancelling fails, it may have been paid after all.
     try {
@@ -222,12 +223,18 @@ export class PaymentsService {
       // The money came through the older intent, so the newer one must not be paid too.
       if (isOlderIntent) await this.stripe.cancelPaymentIntent(currentIntentId).catch(() => undefined);
       await this.finishSucceededPayment(updated);
-    } else if (isOlderIntent) {
-      // Another success made the payment SUCCEEDED at the same moment.
-      await this.refundDoublePayment(payment, intent);
-    } else if (payment.status === PaymentStatus.SUCCEEDED) {
-      // A redelivered event finishes whatever the first delivery could not.
-      await this.finishSucceededPayment(payment);
+      return;
+    }
+    // Another handler changed the payment since it was read. Decide from what is stored now, not from
+    // that earlier read: the same intent won (a parallel delivery of this success), or another intent did.
+    const latest = await this.payments.findById(payment._id).exec();
+    if (!latest || (latest.status !== PaymentStatus.SUCCEEDED && latest.status !== PaymentStatus.REFUNDED)) return;
+    if (latest.stripePaymentIntentId === intent.id) {
+      // A redelivered or parallel success finishes whatever the first handler could not.
+      await this.finishSucceededPayment(latest);
+    } else {
+      // A different intent of the same payment was paid: this one is a second charge.
+      await this.refundDoublePayment(latest, intent);
     }
   }
 
@@ -320,6 +327,13 @@ export class PaymentsService {
   private isPayable(booking: PayableBooking): boolean {
     const expired = !!booking.holdExpiresAt && new Date(booking.holdExpiresAt).getTime() <= Date.now();
     return booking.status === BookingStatus.PENDING && !expired;
+  }
+
+  /** PAY-02: payment is blocked until the booking's current policies are accepted. */
+  private async assertPoliciesAccepted(userId: string, bookingType: BookingType, booking: PayableBooking) {
+    if (!await this.policies.hasAccepted(userId, bookingType, booking.bookingId, booking.policies)) {
+      throw new ConflictException('Please accept the current booking policies before paying');
+    }
   }
 
   private assertPayable(booking: PayableBooking) {

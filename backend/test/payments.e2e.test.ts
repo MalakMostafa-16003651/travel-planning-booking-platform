@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import { Types } from 'mongoose';
 import { UserRole } from '../src/common/enums/user-role.enum';
-import { AMOUNT_MISMATCH_REASON, HOLD_EXPIRED_REASON } from '../src/payments/payments.service';
+import { AMOUNT_MISMATCH_REASON, HOLD_EXPIRED_REASON, PaymentsService } from '../src/payments/payments.service';
 import { StripeService } from '../src/payments/stripe.service';
 import { FakeStripe, TEST_STRIPE_CONFIG } from './fake-stripe';
 import { PaymentsFixture } from './payments-fixture';
@@ -358,6 +358,89 @@ describe('PAY-01 payments and Stripe webhook', { concurrency: false }, () => {
     await fixture.expireHold(bookingId);
     assert.equal(await fixture.flightBookings.expireOverdueHolds(), 1);
     assert.equal(await fixture.bookingStatus(bookingId), 'EXPIRED');
+  });
+
+  /**
+   * Makes the next `count` success handlers read the payment and then wait for each other, so they all
+   * act on the same earlier read, the interleaving the team review reproduced. Returns a restore function.
+   */
+  function holdSuccessHandlersAfterRead(count: number) {
+    const service = fixture.app.get(PaymentsService) as unknown as { findPaymentForIntent: (intent: unknown) => Promise<unknown> };
+    const original = service.findPaymentForIntent.bind(service);
+    let arrived = 0;
+    let release!: () => void;
+    const allArrived = new Promise<void>((resolve) => { release = resolve; });
+    service.findPaymentForIntent = async (intent: unknown) => {
+      const read = await original(intent);
+      arrived += 1;
+      if (arrived === count) release();
+      await allArrived;
+      return read;
+    };
+    return () => { service.findPaymentForIntent = original; };
+  }
+
+  async function retriedPayment() {
+    const { paymentId, intentId } = await startPayment();
+    await webhook('payment_intent.payment_failed', stripe.decline(intentId)).expect(200);
+    const retried = await fixture.http().post(`/api/payments/${paymentId}/retry`).set('Cookie', owner.cookie).expect(200);
+    return { paymentId, olderIntentId: intentId, newerIntentId: retried.body.payment.stripePaymentIntentId as string };
+  }
+
+  it('does not refund the winning charge when two deliveries of an older intent run at once', async () => {
+    const { paymentId, olderIntentId } = await retriedPayment();
+    const succeeded = stripe.succeed(olderIntentId);
+    const restore = holdSuccessHandlersAfterRead(2);
+    try {
+      await Promise.all([webhook('payment_intent.succeeded', succeeded).expect(200), webhook('payment_intent.succeeded', succeeded).expect(200)]);
+    } finally {
+      restore();
+    }
+    const stored = await payment(paymentId);
+    assert.equal(stored!.status, 'SUCCEEDED');
+    assert.equal(stored!.stripePaymentIntentId, olderIntentId);
+    assert.ok(stored!.bookingConfirmedAt);
+    assert.equal(await fixture.bookingStatus(bookingId), 'CONFIRMED');
+    assert.equal(await refunds().countDocuments(), 0);
+    assert.equal(stripe.calls.createRefund, 0);
+  });
+
+  it('refunds exactly the losing charge when the older and newer intents both succeed at once', async () => {
+    const { paymentId, olderIntentId, newerIntentId } = await retriedPayment();
+    // Both charges go through before either success is handled.
+    const older = stripe.succeed(olderIntentId);
+    const newer = stripe.succeed(newerIntentId);
+    const restore = holdSuccessHandlersAfterRead(2);
+    try {
+      await Promise.all([webhook('payment_intent.succeeded', older).expect(200), webhook('payment_intent.succeeded', newer).expect(200)]);
+    } finally {
+      restore();
+    }
+    const stored = await payment(paymentId);
+    assert.equal(stored!.status, 'SUCCEEDED');
+    assert.equal(await fixture.bookingStatus(bookingId), 'CONFIRMED');
+    const loser = stored!.stripePaymentIntentId === olderIntentId ? newerIntentId : olderIntentId;
+    const storedRefunds = await refunds().find().toArray();
+    assert.equal(storedRefunds.length, 1);
+    assert.equal(storedRefunds[0].stripePaymentIntentId, loser);
+    assert.equal(storedRefunds[0].amount, 150);
+  });
+
+  it('needs the current policies accepted again before reusing or retrying a payment', async () => {
+    const { paymentId, intentId } = await startPayment();
+    await fixture.connection.collection('airlines').updateOne({ _id: fixture.airlineId }, { $set: { cancellationTiers: [] } });
+    // Reusing the PENDING payment is blocked until the changed policies are accepted.
+    assert.equal((await pay().expect(409)).body.message, 'Please accept the current booking policies before paying');
+    await accept();
+    assert.equal((await pay().expect(201)).body.payment._id, paymentId);
+
+    await webhook('payment_intent.payment_failed', stripe.decline(intentId)).expect(200);
+    await fixture.connection.collection('airlines').updateOne({ _id: fixture.airlineId }, { $set: { cancellationTiers: [{ daysBeforeDeparture: 1, refundPercentage: 20 }] } });
+    const retry = await fixture.http().post(`/api/payments/${paymentId}/retry`).set('Cookie', owner.cookie).expect(409);
+    assert.equal(retry.body.message, 'Please accept the current booking policies before paying');
+    assert.equal(stripe.calls.createIntent, 1);
+    await accept();
+    await fixture.http().post(`/api/payments/${paymentId}/retry`).set('Cookie', owner.cookie).expect(200);
   });
 
   it('lists every endpoint in Swagger with its requirement ID and the webhook without a cookie', async () => {
