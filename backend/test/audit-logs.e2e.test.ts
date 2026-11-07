@@ -91,6 +91,26 @@ describe('GEN-07 audit logs', { concurrency: false }, () => {
     assert.deepEqual(reversed.body.errors, { from: ['From must not be after To'] });
   });
 
+  it('GEN-07/GEN-13: returns field errors for ISO dates unsupported by the date parser', async () => {
+    // These are valid ISO week, ordinal and basic forms, so @IsISO8601 alone
+    // lets them through. They must never reach MongoDB as Invalid Date.
+    for (const field of ['from', 'to']) {
+      for (const value of ['2026-W45', '2026-311', '20261107']) {
+        const response = await list(`?${field}=${value}`).expect(400);
+        assert.deepEqual(response.body.errors, {
+          [field]: [`${field === 'from' ? 'From' : 'To'} must be a supported ISO 8601 date`],
+        });
+      }
+    }
+
+    const both = await list('?from=2026-W45&to=2026-311').expect(400);
+    assert.deepEqual(Object.keys(both.body.errors).sort(), ['from', 'to']);
+
+    // Existing calendar-date and timezone-offset filters keep working.
+    await list('?from=2026-11-01&to=2026-11-30').expect(200);
+    await list('?from=2026-11-01T00%3A00%3A00%2B02%3A00&to=2026-11-30T23%3A59%3A59Z').expect(200);
+  });
+
   it('GEN-07: only administrators can read the audit log', async () => {
     await fixture.http().get('/api/admin/audit-logs').expect(401);
     await fixture.http().get('/api/admin/audit-logs').set('Cookie', user.cookie).expect(403);

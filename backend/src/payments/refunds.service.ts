@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { createHash } from 'node:crypto';
 import { Model, Types } from 'mongoose';
 import Stripe from 'stripe';
 import { UserRole } from '../common/enums/user-role.enum';
@@ -23,6 +24,12 @@ export function toRefundStatus(status: string | null): RefundStatus {
   if (status === 'succeeded') return RefundStatus.REFUNDED;
   if (status === 'failed' || status === 'canceled') return RefundStatus.FAILED;
   return RefundStatus.PENDING;
+}
+
+// Stripe requires every parameter, including metadata, to match when a key is retried.
+// Derive the local ID from that same key so a lost response/persistence failure is recoverable.
+function refundIdForKey(key: string): Types.ObjectId {
+  return new Types.ObjectId(createHash('sha256').update(key).digest('hex').slice(0, 24));
 }
 
 @Injectable()
@@ -84,19 +91,18 @@ export class RefundsService {
     // Same payment + same number of earlier attempts (failed ones too) + same amount = same key:
     // a duplicated call cannot refund twice, but a new try after a FAILED refund gets a fresh key.
     const attempts = await this.refunds.countDocuments({ paymentId: payment._id }).exec();
-    const refundId = new Types.ObjectId();
+    const idempotencyKey = `refund-${payment._id.toString()}-${attempts}-${amountMinor}`;
+    const refundId = refundIdForKey(idempotencyKey);
     const stripeRefund = await this.stripe.createRefund(
       {
         paymentIntentId: payment.stripePaymentIntentId,
         amount: amountMinor,
         metadata: { refundId: refundId.toString(), paymentId: payment._id.toString(), bookingType, bookingId },
       },
-      `refund-${payment._id.toString()}-${attempts}-${amountMinor}`,
+      idempotencyKey,
     );
 
-    const existing = await this.refunds.findOne({ stripeRefundId: stripeRefund.id }).exec();
-    if (existing) return existing;
-    const refund = await this.refunds.create({
+    const refund = await this.storeRefund({
       _id: refundId,
       userId: payment.userId,
       paymentId: payment._id,
@@ -122,12 +128,13 @@ export class RefundsService {
   async refundExtraIntent(payment: PaymentDocument, intent: Stripe.PaymentIntent) {
     const existing = await this.refunds.findOne({ stripePaymentIntentId: intent.id }).exec();
     if (existing) return existing;
-    const refundId = new Types.ObjectId();
+    const idempotencyKey = `refund-extra-${intent.id}`;
+    const refundId = refundIdForKey(idempotencyKey);
     const stripeRefund = await this.stripe.createRefund(
       { paymentIntentId: intent.id, amount: intent.amount_received, metadata: { refundId: refundId.toString(), paymentId: payment._id.toString() } },
-      `refund-extra-${intent.id}`,
+      idempotencyKey,
     );
-    return this.refunds.create({
+    return this.storeRefund({
       _id: refundId,
       userId: payment.userId,
       paymentId: payment._id,
@@ -141,6 +148,20 @@ export class RefundsService {
       stripePaymentIntentId: intent.id,
       reason: 'Automatic refund: the booking was paid twice (an older payment attempt also succeeded)',
     });
+  }
+
+  /** Parallel deliveries can receive the same Stripe refund before either local insert completes. */
+  private async storeRefund(input: Partial<Refund> & { _id: Types.ObjectId; stripeRefundId: string }) {
+    const existing = await this.refunds.findOne({ stripeRefundId: input.stripeRefundId }).exec();
+    if (existing) return existing;
+    try {
+      return await this.refunds.create(input);
+    } catch (error) {
+      if ((error as { code?: number }).code !== 11000) throw error;
+      const winner = await this.refunds.findOne({ stripeRefundId: input.stripeRefundId }).exec();
+      if (!winner) throw error;
+      return winner;
+    }
   }
 
   /** Webhook `refund.updated`. Only a PENDING refund changes, so old or repeated events cannot undo a final status. */

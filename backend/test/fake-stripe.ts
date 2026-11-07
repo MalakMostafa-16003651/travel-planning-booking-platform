@@ -1,4 +1,5 @@
 import Stripe from 'stripe';
+import { isDeepStrictEqual } from 'node:util';
 import { StripeService } from '../src/payments/stripe.service';
 
 export const WEBHOOK_SECRET = 'whsec_test_only_never_a_real_secret';
@@ -12,9 +13,11 @@ export class FakeStripe {
   intents = new Map<string, Stripe.PaymentIntent>();
   refunds = new Map<string, Stripe.Refund>();
   private refundsByKey = new Map<string, Stripe.Refund>();
+  private refundParamsByKey = new Map<string, { paymentIntentId: string; amount: number; metadata: Record<string, string> }>();
   calls = { createIntent: 0, createRefund: 0 };
   failNextCancel = false;
   failNextRefund = false;
+  loseNextRefundResponse = false;
   failNextRetrieve = false;
   refundStatus: Stripe.Refund['status'] = 'pending';
   private sequence = 0;
@@ -40,7 +43,13 @@ export class FakeStripe {
     service.createRefund = async ({ paymentIntentId, amount, metadata }, idempotencyKey) => {
       // Stripe replays the same refund for a repeated idempotency key.
       const replay = this.refundsByKey.get(idempotencyKey);
-      if (replay) return { ...replay };
+      const params = { paymentIntentId, amount, metadata: { ...metadata } };
+      if (replay) {
+        if (!isDeepStrictEqual(this.refundParamsByKey.get(idempotencyKey), params)) {
+          throw new Error('Stripe idempotency key must use the same parameters');
+        }
+        return { ...replay };
+      }
       if (this.failNextRefund) {
         this.failNextRefund = false;
         throw new Error('Stripe is unavailable');
@@ -49,6 +58,11 @@ export class FakeStripe {
       const refund = { id: `re_test_${++this.sequence}`, object: 'refund', amount, payment_intent: paymentIntentId, metadata, status: this.refundStatus } as unknown as Stripe.Refund;
       this.refunds.set(refund.id, refund);
       this.refundsByKey.set(idempotencyKey, refund);
+      this.refundParamsByKey.set(idempotencyKey, params);
+      if (this.loseNextRefundResponse) {
+        this.loseNextRefundResponse = false;
+        throw new Error('Stripe refund response was lost after acceptance');
+      }
       return { ...refund };
     };
     service.retrieveRefund = async (id) => {
