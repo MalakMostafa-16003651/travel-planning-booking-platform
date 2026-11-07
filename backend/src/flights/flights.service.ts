@@ -633,6 +633,18 @@ async onModuleInit(): Promise<void> {
     return { outbound: this.paginate(outbound, input.page), return: this.paginate(validReturn, input.page) };
   }
 
+  async details(flightId: string): Promise<any> {
+    await this.markDeparted();
+    const flight = await this.flights.findById(this.objectId(flightId, 'Flight')).exec();
+    if (!flight) throw new NotFoundException('Flight not found');
+    const [airline, departure, arrival, cabins] = await Promise.all([
+      this.airlinesModel.findById(flight.airlineId).exec(), this.airports.findById(flight.departureAirportId).exec(),
+      this.airports.findById(flight.arrivalAirportId).exec(), this.cabins.find({ flightId: flight._id }).sort({ price: 1 }).exec(),
+    ]);
+    if (!airline || !departure || !arrival) throw new NotFoundException('Flight reference data is incomplete');
+    return this.flightView(flight, airline, departure, arrival, cabins);
+  }
+
   private flightView(flight: Flight, airline: Airline, departure: Airport, arrival: Airport, cabins: CabinInventory[]): any {
     return {
       flightId: flight._id.toString(), airlineId: airline._id.toString(), airlineName: airline.name, airlineCode: airline.code,
