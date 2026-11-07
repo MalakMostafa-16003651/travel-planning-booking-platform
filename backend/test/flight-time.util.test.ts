@@ -44,4 +44,3 @@ test('date bounds are 23h / 25h on DST days in New York', () => {
 test('invalid dates are rejected', () => {
   assert.throws(() => localDateBounds('2026-02-30', 'Africa/Cairo'));
 });
-
