@@ -47,6 +47,14 @@ export class AuditLogsService {
     const page = query.page ?? 1;
     const from = query.from ? new Date(query.from) : undefined;
     const to = query.to ? new Date(query.to) : undefined;
+    // ISO validation also accepts week/ordinal/basic dates which JavaScript's
+    // Date parser cannot read. Reject those before Mongoose casts the filter.
+    const errors: Record<string, string[]> = {};
+    if (from && !Number.isFinite(from.getTime())) errors.from = ['From must be a supported ISO 8601 date'];
+    if (to && !Number.isFinite(to.getTime())) errors.to = ['To must be a supported ISO 8601 date'];
+    if (Object.keys(errors).length > 0) {
+      throw new BadRequestException({ message: 'Validation failed', errors });
+    }
     if (from && to && from > to) {
       throw new BadRequestException({ message: 'Validation failed', errors: { from: ['From must not be after To'] } });
     }

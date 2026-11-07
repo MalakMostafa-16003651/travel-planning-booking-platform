@@ -426,6 +426,30 @@ describe('PAY-01 payments and Stripe webhook', { concurrency: false }, () => {
     assert.equal(storedRefunds[0].amount, 150);
   });
 
+  it('refunds a losing charge once when its signed success webhook is delivered concurrently', { timeout: 15_000 }, async () => {
+    const { paymentId, olderIntentId, newerIntentId } = await retriedPayment();
+    await webhook('payment_intent.succeeded', stripe.succeed(newerIntentId)).expect(200);
+    const losingIntent = stripe.succeed(olderIntentId);
+    const restore = holdSuccessHandlersAfterRead(2);
+    try {
+      await Promise.all([
+        webhook('payment_intent.succeeded', losingIntent).expect(200),
+        webhook('payment_intent.succeeded', losingIntent).expect(200),
+      ]);
+    } finally {
+      restore();
+    }
+    await webhook('payment_intent.succeeded', losingIntent).expect(200);
+    const stored = await payment(paymentId);
+    assert.equal(stored!.stripePaymentIntentId, newerIntentId);
+    assert.equal(stored!.status, 'SUCCEEDED');
+    assert.equal(await fixture.bookingStatus(bookingId), 'CONFIRMED');
+    const storedRefunds = await refunds().find().toArray();
+    assert.equal(storedRefunds.length, 1);
+    assert.equal(storedRefunds[0].stripePaymentIntentId, olderIntentId);
+    assert.equal(stripe.calls.createRefund, 1);
+  });
+
   it('needs the current policies accepted again before reusing or retrying a payment', async () => {
     const { paymentId, intentId } = await startPayment();
     await fixture.connection.collection('airlines').updateOne({ _id: fixture.airlineId }, { $set: { cancellationTiers: [] } });
