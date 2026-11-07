@@ -47,6 +47,7 @@ class ReturnDateRequiredConstraint
   }
 }
 
+
 export class FlightSearchDto {
   @ApiProperty({ example: 'CAI' })
   @IsString()
@@ -107,12 +108,16 @@ export class FlightSearchDto {
   @IsEnum(CabinClass)
   cabinClass?: CabinClass;
 
-  @ApiPropertyOptional({ example: 1, minimum: 1 })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  page?: number;
+  @ApiPropertyOptional({
+  example: 1,
+  minimum: 1,
+  description: 'Page number, 10 results per page (GEN-05).',
+})
+@IsOptional()
+@Type(() => Number)
+@IsInt()
+@Min(1)
+page?: number;
 
   @ApiPropertyOptional({ example: 50000, minimum: 0 })
   @IsOptional()
