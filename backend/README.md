@@ -257,6 +257,30 @@ Start the backend, open Swagger UI, expand `POST /api/auth/register`, and select
 | Role injection | Add `"role": "ADMIN"` to the sample body. | 400; registration cannot assign privileged roles. |
 | Unknown property | Add an extra field such as `"unexpected": true`. | 400; the field is rejected. |
 
+## Flight creation and cabin inventory
+
+The root AppModule imports FlightsModule, so Swagger and the running backend expose
+POST /api/flights (FLT-03) and POST /api/flights/:flightId/cabins (FLT-04).
+Both require a valid AIRLINE_MODERATOR session and the moderator's own airline
+assignment. Flight creation also requires the assigned airline to be active and
+the airports to exist in the official airport catalog. Date-times are entered in
+each airport's local time and stored in UTC. Other users cannot add cabins to an
+unassigned airline's flight; only future Scheduled flights accept cabin creation.
+
+The flight/cabin unique indexes are initialized before requests are accepted.
+Cabin creation is one transaction: a duplicate anywhere in the batch returns 409
+and rolls back every cabin in that request, preserving existing inventory.
+Concurrent overlapping batches cannot leave a losing batch partially stored.
+The same MongoDB replica-set requirement already used for booking holds applies.
+Reference annotations use Mongoose Schema.Types.ObjectId, matching the shared
+booking adapter's BSON identifiers; field/collection names are unchanged.
+
+The flights.e2e suite imports the actual root AppModule with an isolated test
+configuration (no .env), disables only periodic booking maintenance, and verifies
+Swagger/routes, guards, ownership, UTC storage, conflicts, rollback and concurrent
+batches against its own temporary replica set. This does not certify real search
+integration; itinerary Flights/Hotels search adapters remain pending.
+
 ## Flight booking and inventory holds
 
 `backend/src/flight-bookings` implements FLT-19, FLT-21, FLT-22, FLT-23, FLT-25, FLT-26, the booking side of FLT-12, and GEN-11. It is built against the [flight booking contract proposal](../docs/requirements/flight-booking-contract-proposal.md), which lists the fields it needs from other modules and the open team decisions.
@@ -294,7 +318,7 @@ All routes need a login. Another user's booking returns **404**. Booking and can
 | PATCH / DELETE | `/api/itineraries/:id/days/:dayId` | owner | Edit or remove a day. |
 | POST | `/api/itineraries/:id/days/:dayId/activities` | owner | Add an activity. |
 | PATCH / DELETE | `/api/activities/:id` | owner | Edit or remove an activity. |
-| POST | `/api/activities/:id/images` | owner | Multipart field `image`: JPEG, PNG or WebP, at most 5 MB, 5 per activity. |
+| POST | `/api/activities/:id/images` | owner | Multipart field `image`: JPEG or PNG, at most 5 MB, 5 per activity. |
 | GET / DELETE | `/api/activities/:id/images/:imageId` | read: like the itinerary; delete: owner | Download or remove an image. |
 | POST | `/api/itineraries/:id/days/:dayId/budgets` | owner | FOOD, ACCOMMODATION, ACTIVITIES or LOCAL_TRANSPORT. |
 | PATCH / DELETE | `/api/budgets/:id` | owner | Edit or remove a budget entry. |
@@ -305,24 +329,24 @@ All routes need a login. Another user's booking returns **404**. Booking and can
 | GET | `/api/itineraries/public/:id` | anyone | A public itinerary. |
 | POST | `/api/itineraries/:id/clone` | USER | Private copy with `clonedFrom` attribution. |
 | GET | `/api/itineraries/:id/hotels?dayId=` | like the itinerary | Hotel search for that city stop. |
-| GET | `/api/itineraries/:id/flights?dayId=` | like the itinerary | Flight search into that city stop. |
+| GET | `/api/itineraries/:id/flights?departureAirportCode=LHR&roundTrip=true` | like the itinerary | Search into the first itinerary city; dates default to first/last day. |
 
 **Dates and numbering.** Days are stored in order; nothing derived is stored. Day N's date is `startDate + (N - 1)`, and consecutive days in the same city form a city stop. Adding, deleting or reordering days, or changing `startDate`, therefore cannot leave numbers, dates, grouping or per-city budgets out of date. Two simultaneous edits of the same itinerary cannot overwrite each other: the second gets 409 and should reload.
 
-**Access (ACC-11, ACC-12).** Private itineraries are visible only to their owner, including to admins; everyone else gets 404. Public itineraries whose author is deactivated or no longer exists are left unchanged in the database but are hidden from search, viewing, budget summary and cloning (404). They are removed before pagination, so totals only count what can be opened. Suspended authors stay visible.
+**Access (ACC-11, ACC-12).** Private itineraries are visible only to their owner, including to admins; everyone else gets 404. Public itineraries whose author is deactivated or no longer exists are left unchanged in the database but are hidden from search, viewing, budget summary and cloning (404). They are removed before pagination, so totals only count what can be opened. Suspended authors stay visible. Author status comes from the agreed `UsersService.getAccountStatuses(userIds)` interface (bound to the shared UsersService instance); if the lookup fails, the request fails (500) instead of granting access.
 
-**Currency (ITN-18).** Itinerary, budget and transport currencies must be in the shared catalog (AED, EGP, EUR, GBP, JPY, SAR, USD). The summary calls FXRatesAPI from the backend only, caches each base currency's rates for one hour in `exchangerates`, and returns:
+**Currency (ITN-18).** Itinerary, budget, transport and summary currencies must be in the shared catalog from `CurrenciesService` (AED, EGP, EUR, GBP, JPY, SAR, USD; `GET /api/currencies`). The summary calls FXRatesAPI from the backend only, caches each base currency's rates once per UTC calendar day in `exchangerates`, and returns:
 
 - 400 for a currency outside the catalog;
 - 422 if the provider has no rate for one of the currencies;
-- 200 with `ratesStale: true` if the provider fails but cached rates under 7 days old exist;
+- 200 with `ratesStale: true` if the provider fails but a previous cached snapshot exists;
 - 503 if the provider fails and there is no usable cache.
 
 `FXRATES_API_KEY` is optional (the provider has a keyless tier) and is sent as a bearer header, never in a URL or response.
 
-**Flights and hotels (ITN-25, ITN-26).** The itinerary derives the city and dates and passes them to the Flights and Hotels modules. Until those modules exist, these two endpoints return 503.
+**Flights and hotels (ITN-25, ITN-26).** The itinerary derives the city and dates and passes them to the Hotels search (HTL-11, HTL-12) and the Flights search (FLT-11, FLT-12, FLT-15). Until those modules exist, these two endpoints return 503.
 
-For a manual Swagger check: log in, create an itinerary, add days in Cairo, Cairo and Luxor, then reorder them and confirm day numbers, dates and `cityGroups` follow. Add budget entries in EGP and USD and call `budget-summary?currency=EUR`. Make the itinerary PUBLIC, log in as a second user, then search for it and clone it.
+For a manual Swagger check: log in, create an itinerary, add days in Cairo, Cairo and London, then reorder them and confirm day numbers, dates and `cityGroups` follow. Add budget entries in EGP and USD and call `budget-summary?currency=EUR`. Make the itinerary PUBLIC, log in as a second user, then search for it and clone it.
 
 ## Automated tests
 
@@ -335,3 +359,15 @@ npm.cmd test
 Test files run sequentially to avoid competing local MongoDB startups. The fixtures use isolated local MongoDB databases and generated test-only signing secrets; they never read `.env` or connect to the team's Atlas database. On Windows, the auth helper first checks for an installed MongoDB executable and starts a separate process with a fresh temporary directory; otherwise it downloads/caches a binary. The booking replica-set fixture uses MongoMemoryServer's binary resolution/download cache. Standard test-process binary settings can select an installed binary for both fixtures; these are not application secrets or `.env.example` additions.
 
 Coverage includes registration, credentials, protected cookies, logout/inactivity, lockout, roles, current-password changes, admin resets, restricted login, credential-version invalidation, concurrent/stale operations, validation and Swagger, plus the imported booking suite. HTTP tests explicitly forward Secure cookies; they do not certify real-browser cookie policy. Do not print cookie/token/hash values when diagnosing a failure.
+
+## Corrected itinerary integration and reference setup (2026-11-06)
+
+From backend run npm.cmd run seed:references to initialize the official eight countries/eight cities after review. The command reads the root ignored .env, starts no HTTP server or booking maintenance, and preserves existing rows. GET /api/countries and /api/cities list the canonical records; reuse ReferenceDataModule/ReferenceDataService instead of private catalogs. No Atlas seed/migration was performed by the implementation tests.
+
+Itinerary titles are limited to 100 characters and itineraries to 60 days. Countries/cities must be in the official catalog and days must belong to selected countries. Activity cost/currency are optional, with non-negative two-decimal cost; they contribute to Activities totals and survive cloning. Transport creation requires an owned dayId; deleting that day removes its transport entries. Day/city totals include transport without adding it twice to the grand total. Legacy unlinked transport rows are preserved; updating an unlinked entry requires an explicit owned dayId. Parent reads/edits continue to work without a destructive migration.
+
+UsersService.getAccountStatuses and getDisplayNames replace the temporary itinerary status/name adapters. Both are internal projected lookups; no public account directory is added. Public visibility fails closed; proven owner responses do not repeat the owner status lookup.
+
+Budget summary uses the signed-in user's current preferred currency unless overridden; guests use itinerary currency. Rates refresh daily; outages use the last cached rates with their date and stale flag. JPG/PNG are the supported image formats.
+
+ITN-25 hotel criteria now include guests and rooms. ITN-26 takes departureAirportCode and optional roundTrip/departureDate/returnDate, resolving destination airports from the first itinerary city, with default outbound/return dates from the itinerary. The live Flights/Hotels adapters still return 503 pending owner integration. The full corrected contracts are in docs/requirements/itinerary-contract-proposal.md; coordinate their port mappings with Gamila and Lama.

@@ -20,6 +20,8 @@ export class ActivityDto {
   @ApiPropertyOptional() attractionId?: string;
   @ApiPropertyOptional({ example: '09:30' }) startTime?: string;
   @ApiPropertyOptional({ example: '12:00' }) endTime?: string;
+  @ApiPropertyOptional() cost?: number;
+  @ApiPropertyOptional() currency?: string;
   @ApiProperty({ type: [ActivityImageDto] }) images!: ActivityImageDto[];
 
   static from(activity: Activity, dayId: string): ActivityDto {
@@ -33,6 +35,8 @@ export class ActivityDto {
       ...optional('attractionId', activity.attractionId),
       ...optional('startTime', activity.startTime),
       ...optional('endTime', activity.endTime),
+      ...optional('cost', activity.cost),
+      ...optional('currency', activity.currency),
       images: (activity.images ?? []).map((image) => ({
         imageId: image._id.toString(),
         url: `/api/activities/${activityId}/images/${image._id.toString()}`,

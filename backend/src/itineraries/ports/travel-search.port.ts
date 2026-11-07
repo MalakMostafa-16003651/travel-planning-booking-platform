@@ -6,12 +6,12 @@ export const ITINERARY_HOTEL_SEARCH = 'ITINERARY_HOTEL_SEARCH';
  * derives the route and date; filtering, sorting and results stay owned by FlightsService.
  */
 export interface ItineraryFlightSearch {
-  originCity: string;
-  originCountryCode?: string;
-  destinationCity: string;
-  destinationCountryCode?: string;
-  /** YYYY-MM-DD */
+  departureAirportCode: string;
+  arrivalAirportCodes: string[];
+  roundTrip: boolean;
+  /** Airport-local date, YYYY-MM-DD; defaults to itinerary start. */
   departureDate: string;
+  returnDate?: string;
   adults: number;
   children: number;
   infants: number;
@@ -23,7 +23,11 @@ export interface FlightSearchPort {
   search(criteria: ItineraryFlightSearch): Promise<unknown>;
 }
 
-/** ITN-25: what the itinerary needs from the Hotels module (Person 5). */
+/**
+ * ITN-25: what the itinerary needs from the Hotels module (Person 5). Backed by the same
+ * search as HTL-11/HTL-12 (GET /api/hotels/search); availability, filtering and sorting stay
+ * owned by HotelsService.
+ */
 export interface ItineraryHotelSearch {
   city: string;
   countryCode?: string;
@@ -32,6 +36,7 @@ export interface ItineraryHotelSearch {
   /** YYYY-MM-DD */
   checkOut: string;
   guests: number;
+  rooms: number;
   page?: number;
 }
 

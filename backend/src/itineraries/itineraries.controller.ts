@@ -4,7 +4,10 @@ import {
   ApiOkResponse, ApiOperation, ApiServiceUnavailableResponse, ApiTags, ApiUnauthorizedResponse, ApiUnprocessableEntityResponse,
 } from '@nestjs/swagger';
 import { AuthGuard, AuthenticatedRequest } from '../auth/auth.guard';
+import { Roles } from '../auth/roles.decorator';
+import { RolesGuard } from '../auth/roles.guard';
 import { ApiErrorDto } from '../common/dto/api-error.dto';
+import { UserRole } from '../common/enums/user-role.enum';
 import { BudgetSummaryDto } from './dto/budget-summary.dto';
 import { CreateItineraryDto } from './dto/create-itinerary.dto';
 import { CreateItineraryDayDto, ReorderItineraryDaysDto, UpdateItineraryDayDto } from './dto/itinerary-day.dto';
@@ -48,7 +51,8 @@ export class ItinerariesController {
   }
 
   @Post()
-  @UseGuards(AuthGuard)
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(UserRole.USER)
   @ApiCookieAuth('accessToken')
   @ApiOperation({ summary: 'ITN-01: create an itinerary', description: "Starts with no days. Currency defaults to the user's preferredCurrency, else USD." })
   @ApiCreatedResponse({ type: ItineraryDto })
@@ -198,7 +202,7 @@ export class ItinerariesController {
   @ApiCookieAuth('accessToken')
   @ApiOperation({
     summary: 'ITN-14/ITN-18: budget summary in a chosen currency',
-    description: 'Totals per category, day, city stop and intercity transport, converted with FXRatesAPI rates (cached for 1 hour). If the provider fails, cached rates up to 7 days old are used and ratesStale is true.',
+    description: 'Totals per category, day, city stop and intercity transport, converted with FXRatesAPI rates cached daily. If the provider fails, the last cached rates are used and ratesStale is true.',
   })
   @ApiOkResponse({ type: BudgetSummaryDto })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'Unsupported currency.' })
@@ -210,7 +214,8 @@ export class ItinerariesController {
   }
 
   @Post(':id/clone')
-  @UseGuards(AuthGuard)
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(UserRole.USER)
   @ApiCookieAuth('accessToken')
   @ApiOperation({ summary: 'ITN-21: clone a public itinerary', description: 'Creates your own PRIVATE copy with clonedFrom attribution (original id, author and title). Later changes to either copy do not affect the other.' })
   @ApiCreatedResponse({ type: ItineraryDto })
@@ -224,7 +229,7 @@ export class ItinerariesController {
   @Get(':id/hotels')
   @UseGuards(OptionalAuthGuard)
   @ApiCookieAuth('accessToken')
-  @ApiOperation({ summary: 'ITN-25: search hotels for a city stop', description: 'Derives city, check-in and check-out from the stop containing dayId, then calls the Hotels module search.' })
+  @ApiOperation({ summary: 'ITN-25: search hotels for a city stop', description: 'Derives city, check-in and check-out from the stop containing dayId, then reuses the Hotels module search (HTL-11, HTL-12, GET /api/hotels/search). Returns 503 until the Hotels module is available.' })
   @ApiOkResponse({ description: '{ itineraryId, criteria, results } where results come from hotel search.' })
   @ApiBadRequestResponse({ type: ApiErrorDto })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: READ_NOT_FOUND_DOC })
@@ -236,7 +241,7 @@ export class ItinerariesController {
   @Get(':id/flights')
   @UseGuards(OptionalAuthGuard)
   @ApiCookieAuth('accessToken')
-  @ApiOperation({ summary: 'ITN-26: search flights into a city stop', description: 'dayId must be the first day of a stop. Origin is the previous stop (or originCity for the first stop); the date is that day. Calls the Flights module search.' })
+  @ApiOperation({ summary: 'ITN-26: search flights to the first itinerary city', description: 'Select an origin airport and one-way or round-trip search. Destination airports come from the first day city; departure defaults to itinerary start and return to its last day. Reuses Flights search; returns 503 until its adapter is connected.' })
   @ApiOkResponse({ description: '{ itineraryId, criteria, results } where results come from flight search.' })
   @ApiBadRequestResponse({ type: ApiErrorDto })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: READ_NOT_FOUND_DOC })

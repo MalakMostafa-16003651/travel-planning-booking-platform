@@ -1,117 +1,54 @@
 # Itineraries, Activities and Budgeting: shared contract
 
-Status: **proposal; the cross-module interfaces are not yet agreed.** The code is Person 7's
-(student 16001313). The module in `backend/src/itineraries` is built against this proposal,
-so it can be reviewed while other modules are still being written. Each dependency on another
-module goes through a port in `ports/`, with a temporary adapter in `adapters/`. When a
-dependency lands, only its binding in `itineraries.module.ts` changes.
+Status: implemented backend corrections on the current feature branch; flight/hotel search adapters remain pending integration with their owners. Person 7 owns this module. Malak's explicitly authorized fixes and tests are recorded in docs/work-logs/16003651.md; no changes are attributed to Kiki that she did not perform.
 
-Sources: project PDF sections 5, 6.5 and 8.8, the team's naming rules, and the shared
-decisions on currencies, ACC-11 and ACC-12 (2026-11-04). The reviewed requirements workbook
-was **not** available while this was written. The limits marked "assumed" below must be
-checked against it.
+Sources: reviewed requirements workbook (ITN-01 through ITN-26, GEN-08, ACC-09/11/12), revised project PDF sections 5.1 and 8, and team-leader-approved reference schema design on 2026-11-06. Milestone 1 is backend only.
 
-## 1. Requirements covered
+## Shared Users integration
 
-| ID | Behavior |
-| --- | --- |
-| ITN-01 | Create, update and delete an itinerary: title, description, countries, start date, visibility, currency. |
-| ITN-03 | List your own itineraries (page size 10) and view one. |
-| ITN-05, ITN-07 | Add (append or insert at a position), edit and delete days. |
-| ITN-08 | Reorder days. Day numbers, dates and city grouping follow the new order. |
-| ITN-10, ITN-12 | Activities in a day, and activity images (GEN-08 upload validation). |
-| ITN-14 | Budget entries per day: FOOD, ACCOMMODATION, ACTIVITIES, LOCAL_TRANSPORT. |
-| ITN-16 | Intercity transport costs, stored separately from daily budgets. |
-| ITN-18 | Budget summary converted into a display currency through FXRatesAPI. Handles invalid currencies, missing rates and provider failures. |
-| ITN-20, ITN-21 | Public/private visibility; public search and view; cloning with attribution. |
-| ITN-25, ITN-26 | Hotel and flight search from the itinerary, reusing the Hotels and Flights modules. |
-| ACC-11 | Private itineraries are owner-only, including for admins. |
-| ACC-12 | Public itineraries of deactivated authors are hidden but kept in the database. |
-
-ITN-27 (attach bookings) and ITN-28 (PDF export) are optional bonuses and are not included.
-
-## 2. Data model
-
-One `Itinerary` document (collection `itineraries`) holds its ordered days. Each day holds
-its activities and budget entries; the itinerary also holds its transport costs. PDF
-section 5 allows embedding for bounded, parent-owned data. One document write keeps
-ordering and totals consistent. Optimistic concurrency (`__v`) makes the second of two
-simultaneous edits fail with 409, so no update is silently lost.
-
-| Entity | Fields |
-| --- | --- |
-| `Itinerary` | `_id` (itineraryId), `userId`, `title`, `description`, `countries[]` (ISO alpha-2), `startDate`, `visibility` (`PRIVATE`/`PUBLIC`), `currency`, `days[]`, `transportCosts[]`, `clonedFrom`, `publishedAt`, timestamps |
-| `ItineraryDay` | `_id` (dayId), `city`, `countryCode`, `notes`, `activities[]`, `budgets[]`. **No stored day number or date.** Both come from the day's position: date = `startDate + (dayNumber - 1)`. |
-| `Activity` | `_id` (activityId), `title`, `description`, `location`, `attractionId`, `startTime`/`endTime` (`HH:mm`), `images[]` (metadata only) |
-| `BudgetEntry` | `_id` (budgetId), `category`, `amount` (decimal, at most 2 places), `currency` |
-| `TransportCost` | `_id` (transportCostId), `fromCity`, `toCity`, `mode`, `amount`, `currency`, optional `dayId`, `notes` |
-| `ClonedFrom` | `itineraryId`, `userId`, `authorName`, `title`, `clonedAt` |
-| `ActivityImage` (`activityimages`) | Image bytes, kept outside the itinerary document. This is an additional supporting entity, see decision 4. |
-| `ExchangeRate` (`exchangerates`) | `baseCurrency` (unique), `rates`, `rateDate`, `fetchedAt` |
-
-City grouping ("city stops") is computed on each read, as consecutive days in the same
-city. The API returns it as `cityGroups`.
-
-## 3. What this module needs from others
-
-### Person 1 / Malak: authors (ACC-12)
-
-Port `ITINERARY_AUTHORS`:
+Import UsersModule; inject UsersService. The itinerary ports use the same shared instance:
 
 ```ts
-getAuthors(userIds: string[]): Promise<Map<string, { name: string; status: AccountStatus }>>
+getAccountStatuses(userIds: string[]): Promise<Map<string, AccountStatus>>
+getDisplayNames(userIds: string[]): Promise<Map<string, string>>
 ```
 
-The planned shared method is `UsersService.getAccountStatuses(userIds)`, which returns
-statuses only. **Requested adjustment:** also return `name`. Attribution needs it on public
-itineraries and on clones (ITN-21). Without it, the module would have to read the User
-collection directly.
+IDs are validated, normalized and deduplicated. Missing users do not produce entries; only IDs and requested public fields are selected. Display names exclude DEACTIVATED accounts. Errors propagate; these helpers are internal services, not new user-directory HTTP endpoints. The temporary direct-collection status/name adapters are removed.
 
-How it is used:
+Private itineraries remain owner-only, including for admins. Public visibility requires an existing ACTIVE or SUSPENDED author; DEACTIVATED/missing authors are hidden before pagination/counts and rechecked for direct viewing/cloning/images/search. Lookup errors never grant public access. Once ownership is established from the authenticated identity, the owner's own response does not depend on another status check. If original-author attribution is unavailable on an owner's clone response, use Deleted user without exposing an unverified name. Stored visibility is preserved on account deactivation.
 
-- The authors of **all** matching public itineraries are looked up before pagination. Hidden
-  authors are then excluded from the query, so `total` and page counts are correct.
-- Visible means the author exists and is not `DEACTIVATED`. `SUSPENDED` authors stay visible.
-- Author status is rechecked when viewing, cloning, viewing the budget summary,
-  searching hotels or flights, and downloading images.
-- Errors propagate, so a failed lookup never grants access.
+## Official reference data and currencies
 
-Temporary binding: `InterimAuthorsAdapter` reads only `_id`, `name` and `status` from
-`users`. Once the shared method exists, replace it with an adapter that calls `UsersService`.
+One approved ReferenceDataModule owns countries and cities. Country has code/name/currency; City has cityId/name/countryCode. Both have MongoDB _id/createdAt/updatedAt. Unique indexes preserve country codes and the official city_id values (mapped to cityId, including new_york). No teammate should define another Country/City model or private allowed list.
 
-### CurrenciesModule (PR #10)
+ReferenceDataService exports listCountries/listCities/assertCountries/resolveCity/matchingCountryCodes and an explicit idempotent seedSupported setup method. Public GET /api/countries and GET /api/cities return only documented reference fields. Setup: npm.cmd run seed:references from backend. Startup initializes indexes without inserting rows. The seed uses the eight official records per dataset, preserves existing IDs/data and never deletes extra rows. Public/validation queries select official identifiers only. Atlas setup is a separate operator action after review; tests seed their own local database.
 
-Port `ITINERARY_CURRENCIES`: `listSupported()` and `isSupported(code)`. Temporary binding:
-`InterimCurrenciesAdapter`, with the same seeded codes (AED, EGP, EUR, GBP, JPY, SAR, USD).
-When synchronizing with `develop`, bind the port to `CurrenciesService` and import
-`CurrenciesModule`. Currency conversion and FXRatesAPI handling stay in this module.
+Countries must be official catalog entries. Days use a canonical official city and its matching country; their country must be among the itinerary's selected countries. Changing selected countries cannot strand existing days. Kiki/Gamila/Lama can all reuse this module. Airport data remains owned by Gamila.
 
-### Person 3: flight search (ITN-26)
+CurrenciesService remains the single shared source for profile, itinerary, activity, budget and transport currencies. Its supported queries now expose/accept only the codes from Countries.csv: AED, EGP, EUR, GBP, JPY, SAR, USD. Extra stored rows are preserved but are not automatically supported. Currency conversion stays in the itinerary module; booking/payment prices are unchanged.
 
-Port `ITINERARY_FLIGHT_SEARCH.search(criteria)`. The criteria are `originCity`,
-`originCountryCode`, `destinationCity`, `destinationCountryCode`, `departureDate`
-(YYYY-MM-DD), `adults`, `children`, `infants`, `cabinClass` and `page`. The itinerary
-supplies cities, not airports. Person 3 should say whether FlightsService can search by
-city (through the airports dataset), or whether the itinerary should resolve airport
-codes itself.
+## Itinerary, activity and budget behavior
 
-### Person 5: hotel search (ITN-25)
+- ITN-01: title max 100 characters; official countries, real start date, private by default. Owner update/delete and independent clones remain.
+- ITN-05/07/08/09: at most 60 days, stable child IDs, sequential derived dates/numbers, consecutive-city grouping, optimistic-concurrency conflict 409. Remaining technical bounds (30 activities/50 daily budgets/100 transport entries) are implementation limits, not invented workbook requirements.
+- ITN-10: an activity can have optional non-negative cost (max two decimals) and a supported currency. Cost currency defaults to itinerary currency when first supplied and is stored, so later itinerary preference changes do not relabel the amount. A currency without a cost is rejected. Costs, including zero, survive cloning and count once under ACTIVITIES.
+- ITN-14/16: transport creation requires dayId belonging to the itinerary. Changing its day requires another owned day. Deleting a day removes transport entries assigned to that day along with that day's activities/budgets. Summary day/city totals include their transport; overall transport stays separate from the four daily categories, avoiding double counting.
+- ITN-18: authenticated summary defaults to the current user's supported preferredCurrency, then itinerary currency. Guests use itinerary currency; explicit supported display currency overrides the default. Latest rates are cached once per UTC calendar day, with concurrent per-process requests sharing a fetch. If the provider fails, use the last cached snapshot regardless of age and show rate date/ratesStale. No usable cache gives 503; missing required rate gives 422. Provider base mismatches are rejected. No raw key or payment conversion is exposed.
+- ITN-21: keyword search includes country names/codes as well as title/description/city; public-author visibility remains part of every search.
+- GEN-08: JPG/PNG only, at most 5 MB and 5 images per activity, bytes stored server-side and served by protected/read-authorized URL. WebP is rejected.
 
-Port `ITINERARY_HOTEL_SEARCH.search(criteria)`. The criteria are `city`, `countryCode`,
-`checkIn`, `checkOut`, `guests` and `page`. Check-in is the first day of the city stop.
-Check-out is the morning after its last day.
+Existing transport entries without dayId remain readable/editable as part of the parent, without a destructive migration. Updating such an entry requires assigning an owned dayId first. Until reassigned, its amount remains in the overall transport total without an invented day allocation. All new entries require dayId.
 
-Until the Flights and Hotels modules exist, these two endpoints return 503.
+## Search ports requiring owner integration
 
-## 4. Decisions needed
+These request contracts are corrected to the workbook and documented for coordination. Real adapters remain explicitly unavailable (503) until the owners provide their search services. Tests inject search doubles to verify the criteria; that is not a claim that live search works.
 
-| # | Question | Who | Proposal |
-| --- | --- | --- | --- |
-| 1 | Add `name` to the shared author lookup? | Malak (Person 1) | Yes, as in section 3. |
-| 2 | How should a clone show its attribution once the original author is deactivated? | Team | Keep the clone visible to its owner, and show the author as "Deleted user" (ACC-12 wording). |
-| 3 | Can flight search take cities? | Person 3 | Yes, through the airports dataset. |
-| 4 | Is there a shared media/upload service (GEN-08)? The blog also needs images. | Team | For now, store bytes in `activityimages`; move them to the shared service if one is agreed. |
-| 5 | Limits: 90 days, 30 activities and 50 budget entries per day, 100 transport costs, 5 images per activity of 5 MB each. | Check the workbook | Adjust the values in `itinerary.rules.ts`. |
-| 6 | How are budget amounts stored? | Persons 4, 8 | Decimals with 2 places, rounded when totalled. This differs from booking prices, which use minor units for PAY-04, because budgets mix currencies such as JPY. |
-| 7 | Which rates are used, and how fresh? | Team | Latest rates. Cached 1 hour; on provider failure, cached rates up to 7 days old are used and flagged as stale. |
-| 8 | Who can create itineraries? | Team | Role USER only, the same as booking. Moderators and admins get 403. |
+### ITN-25 / Lama
+
+GET /api/itineraries/:id/hotels takes dayId, guests, rooms and optional page. The city stop determines city/countryCode/checkIn/checkOut. Check-in is its first day; check-out is the day after its last. The HotelSearchPort receives city, countryCode, checkIn, checkOut, guests, rooms, page. Reuse HTL-11/12 rather than copying hotel availability logic.
+
+### ITN-26 / Gamila
+
+GET /api/itineraries/:id/flights takes departureAirportCode, roundTrip, optional departureDate/returnDate, adults/children/infants, cabinClass and page. The official airports in the first itinerary day's city determine arrivalAirportCodes. Departure defaults to itinerary start; round-trip return defaults to the last itinerary day. Airports must exist, arrival/departure cannot be identical, return cannot precede departure, at least one adult is required and infants cannot outnumber adults. FlightSearchPort receives departureAirportCode, arrivalAirportCodes, roundTrip, departureDate, optional returnDate, counts, optional cabinClass/page. Gamila must confirm the adapter mapping to FLT-11/12/15; no direct FlightsService implementation is edited in this batch.
+
+Optional ITN-27/28 remain outside this work. Account deactivation itself and its booking-confirmation safeguards remain Person 1's separate ACC-12 task.

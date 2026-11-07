@@ -31,10 +31,9 @@ export class CreateTransportCostDto {
   @Matches(CURRENCY_CODE, { message: 'Currency must be a three-letter code' })
   currency!: string;
 
-  @ApiPropertyOptional({ description: 'Optional travel day of this itinerary.' })
-  @IsOptional()
+  @ApiProperty({ description: 'Required travel day of this itinerary.' })
   @IsMongoId({ message: 'dayId must be a valid id' })
-  dayId?: string;
+  dayId!: string;
 
   @ApiPropertyOptional({ maxLength: 500 })
   @IsOptional()
@@ -44,4 +43,4 @@ export class CreateTransportCostDto {
   notes?: string;
 }
 
-export class UpdateTransportCostDto extends PartialType(CreateTransportCostDto) {}
+export class UpdateTransportCostDto extends PartialType(CreateTransportCostDto, { skipNullProperties: false }) {}

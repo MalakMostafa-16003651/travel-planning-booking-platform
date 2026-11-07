@@ -1,13 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsEnum, IsISO8601, IsOptional, IsString, Length, Matches, MaxLength } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsEnum, IsISO8601, IsOptional, IsString, Length, Matches, MaxLength, ValidateIf } from 'class-validator';
 import { ItineraryVisibility } from '../itinerary.rules';
 import { COUNTRY_CODE, CURRENCY_CODE, DATE_ONLY, Trim, TrimUpper, TrimUpperEach } from './transforms';
 
 export class CreateItineraryDto {
-  @ApiProperty({ example: 'Two weeks in Egypt', maxLength: 120 })
+  @ApiProperty({ example: 'Two weeks in Egypt', maxLength: 100 })
   @Trim()
   @IsString({ message: 'Title must be text' })
-  @Length(1, 120, { message: 'Title must be 1 to 120 characters' })
+  @Length(1, 100, { message: 'Title must be 1 to 100 characters' })
   title!: string;
 
   @ApiPropertyOptional({ example: 'Cairo, Luxor and the Red Sea', maxLength: 2000 })
@@ -32,12 +32,12 @@ export class CreateItineraryDto {
   startDate!: string;
 
   @ApiPropertyOptional({ enum: ItineraryVisibility, default: ItineraryVisibility.PRIVATE })
-  @IsOptional()
+  @ValidateIf((_object, value) => value !== undefined)
   @IsEnum(ItineraryVisibility, { message: 'Visibility must be PRIVATE or PUBLIC' })
   visibility?: ItineraryVisibility;
 
   @ApiPropertyOptional({ example: 'EGP', description: "Default budget display currency. Defaults to the user's preferred currency, else USD." })
-  @IsOptional()
+  @ValidateIf((_object, value) => value !== undefined)
   @TrimUpper()
   @Matches(CURRENCY_CODE, { message: 'Currency must be a three-letter code' })
   currency?: string;

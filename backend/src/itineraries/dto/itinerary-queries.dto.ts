@@ -1,7 +1,7 @@
 import { ApiPropertyOptional, ApiProperty } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
-import { IsEnum, IsInt, IsMongoId, IsOptional, IsString, Length, Matches, Max, Min } from 'class-validator';
-import { COUNTRY_CODE, CURRENCY_CODE, Trim, TrimUpper } from './transforms';
+import { Transform, Type } from 'class-transformer';
+import { IsBoolean, IsISO8601, IsEnum, IsInt, IsMongoId, IsOptional, IsString, Length, Matches, Max, Min } from 'class-validator';
+import { COUNTRY_CODE, CURRENCY_CODE, DATE_ONLY, Trim, TrimUpper } from './transforms';
 
 export class PageQueryDto {
   @ApiPropertyOptional({ example: 1, minimum: 1 })
@@ -22,7 +22,7 @@ export enum PublicItinerarySort {
 
 /** ITN-20, ITN-21 */
 export class SearchPublicItinerariesQueryDto extends PageQueryDto {
-  @ApiPropertyOptional({ description: 'Matches title, description or city, case-insensitive.' })
+  @ApiPropertyOptional({ description: 'Matches title, description, country or city, case-insensitive.' })
   @IsOptional()
   @Trim()
   @IsString()
@@ -64,14 +64,14 @@ export class SearchPublicItinerariesQueryDto extends PageQueryDto {
 
 /** ITN-18 */
 export class BudgetSummaryQueryDto {
-  @ApiPropertyOptional({ example: 'EUR', description: "Display currency. Defaults to the itinerary's currency." })
+  @ApiPropertyOptional({ example: 'EUR', description: "Defaults to the signed-in user's current preference; guests use itinerary currency." })
   @IsOptional()
   @TrimUpper()
   @Matches(CURRENCY_CODE, { message: 'Currency must be a three-letter code' })
   currency?: string;
 }
 
-/** ITN-25 */
+/** ITN-25: hotel search for a city stop, reusing HTL-11/HTL-12. */
 export class ItineraryHotelsQueryDto extends PageQueryDto {
   @ApiProperty({ description: 'Any day of the stop to search hotels for. Check-in/out come from that stop.' })
   @IsMongoId({ message: 'dayId must be a valid id' })
@@ -84,49 +84,44 @@ export class ItineraryHotelsQueryDto extends PageQueryDto {
   @Min(1, { message: 'Guests must be at least 1' })
   @Max(20, { message: 'Guests must be at most 20' })
   guests?: number;
+
+  @ApiPropertyOptional({ default: 1, minimum: 1 })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(20)
+  rooms?: number;
 }
 
-/** ITN-26 */
+/** ITN-26: origin airport to the first itinerary city's airports. */
 export class ItineraryFlightsQueryDto extends PageQueryDto {
-  @ApiProperty({ description: 'The day you arrive in a new city. The flight leaves from the previous stop on that date.' })
-  @IsMongoId({ message: 'dayId must be a valid id' })
-  dayId!: string;
+  @ApiProperty({ example: 'LHR', description: 'Chosen departure airport from the official airport catalog.' })
+  @TrimUpper() @Matches(/^[A-Z]{3}$/)
+  departureAirportCode!: string;
 
-  @ApiPropertyOptional({ example: 'Berlin', description: 'Required when dayId is the first day (there is no previous stop).' })
-  @IsOptional()
-  @Trim()
-  @IsString()
-  @Length(1, 100, { message: 'originCity must be 1 to 100 characters' })
-  originCity?: string;
+  @ApiPropertyOptional({ default: false })
+  @IsOptional() @IsBoolean()
+  @Transform(({ value }) => value === 'true' ? true : value === 'false' ? false : value)
+  roundTrip?: boolean;
 
-  @ApiPropertyOptional({ example: 'DE' })
-  @IsOptional()
-  @TrimUpper()
-  @Matches(COUNTRY_CODE, { message: 'originCountryCode must be a two-letter code' })
-  originCountryCode?: string;
+  @ApiPropertyOptional({ description: 'Defaults to the itinerary start date.' })
+  @IsOptional() @Matches(DATE_ONLY) @IsISO8601({ strict: true })
+  departureDate?: string;
 
-  @ApiPropertyOptional({ default: 1, minimum: 0 })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt() @Min(0) @Max(9)
+  @ApiPropertyOptional({ description: 'Round-trip only. Defaults to the last itinerary day.' })
+  @IsOptional() @Matches(DATE_ONLY) @IsISO8601({ strict: true })
+  returnDate?: string;
+
+  @ApiPropertyOptional({ default: 1, minimum: 1 })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
   adults?: number;
 
   @ApiPropertyOptional({ default: 0, minimum: 0 })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt() @Min(0) @Max(9)
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(Number.MAX_SAFE_INTEGER)
   children?: number;
 
   @ApiPropertyOptional({ default: 0, minimum: 0 })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt() @Min(0) @Max(9)
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(Number.MAX_SAFE_INTEGER)
   infants?: number;
 
-  @ApiPropertyOptional({ example: 'ECONOMY' })
-  @IsOptional()
-  @TrimUpper()
-  @IsString()
-  @Length(1, 30)
+  @ApiPropertyOptional({ enum: ['ECONOMY', 'PREMIUM_ECONOMY', 'BUSINESS', 'FIRST'] })
+  @IsOptional() @TrimUpper() @Matches(/^(ECONOMY|PREMIUM_ECONOMY|BUSINESS|FIRST)$/)
   cabinClass?: string;
 }
