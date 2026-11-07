@@ -352,9 +352,11 @@ For a manual Swagger check: log in, create an itinerary, add days in Cairo, Cair
 
 `backend/src/hotels` implements HTL-01/HTL-02 (hotel profiles), HTL-03/
 HTL-05/HTL-06 (rooms), HTL-04/HTL-05/HTL-06/HTL-08 (room availability),
-HTL-09/HTL-10 (policies) and HTL-22 (moderator reservations, stubbed), per
-the [hotel contract proposal](../docs/requirements/hotel-contract-proposal.md).
-Search (HTL-11/12/15) is in a separate branch/PR.
+HTL-09/HTL-10 (policies), HTL-11/HTL-12/HTL-15 (search), and HTL-22
+(moderator reservations, stubbed), per the
+[hotel contract proposal](../docs/requirements/hotel-contract-proposal.md).
+The reservations endpoint remains behind a pending adapter until
+Person 6's hotel-bookings module exists.
 
 | Method | Endpoint | Who | Result |
 | --- | --- | --- | --- |
@@ -368,7 +370,11 @@ Search (HTL-11/12/15) is in a separate branch/PR.
 | PATCH | `/api/hotels/:id/rooms/:roomId/availability` | assigned HOTEL_MODERATOR | Edit a blocked range's dates (`blockedRangeId` + new `startDate`/`endDate`), or unblock it (`blockedRangeId` + `remove: true`). |
 | GET | `/api/hotels/:id/availability` | assigned HOTEL_MODERATOR | Every active room's blocked/booked ranges, optionally windowed by `from`/`to`. |
 | PUT | `/api/hotels/:id/policies` | assigned HOTEL_MODERATOR | Update `checkInTime`/`checkOutTime` (`HH:mm`), `cancellationTiers`, or both. Tiers are stored sorted by `daysBeforeCheckIn` descending; duplicate thresholds are rejected, the same rule `AirlinesService.updatePoliciesMine` uses for `cancellationTiers`. |
+| GET | `/api/hotels/search` | anyone | `city` (resolved through `ReferenceDataService`), optional `countryCode`, `checkIn`/`checkOut`, `guests`, optional `rooms`/`minPrice`/`maxPrice`/`sort`/`page`. Field names match `ItineraryHotelSearch` in `itineraries/ports/travel-search.port.ts` exactly, so Person 7's eventual adapter is a direct pass-through. Only active hotels with at least `rooms` unblocked rooms whose combined capacity (best `rooms` by capacity) covers `guests` are returned, page size 10. Exact room assignment stays a booking-time concern. |
+| GET | `/api/hotels/:id/rooms/available` | anyone | `checkIn`/`checkOut`, optional `guests`. Individual rooms (not a hotel-level summary) with no blocked/booked overlap for the stay and (if `guests` given) enough capacity, cheapest first. |
 | GET | `/api/hotels/:id/reservations` | assigned HOTEL_MODERATOR | Ownership is checked first (404/403, same as every other moderator route); the actual listing is 503 until Person 6's hotel-bookings module exists. `HotelReservationsPort`/`PendingHotelReservationsAdapter` in `backend/src/hotels/ports` and `adapters` mirror the itineraries module's pending search adapters — swap the adapter binding in `HotelsModule` once that module lands. |
+
+Both search endpoints use the same half-open overlap check as `RoomAvailability`: a block/booking ending on a date does not conflict with a stay starting that same date.
 
 New hotels default to `isActive: true`, `checkInTime: '14:00'`, `checkOutTime: '11:00'` and no cancellation tiers. Changing `city` re-resolves the country from the reference catalog from scratch; changing only `countryCode` re-resolves against the existing city. Rooms carry no inventory count of their own (HTL-03 "individually bookable rooms"); each room's `RoomAvailability` document instead holds `blockedRanges` (written here) and `bookedRanges` (reserved for the not-yet-built hotel-bookings module — see the contract's section 3 for the overlap-array design and why a hold is a single conditional write).
 
