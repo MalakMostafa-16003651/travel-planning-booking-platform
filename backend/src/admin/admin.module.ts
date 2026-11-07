@@ -3,11 +3,14 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { Airline, AirlineSchema } from '../airlines/schemas/airline.schema';
 import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 import { AuthModule } from '../auth/auth.module';
+import { FlightBookingsModule } from '../flight-bookings/flight-bookings.module';
 import { Hotel, HotelSchema } from '../hotels/schemas/hotel.schema';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { AdminAccountsController } from './admin-accounts.controller';
 import { AdminAccountsService } from './admin-accounts.service';
+import { AdminBookingsController } from './admin-bookings.controller';
+import { AdminBookingsService } from './admin-bookings.service';
 import { AdminModeratorsController } from './admin-moderators.controller';
 import { AdminModeratorsService } from './admin-moderators.service';
 import { AdminProvidersController } from './admin-providers.controller';
@@ -20,6 +23,7 @@ import { ModeratorAssignment, ModeratorAssignmentSchema } from './schemas/modera
     AuthModule,
     AuditLogsModule,
     NotificationsModule,
+    FlightBookingsModule,
     MongooseModule.forFeature([
       { name: User.name, schema: UserSchema },
       // ACC-15: only isActive is changed here; Persons 3 and 5 own the rest of these documents.
@@ -28,7 +32,7 @@ import { ModeratorAssignment, ModeratorAssignmentSchema } from './schemas/modera
       { name: ModeratorAssignment.name, schema: ModeratorAssignmentSchema },
     ]),
   ],
-  controllers: [AdminAccountsController, AdminProvidersController, AdminModeratorsController],
-  providers: [AdminAccountsService, AdminProvidersService, AdminModeratorsService],
+  controllers: [AdminAccountsController, AdminProvidersController, AdminModeratorsController, AdminBookingsController],
+  providers: [AdminAccountsService, AdminProvidersService, AdminModeratorsService, AdminBookingsService],
 })
 export class AdminModule {}
