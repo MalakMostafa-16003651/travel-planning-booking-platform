@@ -15,6 +15,7 @@ import { PasswordService } from '../src/auth/password.service';
 import { AccountStatus } from '../src/common/enums/account-status.enum';
 import { UserRole } from '../src/common/enums/user-role.enum';
 import { configureApplication } from '../src/configure-application';
+import { NotificationsService } from '../src/notifications/notifications.service';
 
 // A consuming module must inject the shared hasher through AuthModule's public
 // exports, rather than registering a second implementation or provider.
@@ -139,6 +140,24 @@ describe('merged production module integration', { concurrency: false }, () => {
       await connection.collection('users').updateOne({ _id: new Types.ObjectId(admin.userId) },
         { $set: { status: AccountStatus.ACTIVE } });
     }
+  });
+
+  it('connects notifications to actual root authentication and ownership', async () => {
+    const other = await login('notification-other@example.com', UserRole.USER);
+    await app.get(NotificationsService).notify({ userId: user.userId, type: 'BOOKING_CONFIRMED', message: 'Integration booking confirmed.' });
+    const server = app.getHttpServer();
+    await request(server).get('/api/notifications').expect(401);
+    const inbox = await request(server).get('/api/notifications').set('Cookie', user.cookie).expect(200);
+    assert.equal(inbox.body.total, 1);
+    const id = inbox.body.items[0].notificationId;
+    const otherInbox = await request(server).get('/api/notifications').set('Cookie', other.cookie).expect(200);
+    assert.equal(otherInbox.body.total, 0);
+    await request(server).patch('/api/notifications/' + id + '/read').set('Cookie', other.cookie).expect(404);
+    await request(server).patch('/api/notifications/read-all').set('Cookie', user.cookie).set('Origin', 'https://untrusted.example').expect(403);
+    const unread = await request(server).get('/api/notifications/unread-count').set('Cookie', user.cookie).expect(200);
+    assert.equal(unread.body.unreadCount, 1);
+    const read = await request(server).patch('/api/notifications/' + id + '/read').set('Cookie', user.cookie).expect(200);
+    assert.equal(read.body.isRead, true);
   });
 
   it('composes payment authentication and raw-body webhook validation without Stripe credentials', async () => {
