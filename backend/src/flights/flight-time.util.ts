@@ -49,6 +49,21 @@ export function utcToLocalDateTime(instant: Date, timeZone: string): string {
   return `${String(p.year).padStart(4, '0')}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}T${String(p.hour).padStart(2, '0')}:${String(p.minute).padStart(2, '0')}:${String(p.second).padStart(2, '0')}`;
 }
 
+/**
+ * First real instant of a local calendar day. Some zones skip midnight on a DST day
+ * (the clock jumps 00:00 -> 01:00), so a plain "T00:00:00" can fail; try later times instead.
+ */
+function startOfLocalDay(date: string, timeZone: string): Date {
+  for (const time of ['00:00', '00:30', '01:00', '01:30', '02:00', '03:00']) {
+    try {
+      return localDateTimeToUtc(`${date}T${time}:00`, timeZone);
+    } catch (error) {
+      if (!(error instanceof BadRequestException)) throw error;
+    }
+  }
+  throw new BadRequestException(`Cannot determine the start of ${date} in ${timeZone}`);
+}
+
 export function localDateBounds(date: string, timeZone: string): { start: Date; end: Date } {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new BadRequestException('Date must use YYYY-MM-DD');
   const [year, month, day] = date.split('-').map(Number);
@@ -56,5 +71,5 @@ export function localDateBounds(date: string, timeZone: string): { start: Date; 
   if (check.getUTCFullYear() !== year || check.getUTCMonth() + 1 !== month || check.getUTCDate() !== day) throw new BadRequestException('Invalid date');
   const next = new Date(Date.UTC(year, month - 1, day + 1));
   const nextDate = `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, '0')}-${String(next.getUTCDate()).padStart(2, '0')}`;
-  return { start: localDateTimeToUtc(`${date}T00:00:00`, timeZone), end: localDateTimeToUtc(`${nextDate}T00:00:00`, timeZone) };
+  return { start: startOfLocalDay(date, timeZone), end: startOfLocalDay(nextDate, timeZone) };
 }
