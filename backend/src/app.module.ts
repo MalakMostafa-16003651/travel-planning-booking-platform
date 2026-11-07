@@ -38,7 +38,7 @@ import { HotelsModule } from './hotels/hotels.module';
     FlightsModule,
     ItinerariesModule,
     FlightsModule,
-        HotelsModule,
+     HotelsModule,
     AuditLogsModule,
   ],
 })
