@@ -203,7 +203,7 @@ Each owner connects these on their own side; Person 6 does not edit their module
 | 1 | `feature/HTL-20-hotel-booking-records` | Schema, own list/detail, `listForHotel`, `listForAdmin`, `hasUpcomingConfirmedBookings`, completion sweep. | Upcoming/Past grouping and the sweep wait for L2. |
 | 2 | `feature/HTL-23-hotel-reviews` | Reviews, public list with average/count, moderation and rating-stat exports. | PR 1. |
 | A | `feature/HTL-20-booking-groups` | UTC today helper, UPCOMING/PAST groups, CONFIRMED to COMPLETED sweep, `hasUpcomingConfirmedBookings` (ACC-12). | L2 (decided 2026-11-08). |
-| B | `fix/HTL-22-reservations-port-shape` | `listForHotel` returns Lama's exact port shape, one item per room. | L6 (decided 2026-11-08). |
+| B | `fix/HTL-22-reservations-port-shape` | **Dropped 2026-11-08, never opened.** Superseded by the team leader's approved and merged L6 (PR #55): `listForHotel` keeps its reservation shape and Malak's adapter in `HotelsModule` maps it. The branch was deleted. | — |
 | 3 | `feature/HTL-16-hotel-booking` | `POST /api/hotel-bookings` with transactional holds, expired-hold cleanup, expiry sweep and concurrency tests. | L1-L3 and L2 decided 2026-11-08. |
 | 4 | `feature/HTL-17-hotel-booking-payment` | Payment integration, confirmation, notification, expiry. | O1-O3 agreed and Omar's hotel support merged. |
 | 5 | `feature/HTL-21-hotel-booking-cancel` | Quote, cancel, room release, refund, notification. | O4-O6 agreed and merged. |
