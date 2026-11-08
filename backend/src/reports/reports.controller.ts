@@ -20,7 +20,7 @@ export class ReportsController {
   @ApiCookieAuth('accessToken')
   @ApiOperation({
     summary: 'GEN-09: report a post, comment, review or itinerary',
-    description: 'Registered users only. A reason is required (5–500 characters). Each user can report a particular item at most once. Reviews and itineraries return 400 until their modules support hiding.',
+    description: 'Registered users only. A reason is required (5–500 characters). Each user can report a particular item at most once. Itineraries return 400 until their module supports hiding.',
   })
   @ApiCreatedResponse({ type: ReportDto })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'Invalid fields, or a content type not supported yet.' })

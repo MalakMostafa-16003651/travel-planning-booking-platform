@@ -3,6 +3,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 import { AuthModule } from '../auth/auth.module';
 import { BlogModule } from '../blog/blog.module';
+import { ReviewsModule } from '../reviews/reviews.module';
 import { UsersModule } from '../users/users.module';
 import { AdminReportsController } from './admin-reports.controller';
 import { ContentModerationService } from './content-moderation.service';
@@ -18,6 +19,8 @@ import { Report, ReportSchema } from './schemas/report.schema';
     AuditLogsModule,
     // Person 8's exported hide/delete/exists operations for posts and comments.
     BlogModule,
+    // Person 6's exported hide/delete/exists operations for hotel reviews.
+    ReviewsModule,
     MongooseModule.forFeature([{ name: Report.name, schema: ReportSchema }]),
   ],
   controllers: [ReportsController, AdminReportsController],

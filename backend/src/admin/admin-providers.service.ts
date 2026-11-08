@@ -99,14 +99,13 @@ export class AdminProvidersService {
   }
 
   /**
-   * Read-only: users whose flight booking with this airline is Confirmed (Person 4's
-   * flightbookings collection, segments[].airlineId). Hotel reservations are added when
-   * Person 6's hotel-booking module is merged; until then hotels notify moderators only.
+   * Read-only: users with a Confirmed booking with this provider. Flights use Person 4's
+   * flightbookings (segments[].airlineId); hotels use Person 6's hotelbookings (hotelId).
    */
   private async confirmedCustomerIds(type: ProviderType, providerId: Types.ObjectId): Promise<string[]> {
-    if (type !== 'airline') return [];
-    const userIds: Types.ObjectId[] = await this.connection.collection('flightbookings')
-      .distinct('userId', { status: BookingStatus.CONFIRMED, 'segments.airlineId': providerId });
+    const userIds: Types.ObjectId[] = type === 'airline'
+      ? await this.connection.collection('flightbookings').distinct('userId', { status: BookingStatus.CONFIRMED, 'segments.airlineId': providerId })
+      : await this.connection.collection('hotelbookings').distinct('userId', { status: BookingStatus.CONFIRMED, hotelId: providerId });
     return unique(userIds.map((id) => id.toString()));
   }
 }

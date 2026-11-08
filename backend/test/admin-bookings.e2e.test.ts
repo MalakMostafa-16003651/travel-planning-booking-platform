@@ -82,9 +82,48 @@ describe('ACC-17 admin bookings view', { concurrency: false }, () => {
     assert.equal((await list('?page=2').expect(200)).body.items.length, 2);
   });
 
-  it('ACC-17: hotel bookings report as not available yet', async () => {
-    const response = await list('?type=HOTEL').expect(503);
-    assert.match(response.body.message, /not available yet/);
+  it("ACC-17: lists hotel reservations through Person 6's listForAdmin, filtered by status and check-in date", async () => {
+    const hotelId = new Types.ObjectId();
+    const reservation = (fields: { status: string; checkIn: string; checkOut: string; reference?: string }) => ({
+      userId: new Types.ObjectId(nour.userId),
+      hotelId,
+      hotelName: 'Cataract Hotel',
+      rooms: [{ roomId: new Types.ObjectId(), roomName: 'Nile View Double', adults: 2, childrenAges: [] }],
+      checkIn: fields.checkIn,
+      checkOut: fields.checkOut,
+      nights: 2,
+      totalPrice: 9000,
+      currency: 'EGP',
+      status: fields.status,
+      bookingReference: fields.reference,
+    });
+    await collection('hotelbookings').insertMany([
+      reservation({ status: 'CONFIRMED', checkIn: '2026-12-10', checkOut: '2026-12-12', reference: 'H7K2M9QX' }),
+      reservation({ status: 'CANCELLED', checkIn: '2026-12-20', checkOut: '2026-12-22', reference: 'H8L3N4PY' }),
+    ]);
+    await addBooking({ status: 'CONFIRMED', departureAt: '2026-12-10T08:00:00Z', reference: 'FLIGHT1' });
+
+    const all = await list('?type=HOTEL').expect(200);
+    assert.equal(all.body.total, 2);
+    const confirmed = all.body.items.find((item: { bookingReference: string }) => item.bookingReference === 'H7K2M9QX');
+    assert.equal(confirmed.type, 'HOTEL');
+    assert.equal(confirmed.userName, 'Nour Explorer');
+    assert.equal(confirmed.userEmail, 'nour@example.com');
+    assert.equal(confirmed.providerId, hotelId.toString());
+    assert.equal(confirmed.providerName, 'Cataract Hotel');
+    assert.equal(confirmed.startDate, '2026-12-10T00:00:00.000Z');
+    assert.equal(confirmed.endDate, '2026-12-12T00:00:00.000Z');
+    assert.equal(confirmed.totalAmount, 9000);
+    assert.equal(confirmed.status, 'CONFIRMED');
+
+    const references = async (query: string) =>
+      (await list(query).expect(200)).body.items.map((item: { bookingReference: string }) => item.bookingReference).sort();
+    assert.deepEqual(await references('?type=HOTEL&status=CANCELLED'), ['H8L3N4PY']);
+    // ISO date-times are reduced to the check-in calendar date Person 6 filters on.
+    assert.deepEqual(await references('?type=HOTEL&from=2026-12-15T09:30:00Z'), ['H8L3N4PY']);
+    assert.deepEqual(await references('?type=HOTEL&to=2026-12-10'), ['H7K2M9QX']);
+    // The default type stays FLIGHT.
+    assert.deepEqual(await references(''), ['FLIGHT1']);
   });
 
   it('ACC-17/GEN-13: rejects invalid filters', async () => {
