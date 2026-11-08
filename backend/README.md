@@ -353,10 +353,13 @@ For a manual Swagger check: log in, create an itinerary, add days in Cairo, Cair
 `backend/src/hotels` implements HTL-01/HTL-02 (hotel profiles), HTL-03/
 HTL-05/HTL-06 (rooms), HTL-04/HTL-05/HTL-06/HTL-08 (room availability),
 HTL-09/HTL-10 (policies), HTL-11/HTL-12/HTL-15 (search), and HTL-22
-(moderator reservations, stubbed), per the
+(moderator reservations connected through ACC-11), per the
 [hotel contract proposal](../docs/requirements/hotel-contract-proposal.md).
-The reservations endpoint remains behind a pending adapter until
-Person 6's hotel-bookings module exists.
+The reservations endpoint reuses Person 6's HotelBookingsService through
+HotelBookingsReservationsAdapter. Assignment checks run before the read query;
+the approved response contains rooms[], guestCount and bookingReference, with
+existing totals and pagination. This read integration does not implement holds,
+payment confirmation, cancellation or account-deactivation eligibility.
 
 | Method | Endpoint | Who | Result |
 | --- | --- | --- | --- |
@@ -372,7 +375,7 @@ Person 6's hotel-bookings module exists.
 | PUT | `/api/hotels/:id/policies` | assigned HOTEL_MODERATOR | Update `checkInTime`/`checkOutTime` (`HH:mm`), `cancellationTiers`, or both. Tiers are stored sorted by `daysBeforeCheckIn` descending; duplicate thresholds are rejected, the same rule `AirlinesService.updatePoliciesMine` uses for `cancellationTiers`. |
 | GET | `/api/hotels/search` | anyone | `city` (resolved through `ReferenceDataService`), optional `countryCode`, `checkIn`/`checkOut`, `guests`, optional `rooms`/`minPrice`/`maxPrice`/`sort`/`page`. Field names match `ItineraryHotelSearch` in `itineraries/ports/travel-search.port.ts` exactly, so Person 7's eventual adapter is a direct pass-through. Only active hotels with at least `rooms` unblocked rooms whose combined capacity (best `rooms` by capacity) covers `guests` are returned, page size 10. Exact room assignment stays a booking-time concern. |
 | GET | `/api/hotels/:id/rooms/available` | anyone | `checkIn`/`checkOut`, optional `guests`. Individual rooms (not a hotel-level summary) with no blocked/booked overlap for the stay and (if `guests` given) enough capacity, cheapest first. |
-| GET | `/api/hotels/:id/reservations` | assigned HOTEL_MODERATOR | Ownership is checked first (404/403, same as every other moderator route); the actual listing is 503 until Person 6's hotel-bookings module exists. `HotelReservationsPort`/`PendingHotelReservationsAdapter` in `backend/src/hotels/ports` and `adapters` mirror the itineraries module's pending search adapters — swap the adapter binding in `HotelsModule` once that module lands. |
+| GET | `/api/hotels/:id/reservations` | assigned HOTEL_MODERATOR | Ownership is checked before the real HotelBookingsService query (404/403 for another/missing assignment). Returns guest name when available, rooms[], guestCount, bookingReference, dates, status and frozen totalAmount in minor units; ten per page. Payment/policy/private profile details are excluded. |
 
 Both search endpoints use the same half-open overlap check as `RoomAvailability`: a block/booking ending on a date does not conflict with a stay starting that same date.
 
@@ -403,3 +406,28 @@ UsersService.getAccountStatuses and getDisplayNames replace the temporary itiner
 Budget summary uses the signed-in user's current preferred currency unless overridden; guests use itinerary currency. Rates refresh daily; outages use the last cached rates with their date and stale flag. JPG/PNG are the supported image formats.
 
 ITN-25 hotel criteria now include guests and rooms. ITN-26 takes departureAirportCode and optional roundTrip/departureDate/returnDate, resolving destination airports from the first itinerary city, with default outbound/return dates from the itinerary. The live Flights/Hotels adapters still return 503 pending owner integration. The full corrected contracts are in docs/requirements/itinerary-contract-proposal.md; coordinate their port mappings with Gamila and Lama.
+
+
+## ACC-11 booking access
+
+GET `/api/flights/:flightId/bookings` reuses FlightBookingsService.listBookingsForFlight after checking the authenticated AIRLINE_MODERATOR's assigned airline. Returns safe booking references, passenger names, cabin, seat count and status, ten per page. Reads are available for past/cancelled flights without changing flight status. Passport/document numbers, birth dates and payment details are excluded. Remaining seats per category and CSV export are still separate FLT-29 work.
+
+Both provider routes use the shared cookie AuthGuard and RolesGuard, authoritative ModeratorAssignment records, validated pagination and Cache-Control: no-store. Ordinary users keep their own /api/flight-bookings and /api/hotel-bookings views. Admins inspect bookings through /api/admin/bookings?type=FLIGHT or type=HOTEL. Private itineraries remain owner-only, including against admins/moderators. Cross-module regressions are in test/acc11-booking-access.e2e.test.ts.
+
+
+## ACC-07 bonus: forgotten-password recovery
+
+POST /api/auth/forgot-password with {"email":"your-test-inbox-address"} returns202 and the same generic message for eligible, unknown, inactive and silently rate-limited emails. Account lookup and delivery run asynchronously; the response does not confirm account existence or delivery. POST /api/auth/reset-password with {"token":"token-from-email-fragment","newPassword":"a-new-compliant-password"} returns204 on success. Both routes are public with the existing same-origin write protection and no-store headers. Swagger documents validation, expiry and error responses.
+
+Only the latest accepted link works; it expires30minutes after the request and is single-use. Password replacement uses the shared registration policy/hasher and atomically consumes the proof with its credentialVersion update. Old normal/restricted sessions stop working, cookies are cleared, and a fresh login is required. Password requests do not unlock/suspend/reactivate/promote accounts.
+
+For a manual M1 development-inbox check:
+
+1. Create/use a development SMTP test inbox and an application account using an address you control in that test setup.
+2. Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS and SMTP_FROM locally in the ignored root .env. Configure all five together. Typical ports are587 (required STARTTLS) or465 (implicit TLS). Do not use your Atlas database credentials for SMTP.
+3. Set PASSWORD_RESET_URL to the trusted reset-page URL. HTTPS is required except loopback HTTP for local development. The backend does not implement the M2 page. For an M1 API demo, read the link from the test inbox and copy only its #token=... value into the reset-password JSON body in Swagger.
+4. Restart the backend, request a reset, inspect the development inbox, submit a compliant new password and log in again. Verify old password/session and reused/older links are rejected. Never paste real reset links/passwords into chats, GitHub or workflow logs.
+
+All SMTP values and PASSWORD_RESET_URL may be blank to leave recovery disabled; existing mandatory auth still runs. Recovery request then returns503 uniformly. No raw token or delivery status is returned by the API. Request limits:20/IP and5/email per15minutes (silently202); reset attempts20/IP per15minutes (then429). Private TTL records contain hashes/HMAC keys, not plaintext email/IP/token. Queue capacity is bounded; delivery is in-process, not durable across restart. Retry with a new request after an interrupted delivery.
+
+MailModule exports MailService for coordinated reuse; this feature does not implement ACC-02 verification, GEN-01-B email notifications or ACC-12 account deactivation. The shared response/naming decisions are recorded in the authentication contract and docs/work-logs/16003651.md.

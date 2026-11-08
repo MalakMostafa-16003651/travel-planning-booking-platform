@@ -56,6 +56,7 @@ describe('merged production module integration', { concurrency: false }, () => {
       MONGODB_URI: replicaSet.getUri('merged-app-integration'),
       JWT_SECRET: randomBytes(48).toString('hex'),
       PORT: '3000', STRIPE_SECRET_KEY: '', STRIPE_WEBHOOK_SECRET: '', FXRATES_API_KEY: '',
+      SMTP_HOST: '', SMTP_PORT: '', SMTP_USER: '', SMTP_PASS: '', SMTP_FROM: '', PASSWORD_RESET_URL: '',
     };
     for (const [key, value] of Object.entries(environment)) {
       previousEnvironment.set(key, process.env[key]);
@@ -93,13 +94,21 @@ describe('merged production module integration', { concurrency: false }, () => {
 
   it('starts the real module graph and exposes every merged domain in Swagger', async () => {
     const document = (await request(app.getHttpServer()).get('/api/docs-json').expect(200)).body;
-    for (const path of ['/api/auth/login', '/api/users/me', '/api/admin/audit-logs', '/api/payments',
+    for (const path of ['/api/auth/login', '/api/auth/forgot-password', '/api/auth/reset-password', '/api/users/me', '/api/admin/audit-logs', '/api/payments',
       '/api/payments/webhook', '/api/refunds/{id}', '/api/posts', '/api/itineraries',
       '/api/flight-bookings/hold', '/api/flights/search', '/api/hotels/search', '/api/currencies', '/api/countries']) {
       assert.ok(document.paths[path], `Missing production route ${path}`);
     }
     assert.equal(document.paths['/api/admin/audit-logs'].post, undefined);
     assert.ok(document.paths['/api/payments/webhook'].post);
+  });
+
+  it('keeps optional password recovery disabled uniformly in the real module graph', async () => {
+    const server = app.getHttpServer();
+    const known = await request(server).post('/api/auth/forgot-password').send({ email: 'root-user@example.com' }).expect(503);
+    const unknown = await request(server).post('/api/auth/forgot-password').send({ email: 'unknown@example.com' }).expect(503);
+    assert.deepEqual(known.body, unknown.body);
+    assert.equal(await connection.collection('passwordresets').countDocuments({}), 0);
   });
 
   it('lets an importing admin module use the same shared password hasher', async () => {

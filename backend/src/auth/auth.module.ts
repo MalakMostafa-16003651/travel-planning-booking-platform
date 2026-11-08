@@ -1,3 +1,7 @@
+import { MailModule } from '../mail/mail.module';
+import { PasswordRecoveryService } from './password-recovery.service';
+import { PasswordReset, PasswordResetSchema } from './schemas/password-reset.schema';
+import { PasswordRecoveryLimit, PasswordRecoveryLimitSchema } from './schemas/password-recovery-limit.schema';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
@@ -19,8 +23,9 @@ import { AuthSession, AuthSessionSchema } from './schemas/auth-session.schema';
 @Module({
   imports: [
     UsersModule,
+    MailModule,
     ConfigModule,
-    MongooseModule.forFeature([{ name: AuthSession.name, schema: AuthSessionSchema }]),
+    MongooseModule.forFeature([{ name: AuthSession.name, schema: AuthSessionSchema }, { name: PasswordReset.name, schema: PasswordResetSchema }, { name: PasswordRecoveryLimit.name, schema: PasswordRecoveryLimitSchema }]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -42,7 +47,7 @@ import { AuthSession, AuthSessionSchema } from './schemas/auth-session.schema';
   // This module composes Person 1's guarded HTTP controllers; UsersModule stays
   // persistence-only, avoiding a UsersModule -> AuthModule dependency cycle.
   controllers: [AuthController, AdminUsersController, UsersController],
-  providers: [AuthService, PasswordService, AuthSessionsService, AuthGuard, RolesGuard, PasswordChangeGuard, PasswordManagementService],
+  providers: [PasswordRecoveryService, AuthService, PasswordService, AuthSessionsService, AuthGuard, RolesGuard, PasswordChangeGuard, PasswordManagementService],
   // Nest creates guard instances in consuming modules, so their injected dependency
   // must also be available there. This exports a provider, not an HTTP endpoint.
   exports: [AuthGuard, AuthSessionsService, RolesGuard, PasswordService],

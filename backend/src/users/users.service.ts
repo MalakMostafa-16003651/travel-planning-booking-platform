@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, OnModuleInit, UnauthorizedException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { ClientSession, Model, Types } from 'mongoose';
 import { FAILED_LOGIN_LIMIT, LOGIN_LOCKOUT_MS } from '../auth/auth.constants';
 import { AccountStatus } from '../common/enums/account-status.enum';
 import { UserRole } from '../common/enums/user-role.enum';
@@ -208,6 +208,7 @@ export class UsersService implements OnModuleInit {
     expectedVersion: number,
     newHash: string,
     expectedMustChangePassword: boolean,
+    session?: ClientSession,
   ): Promise<boolean> {
     if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0 || expectedVersion >= Number.MAX_SAFE_INTEGER) {
       return false;
@@ -235,7 +236,7 @@ export class UsersService implements OnModuleInit {
           updatedAt: '$$NOW',
         },
       }],
-      { updatePipeline: true, timestamps: false, upsert: false },
+      { updatePipeline: true, timestamps: false, upsert: false, session },
     ).exec();
     return result.matchedCount === 1;
   }

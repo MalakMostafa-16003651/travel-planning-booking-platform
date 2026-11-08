@@ -1,3 +1,6 @@
+import { Header } from '@nestjs/common';
+import { ApiOkResponse } from '@nestjs/swagger';
+import { FlightIdParamsDto, ModeratorFlightBookingsQueryDto, ModeratorFlightBookingsPageDto } from './dto/moderator-flight-bookings.dto';
 import { Body,Controller,Param, Patch,Post,Req,UseGuards} from '@nestjs/common';
 
 import { ApiBadRequestResponse,ApiConflictResponse,ApiCookieAuth,ApiCreatedResponse,ApiForbiddenResponse,ApiInternalServerErrorResponse,ApiNotFoundResponse,ApiOperation,ApiTags,ApiUnauthorizedResponse,} from '@nestjs/swagger';
@@ -37,6 +40,18 @@ export class FlightsController {
   constructor(
     private readonly flights: FlightsService,
   ) {}
+
+  @Get(':flightId/bookings')
+  @Header('Cache-Control', 'no-store')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(UserRole.AIRLINE_MODERATOR)
+  @ApiCookieAuth('accessToken')
+  @ApiOperation({ summary: 'ACC-11/FLT-29: view bookings for a flight of your assigned airline', description: 'Read-only, ten per page. Includes references, passenger names, cabin, seats and status; excludes passport/ID numbers, birth dates and payment details. Admins use /api/admin/bookings.' })
+  @ApiOkResponse({ type: ModeratorFlightBookingsPageDto })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'Flight unknown or belongs to a different airline.' })
+  listBookings(@Req() req: AuthenticatedRequest, @Param() params: FlightIdParamsDto, @Query() query: ModeratorFlightBookingsQueryDto) {
+    return this.flights.listOwnFlightBookings(req.user!.userId, params.flightId, query.page ?? 1);
+  }
 
   // FLT-03: Create flight.
 
