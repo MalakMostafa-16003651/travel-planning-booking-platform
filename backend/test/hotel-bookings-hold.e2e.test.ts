@@ -137,6 +137,9 @@ describe('HTL-16/HTL-18 hotel booking holds', { concurrency: false }, () => {
   it('HTL-16: a single room with only adults, and a check-in today, is accepted', async () => {
     const response = await post(request({ checkIn: TODAY, checkOut: '2026-11-16', rooms: [{ roomId: twin, adults: 2, childrenAges: [] }] }), alice).expect(201);
     assert.deepEqual([response.body.nights, response.body.totalPrice, response.body.guestCount], [1, 9000, 2]);
+    // One adult per reservation is enough: another room may hold only a child (it still has a guest).
+    const mixed = await post(request({ checkIn: '2026-12-01', checkOut: '2026-12-02', rooms: [{ roomId: deluxe, adults: 1, childrenAges: [] }, { roomId: twin, adults: 0, childrenAges: [12] }] }), alice).expect(201);
+    assert.equal(mixed.body.guestCount, 2);
   });
 
   it('GEN-13: rejects each validation error with 400 and holds nothing', async () => {
@@ -150,6 +153,7 @@ describe('HTL-16/HTL-18 hotel booking holds', { concurrency: false }, () => {
       ['date with a time', { checkIn: '2026-12-20T10:00:00Z' }, 'checkIn'],
       ['missing dates', { checkIn: undefined, checkOut: undefined }, 'checkIn'],
       ['the same room twice', { rooms: [{ roomId: twin, adults: 1, childrenAges: [] }, { roomId: twin, adults: 1, childrenAges: [] }] }, 'rooms'],
+      ['a room with no guests', { rooms: [{ roomId: deluxe, adults: 2, childrenAges: [] }, { roomId: twin, adults: 0, childrenAges: [] }] }, 'rooms.1'],
       ['no adult in the reservation', { rooms: [{ roomId: deluxe, adults: 0, childrenAges: [5] }, { roomId: twin, adults: 0, childrenAges: [9] }] }, 'rooms'],
       ['child aged 18', one({ childrenAges: [18] }), 'rooms.0.childrenAges'],
       ['negative child age', one({ childrenAges: [-1] }), 'rooms.0.childrenAges'],

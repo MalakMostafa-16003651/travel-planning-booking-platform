@@ -88,6 +88,10 @@ export class HotelBookingsService {
     const roomIds = input.rooms.map((room) => room.roomId.toLowerCase());
     if (new Set(roomIds).size !== roomIds.length) fail('rooms', 'Each room can be selected only once');
     if (input.rooms.reduce((sum, room) => sum + room.adults, 0) < 1) fail('rooms', 'At least one adult is required');
+    // HTL-16 assigns guests to each room, so every selected room needs at least one guest.
+    input.rooms.forEach((room, index) => {
+      if (room.adults + room.childrenAges.length < 1) fail(`rooms.${index}`, 'Each room needs at least one guest');
+    });
     if (Object.keys(errors).length > 0) throw new BadRequestException({ message: 'Validation failed', errors });
 
     // 404, like flight bookings ("Flight or cabin not found") and the hotel detail: an unknown or
