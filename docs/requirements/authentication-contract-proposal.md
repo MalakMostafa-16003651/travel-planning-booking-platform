@@ -316,3 +316,6 @@ Configure secrets only in ignored .env; commit only .env.example. Keep password-
 References checked for this implementation: [OWASP Forgot Password Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Forgot_Password_Cheat_Sheet.html), [Nodemailer SMTP](https://nodemailer.com/smtp), [Mongoose transactions](https://mongoosejs.com/docs/transactions.html). Final executed test evidence is recorded in the single student log. Feature is prepared on the existing session branch, awaiting review/merge.
 
 Final ACC-07 check: production build/test compilation PASS; complete isolated suite527/527 PASS,60 suites (847929.7181ms), source c6410b0. Real inbox delivery remains a separate manual setup check. The future reset page must follow the already-agreed same-origin frontend/API deployment and CSRF policy.
+
+
+Session publication (2026-11-08): [PR55](https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/pull/55) contains the approved ACC-11 integration and ACC-07 backend. The team leader requested merging the saved edits. Use the PR record for the final merge state; tests/setup limits remain as documented. Before merging Osama's separate fix/HTL-22-reservations-port-shape branch, reconcile its per-room roomId/guests output with this approved rooms[]/guestCount/bookingReference contract.

@@ -191,3 +191,6 @@ written; no changes requested to that port.
 | 3 | Room type: free text or an enum? | Team | Free text; the workbook does not define a fixed room-type list. |
 | 4 | Who flips `Hotel.isActive`? | Person 2 | Admin endpoint writes the field directly, same as the (also unbuilt) Airline equivalent; Hotels only enforces it. |
 | 5 | `AI_PROMPTS.txt` vs `docs/work-logs/`: same open team question as the other contracts. | Team leader | Follow whatever the TA confirms for the rest of the team. |
+
+
+Session publication (2026-11-08): [PR55](https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/pull/55) contains the approved ACC-11 integration and ACC-07 backend. The team leader requested merging the saved edits. Use the PR record for the final merge state; tests/setup limits remain as documented. Before merging Osama's separate fix/HTL-22-reservations-port-shape branch, reconcile its per-room roomId/guests output with this approved rooms[]/guestCount/bookingReference contract.
