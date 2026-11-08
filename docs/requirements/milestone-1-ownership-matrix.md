@@ -1,6 +1,6 @@
 # Milestone 1 requirement ownership and integration audit
 
-Audit started 2026-11-07 at develop `30f5ac2`. Latest merged baseline: origin/develop `490b20a` (including PR #40); main: `afaf8b1`. The review branch carries the prepared fixes and the dated checkpoints below. This is project requirements documentation. AI prompts and chronological work remain in the single student log, [16003651.md](../work-logs/16003651.md).
+Audit started 2026-11-07 at develop `30f5ac2`. Latest merged baseline: origin/develop `8c1e032` (including the merged admin/hotel work through PR #53); main: `afaf8b1`. The review branch carries the prepared fixes and the dated checkpoints below. This is project requirements documentation. AI prompts and chronological work remain in the single student log, [16003651.md](../work-logs/16003651.md).
 
 Follow-up: merged develop `79415ff` includes PRs #37 (admin contract proposal), #38 (payment winner/policy fixes) and #39 (audit-log foundation). The statuses below also incorporate the subsequent notifications merge #40 at 490b20a; the dated checkpoints distinguish the tested snapshots. Additional audit-date validation, refund-retry recovery and the shared PasswordService export are prepared on `fix/GEN-13-merged-integration-review`; they are not merged features yet. Earlier test results below remain historical evidence for their stated snapshots; current verification is recorded in the student log.
 
@@ -281,6 +281,40 @@ These checks are a remaining integration plan, not claimed executed tests for ab
 7. Complete ACC-11 integration and ACC-12 only after agreed real booking checks/shared ordering; unavailable dependencies do not mean no bookings.
 
 No new shared enum/schema/field or business implementation is adopted by this audit. The account-gate proposal previously sent to Ismail/Osama remains awaiting their replies. CredentialVersion is not repurposed for ordinary bookings. Refresh-token renewal is an explicitly deferred design item; the workbook does not define a new refresh-endpoint requirement ID.
+
+## Latest checkpoint - merged hotel/admin work at 8c1e032
+
+Fresh verification: production build/test compilation PASS; **490/490 tests PASS**, 58 suites, zero failures/cancellations/skips, 953375.925ms. No application source was changed. The separately reproduced audit recovery defect remains open.
+
+Review requested after PRs #42-46 and #48-53 merged into develop. PR #41 is already merged. This checkpoint supersedes earlier missing-module/status statements: administration, hotel booking READ records, reviews and review moderation now exist. Hotel hold/confirm/cancel/completion and ACC-12 eligibility do not. Exact original requirement text remains preserved above; dated evidence in the continuous student log records the actual test outcome.
+
+| Owner | Newly merged progress | Remaining mandatory work / next handoff |
+| --- | --- | --- |
+| Malak | Shared guards/hash/profile foundations; admin hotel inspection now consumes real records. | ACC-11 can advance now with cross-module access tests and provider-view handoffs, but Gamila FLT-29 and Lama HTL-22 remain. ACC-12 still needs Osama's eligibility/time rule and agreed ordering with both booking confirmations; do not implement a check-then-deactivate race. Existing password-reset audit producer remains pending. |
+| Arwa | ACC-13 moderator+assignment/temporary-password flow; ACC-14-16 accounts/provider management; ACC-17 flight and hotel views; GEN-09/10 post/comment/review reporting/moderation; provider recipient queries. | Fix audit-after-mutation recovery (reproduced below). Coordinate Kiki's itinerary moderation; clarify whether omitted booking type should combine both types (currently defaults FLIGHT). Update log after ACC-17/reports/hotel integration. |
+| Gamila | No new module change in this merge batch. | FLT-29 assigned-airline booking/passenger CSV route, server-stored airline logo, schedule notifications, real cancellation/refund integration and same-day itinerary round-trip contract. Coordinate provider-creation auditing. Student log still missing. |
+| Ismail | Read-only admin booking query now has a production caller. | Production BOOKING_PAYMENTS/BOOKING_NOTIFICATIONS still pending adapters; cancellation deadline race remains; provider view/refund status and ACC-12 transaction-aware future-leg eligibility/confirmation ordering remain. Student log still missing. |
+| Lama | Hotel reservation/rating helpers now available from Osama. | Connect HTL-22 (still503) and rating stats; agree Osama L1-L8, especially positive bookable ranges/time-zone/expired holds/multi-room port. Earlier hotel/room fields, strict date/capacity-price/pagination/media/Swagger gaps remain. No Lama changes were merged in this batch. |
+| Osama (16005523) | PR50 contract/log; PR51 HotelBooking schema, own read list/detail and provider/admin queries; PR52 reviews/ratings/moderation and Deleted-user display. | HTL-16/18 real reservation creation, all-or-nothing holds/expiry; HTL-17 confirmation/payment/notification; HTL-21 cancellation/refunds; UPCOMING/PAST/completion and ACC-12 hotel eligibility. L2 time-zone/today is explicitly open. Reviews currently require records already COMPLETED; no real completion sweep exists yet. Update stale contract opening saying no code exists. |
+| Kiki | No new module change in this merge batch. | Real ITN-25/26 search bindings, public-author itinerary query for BLG-12, itinerary moderation interfaces and attraction reference coordination remain. Update older log checkpoint. |
+| Hicham/Omar | PR48 fixes the diagnosed likes/comments ordering and deletion-vs-child-write races; PR49 emits stored refund outcome notifications. | Hotel payments adapter still returns null/false; agree/implement Osama payment/expiry/refund interfaces. Coordinate real flight reverse bindings/refund status; author itineraries await Kiki. Broader uncertain-refund ordering/durable notification recovery need separate design; real Stripe test-mode demo remains unverified here. |
+
+### ACC-11 and ACC-12 readiness
+
+ACC-11 is materially closer: own hotel booking reads enforce userId; admins can inspect both types using the type filter; review moderation reuses owner exports. Provider assignment schema now exists. Remaining provider endpoints are not provided by a model/guard alone: HTL-22 still binds PendingHotelReservationsAdapter and FLT-29 has no production controller route. Person1 can work on boundary verification and coordinate those existing query bindings now, without changing a teammate's contract silently.
+
+ACC-12 cannot be completed safely from the merged contracts yet. HotelBookingsService has no hasUpcomingConfirmedBookings/completion/confirmation methods; contract L2 and M1 remain open. Flight hasUpcomingConfirmedBookings(userId) has no session/now arguments and confirmInSession never checks/serializes with User status. A separate preliminary lookup does not prevent a simultaneous confirmed booking. The agreed solution must cover future return departures, ongoing hotel stays, both confirmation paths, session invalidation and late-payment outcome. Do not repurpose credentialVersion or assume __v (User disables it), and do not interpret a missing checker as no bookings.
+
+### New findings and scope limits
+
+- **Arwa, GEN-07/P2 audit recovery:** actual compiled AdminAccountsService with a simulated audit-store failure commits SUSPENDED, throws500, then retry throws409; no audit/notification is created. Provider/moderator/report flows also write the audit after the domain mutation. Use agreed atomic/recoverable action+audit handling; a green ordinary-flow test does not cover this failure. The concrete probe uses the actual service with stub persistence, no Atlas or live HTTP claim.
+- **Arwa, ACC-17 contract clarification:** actual compiled default list calls the flight query once and the hotel query zero times; type=HOTEL works. Decide whether the official all-bookings list requires a combined default and shared pagination. This is documented behavior, not an unauthorized data-access finding.
+- **Notifications:** refund completion/failure now writes to Arwa's inbox. Its delivery failure is deliberately nonfatal and logged, with no durable retry; do not claim eventual delivery after an outage. Booking confirmation/cancellation production notification adapter is still a logger, despite the refund PR saying those notifications already come from Ismail.
+- **Hotel review read-side:** public/owner/admin visibility and computed rating stats exist. They do not implement completing a real stay or making a reservation.
+
+Six continuous student logs are now tracked: Malak, Arwa, Lama, Kiki, Hicham and Osama. Gamila/Ismail remain absent in repository records. Arwa's checkpoint covers through moderator creation and still needs later admin/report/hotel entries; Osama records the two implemented slices and their explicit blockers. Missing/stale logs are not silently fabricated by the reviewer.
+
+No teammate source was changed in this review. No ACC-11/12 implementation, shared schema/enum change, bonus, live Atlas mutation or real Stripe payment was performed. Build/full-suite results and exact snapshots are in [Malak's single log](../work-logs/16003651.md).
 
 ## Team checkpoint - 2026-11-08
 
