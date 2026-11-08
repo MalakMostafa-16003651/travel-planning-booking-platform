@@ -229,7 +229,7 @@ export class ItinerariesController {
   @Get(':id/hotels')
   @UseGuards(OptionalAuthGuard)
   @ApiCookieAuth('accessToken')
-  @ApiOperation({ summary: 'ITN-25: search hotels for a city stop', description: 'Derives city, check-in and check-out from the stop containing dayId, then reuses the Hotels module search (HTL-11, HTL-12, GET /api/hotels/search). Returns 503 until the Hotels module is available.' })
+  @ApiOperation({ summary: 'ITN-25: search hotels for a city stop', description: 'Derives city, check-in and check-out from the stop containing dayId, then reuses the Hotels module search (HTL-11, HTL-12, GET /api/hotels/search) and returns its result page.' })
   @ApiOkResponse({ description: '{ itineraryId, criteria, results } where results come from hotel search.' })
   @ApiBadRequestResponse({ type: ApiErrorDto })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: READ_NOT_FOUND_DOC })
