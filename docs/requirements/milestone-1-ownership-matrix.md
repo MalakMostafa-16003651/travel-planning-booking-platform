@@ -308,7 +308,7 @@ Each owner should report exact remaining IDs, blockers, branch and next review d
 
 ### Person1 bonus option
 
-ACC-07 (secure emailed forgotten-password reset) is the most independent Person1 bonus to plan next: generic response, expiring single-use reset token, invalidation by a newer request and a compliant replacement password. It still needs an agreed mail-delivery integration and new environment-variable names/fields approved before coding. ACC-02 email verification also exists, but enforcing it affects flight/hotel booking gates and needs those owners. Neither bonus is implemented or bundled with ACC-11 by this instruction. Finish/review ACC-11 first.
+ACC-07 (secure emailed forgotten-password reset) is the most independent Person1 bonus to plan next: generic response, expiring single-use reset token, invalidation by a newer request and a compliant replacement password. It still needs an agreed mail-delivery integration and new environment-variable names/fields approved before coding. ACC-02 email verification also exists, but enforcing it affects flight/hotel booking gates and needs those owners. ACC-07 was subsequently requested and its configuration/design explicitly approved by Malak on2026-11-08; its M1 backend is now implemented on the same session branch. See the authentication contract and student log for verification/setup limits. ACC-02 remains unimplemented.
 
 ### Atlas IP access answer
 
@@ -410,7 +410,7 @@ All eleven workbook bonuses are listed below and remain optional. Proposed owner
 | ID and source | Complete official bonus requirement | Proposed lead / collaboration |
 | --- | --- | --- |
 | ACC-02 - Bonus!D2 | The system shall send a verification link by email after registration and block booking until the email is verified. | Malak; coordinate affected domain owners. Optional, not claimed implemented. |
-| ACC-07 - Bonus!D3 | The system shall allow a user who forgot their password to request a reset link by email; the link expires after 30 minutes, is single-use, is invalidated by a newer request, and the response does not reveal whether the email exists. | Malak; coordinate affected domain owners. Optional, not claimed implemented. |
+| ACC-07 - Bonus!D3 | The system shall allow a user who forgot their password to request a reset link by email; the link expires after 30 minutes, is single-use, is invalidated by a newer request, and the response does not reveal whether the email exists. | **Implemented M1 backend on the session feature branch, awaiting review/merge.** Approved SMTP configuration, generic asynchronous requests, private hashed30-minute single-use/superseded proofs and atomic password/session invalidation. Real test-inbox configuration/delivery demonstration remain operator setup; M2 reset page is not built. |
 | GEN-01-B - Bonus!D4 | The system shall also send the GEN-01 notifications (plus moderator invitations) by email via SMTP, using a test inbox in development. | Arwa; coordinate affected domain owners. Optional, not claimed implemented. |
 | FLT-27 - Bonus!D5 | The system shall allow a registered user to change a Confirmed flight booking's date or flight (same route and cabin), paying any fare difference via Stripe or receiving a refund of a lower fare, subject to seat availability. | Ismail; coordinate affected domain owners. Optional, not claimed implemented. |
 | FLT-28 - Bonus!D6 | The system shall allow seat selection. | Ismail; coordinate affected domain owners. Optional, not claimed implemented. |

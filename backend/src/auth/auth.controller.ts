@@ -1,3 +1,8 @@
+import { ApiAcceptedResponse, ApiServiceUnavailableResponse, ApiTooManyRequestsResponse } from '@nestjs/swagger';
+import { Request } from 'express';
+import { ForgotPasswordDto, ForgotPasswordResponseDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
+import { PasswordRecoveryService } from './password-recovery.service';
 import { Body, Controller, Cookies, Get, Header, HttpCode, Patch, Post, Req, Res, UseGuards } from '@nestjs/common';
 import { ApiBadRequestResponse, ApiConflictResponse, ApiCookieAuth, ApiCreatedResponse, ApiExtraModels, ApiForbiddenResponse, ApiInternalServerErrorResponse, ApiNoContentResponse, ApiOkResponse, ApiOperation, ApiTags, ApiUnauthorizedResponse, getSchemaPath } from '@nestjs/swagger';
 import { Response } from 'express';
@@ -20,10 +25,36 @@ import { PasswordManagementService } from './password-management.service';
 @Controller('auth')
 export class AuthController {
   constructor(
+    private readonly recovery: PasswordRecoveryService,
     private readonly auth: AuthService,
     private readonly sessions: AuthSessionsService,
     private readonly passwords: PasswordManagementService,
   ) {}
+
+  @Post('forgot-password')
+  @HttpCode(202)
+  @Header('Cache-Control', 'no-store')
+  @ApiOperation({ summary: 'ACC-07 bonus: request an emailed password reset', description: 'Same accepted response for known, unknown, suspended, deactivated and silently rate-limited addresses. Account lookup and delivery run asynchronously. Only hashed tokens are persisted. A newer accepted request invalidates the older link; expiry is 30 minutes. Requires configured SMTP and a trusted PASSWORD_RESET_URL. No account changes or login happen here.' })
+  @ApiAcceptedResponse({ type: ForgotPasswordResponseDto })
+  @ApiBadRequestResponse({ type: ApiErrorDto })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'Cross-origin browser request.' })
+  @ApiServiceUnavailableResponse({ type: ApiErrorDto, description: 'Recovery configuration absent or worker capacity unavailable, independent of account existence.' })
+  forgotPassword(@Body() input: ForgotPasswordDto, @Req() request: Request): Promise<ForgotPasswordResponseDto> {
+    return this.recovery.request(input.email, request.ip ?? request.socket.remoteAddress ?? 'unknown');
+  }
+
+  @Post('reset-password')
+  @HttpCode(204)
+  @Header('Cache-Control', 'no-store')
+  @ApiOperation({ summary: 'ACC-07 bonus: replace a forgotten password using the emailed token', description: 'Submit the URL fragment token in this JSON body. Requires no login. Atomically consumes the single-use unexpired latest token and replaces the password using the shared policy/hasher. Invalidates every previous session and clears auth cookies. Does not reactivate an account, change its role or automatically log in. Log in again.' })
+  @ApiNoContentResponse({ description: 'Password reset. A fresh login is required.' })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'Invalid/expired/used/superseded link, ineligible account, invalid fields or unchanged password.' })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'Cross-origin browser request.' })
+  @ApiTooManyRequestsResponse({ type: ApiErrorDto })
+  async resetForgottenPassword(@Body() input: ResetPasswordDto, @Req() request: Request, @Res({ passthrough: true }) response: Response): Promise<void> {
+    await this.recovery.reset(input, request.ip ?? request.socket.remoteAddress ?? 'unknown');
+    this.clearAuthenticationCookies(response);
+  }
 
   @Post('register')
   @ApiOperation({
