@@ -5,6 +5,7 @@ import { BookingStatus } from '../common/enums/booking-status.enum';
 import { HotelBookingDto, HotelBookingPageDto } from './dto/hotel-booking-response.dto';
 import { HotelBookingGroup } from './dto/list-hotel-bookings-query.dto';
 import { HOTEL_BOOKINGS_PAGE_SIZE } from './hotel-booking.constants';
+import { todayUtc } from './hotel-booking.dates';
 import { HotelBooking, HotelBookingDocument } from './schemas/hotel-booking.schema';
 
 /** One reservation as another owner's view needs it (HTL-22 moderator view, ACC-17 admin view). */
@@ -65,14 +66,28 @@ export class HotelBookingsService {
 
   /**
    * HTL-20: the caller's own reservations, page size 10 (GEN-05). CANCELLED includes EXPIRED
-   * (team-leader decision 2026-11-08). UPCOMING/PAST wait for the agreed time-zone rule.
+   * (team-leader decision 2026-11-08). "Today" is the UTC calendar date (contract L2). A stay is over
+   * once its check-out date arrives, so PAST also shows Confirmed stays the completion sweep has
+   * not reached yet.
    */
   async listMine(userId: string, group: HotelBookingGroup | undefined, page = 1): Promise<HotelBookingPageDto> {
     const owner = { userId: new Types.ObjectId(userId) };
-    const filter: QueryFilter<HotelBooking> = group === HotelBookingGroup.CANCELLED
-      ? { ...owner, status: { $in: [BookingStatus.CANCELLED, BookingStatus.EXPIRED] } }
-      : owner;
-    const sort: Record<string, 1 | -1> = group === HotelBookingGroup.CANCELLED ? { checkIn: -1, _id: -1 } : { _id: -1 };
+    const today = todayUtc();
+    const filters: Record<HotelBookingGroup, QueryFilter<HotelBooking>> = {
+      [HotelBookingGroup.UPCOMING]: { ...owner, status: { $in: [BookingStatus.PENDING, BookingStatus.CONFIRMED] }, checkOut: { $gt: today } },
+      [HotelBookingGroup.PAST]: {
+        ...owner,
+        $or: [{ status: BookingStatus.COMPLETED }, { status: BookingStatus.CONFIRMED, checkOut: { $lte: today } }],
+      },
+      [HotelBookingGroup.CANCELLED]: { ...owner, status: { $in: [BookingStatus.CANCELLED, BookingStatus.EXPIRED] } },
+    };
+    const sorts: Record<HotelBookingGroup, Record<string, 1 | -1>> = {
+      [HotelBookingGroup.UPCOMING]: { checkIn: 1, _id: 1 },
+      [HotelBookingGroup.PAST]: { checkOut: -1, _id: -1 },
+      [HotelBookingGroup.CANCELLED]: { checkIn: -1, _id: -1 },
+    };
+    const filter = group ? filters[group] : owner;
+    const sort = group ? sorts[group] : { _id: -1 as const };
     const [items, total] = await Promise.all([
       this.bookings.find(filter).sort(sort).skip((page - 1) * HOTEL_BOOKINGS_PAGE_SIZE).limit(HOTEL_BOOKINGS_PAGE_SIZE).exec(),
       this.bookings.countDocuments(filter).exec(),

@@ -2,21 +2,20 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { IsEnum, IsInt, IsOptional, Min } from 'class-validator';
 
-/**
- * HTL-20 groups. Only CANCELLED exists for now: UPCOMING and PAST depend on the "today" rule
- * (hotel time zone), which is still to be agreed with Person 5 (contract question L2).
- */
+/** HTL-20 groups. "Today" is the server's UTC calendar date (agreed with Person 5, contract L2). */
 export enum HotelBookingGroup {
+  UPCOMING = 'UPCOMING',
+  PAST = 'PAST',
   CANCELLED = 'CANCELLED',
 }
 
 export class ListHotelBookingsQueryDto {
   @ApiPropertyOptional({
     enum: HotelBookingGroup,
-    description: 'HTL-20 grouping. CANCELLED includes expired holds. Without a group, all your reservations are listed. UPCOMING and PAST follow once the time-zone rule is agreed.',
+    description: 'HTL-20 grouping, using the UTC calendar date. UPCOMING: Pending or Confirmed stays whose check-out is after today (ongoing stays included), nearest check-in first. PAST: Completed stays, plus Confirmed ones whose check-out date has arrived, latest check-out first. CANCELLED: cancelled and expired reservations. Without a group, all your reservations are listed, newest first.',
   })
   @IsOptional()
-  @IsEnum(HotelBookingGroup, { message: 'Group must be CANCELLED' })
+  @IsEnum(HotelBookingGroup, { message: 'Group must be UPCOMING, PAST or CANCELLED' })
   group?: HotelBookingGroup;
 
   @ApiPropertyOptional({ example: 1, minimum: 1 })
