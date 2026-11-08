@@ -17,6 +17,7 @@ import { ItinerariesModule } from './itineraries/itineraries.module';
 import { FlightsModule } from './flights/flights.module';
 import { HotelsModule } from './hotels/hotels.module';
 import { HotelBookingsModule } from './hotel-bookings/hotel-bookings.module';
+import { ReviewsModule } from './reviews/reviews.module';
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { HotelBookingsModule } from './hotel-bookings/hotel-bookings.module';
     ItinerariesModule,
     HotelsModule,
     HotelBookingsModule,
+    ReviewsModule,
     AuditLogsModule,
     AdminModule,
     ReportsModule,
