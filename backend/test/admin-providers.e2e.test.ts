@@ -98,6 +98,25 @@ describe('ACC-15 provider deactivation', { concurrency: false }, () => {
     assert.deepEqual((await collection('auditlogs').find().toArray()).map((entry) => entry.action).sort(), ['PROVIDER_DEACTIVATED', 'PROVIDER_REACTIVATED']);
   });
 
+  it("ACC-15: deactivating a hotel also notifies customers with Confirmed reservations (Person 6's hotelbookings)", async () => {
+    const reservation = (userId: string, status: string) => ({
+      userId: new Types.ObjectId(userId), hotelId: new Types.ObjectId(hotelId), hotelName: 'Cataract Hotel', status,
+      rooms: [{ roomId: new Types.ObjectId(), roomName: 'Double', adults: 2, childrenAges: [] }],
+      checkIn: '2026-12-10', checkOut: '2026-12-12', nights: 2, totalPrice: 9000, currency: 'EGP',
+    });
+    await collection('hotelbookings').insertMany([
+      reservation(customer.userId, 'CONFIRMED'),
+      reservation(pendingCustomer.userId, 'PENDING'),
+    ]);
+
+    const response = await call('deactivate', 'hotel', hotelId).expect(200);
+    assert.equal(response.body.notifiedCount, 2);
+    const [notice] = await notificationsOf(customer);
+    assert.match(notice.message, /Cataract Hotel.*remains valid/);
+    assert.equal((await notificationsOf(pendingCustomer)).length, 0);
+    assert.equal(await collection('hotelbookings').countDocuments({ status: 'CONFIRMED' }), 1);
+  });
+
   it('ACC-15: reactivating an airline notifies its moderator but not its customers', async () => {
     await call('deactivate', 'airline', airlineId).expect(200);
     const response = await call('reactivate', 'airline', airlineId).expect(200);

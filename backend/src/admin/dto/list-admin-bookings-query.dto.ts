@@ -14,7 +14,7 @@ export class ListAdminBookingsQueryDto {
   @Min(1, { message: 'Page must be at least 1' })
   page?: number;
 
-  @ApiPropertyOptional({ enum: BOOKING_TYPES, default: 'FLIGHT', description: 'HOTEL becomes available once hotel bookings (Person 6) are merged.' })
+  @ApiPropertyOptional({ enum: BOOKING_TYPES, default: 'FLIGHT', description: 'FLIGHT (default) or HOTEL. The date range applies to departure (flights) or check-in date (hotels).' })
   @IsOptional()
   @IsIn(BOOKING_TYPES, { message: 'Type must be FLIGHT or HOTEL' })
   type?: BookingType;
@@ -24,12 +24,12 @@ export class ListAdminBookingsQueryDto {
   @IsEnum(BookingStatus, { message: 'Status is not a known booking status' })
   status?: BookingStatus;
 
-  @ApiPropertyOptional({ example: '2026-12-01', description: 'Earliest travel date, inclusive (ISO 8601).' })
+  @ApiPropertyOptional({ example: '2026-12-01', description: 'Earliest travel date, inclusive (ISO 8601). For hotels only the calendar date (UTC) is used.' })
   @IsOptional()
   @IsISO8601({ strict: true }, { message: 'From must be an ISO 8601 date' })
   from?: string;
 
-  @ApiPropertyOptional({ example: '2026-12-31T23:59:59Z', description: 'Latest travel date, inclusive (ISO 8601).' })
+  @ApiPropertyOptional({ example: '2026-12-31T23:59:59Z', description: 'Latest travel date, inclusive (ISO 8601). For hotels only the calendar date (UTC) is used.' })
   @IsOptional()
   @IsISO8601({ strict: true }, { message: 'To must be an ISO 8601 date' })
   to?: string;

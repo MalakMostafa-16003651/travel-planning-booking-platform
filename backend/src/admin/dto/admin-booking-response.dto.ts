@@ -11,7 +11,8 @@ export class AdminBookingDto {
   @ApiPropertyOptional() userEmail?: string;
   @ApiProperty() providerId!: string;
   @ApiPropertyOptional({ description: 'Airline or hotel name.' }) providerName?: string;
-  @ApiProperty({ description: 'Departure (flights) or check-in (hotels).' }) startDate!: Date;
+  @ApiProperty({ description: 'Departure (flights) or check-in date (hotels).' }) startDate!: Date;
+  @ApiPropertyOptional({ description: 'Check-out date (hotels only).' }) endDate?: Date;
   @ApiProperty() totalAmount!: number;
   @ApiProperty({ example: 'EGP' }) currency!: string;
   @ApiProperty({ enum: BookingStatus }) status!: BookingStatus;

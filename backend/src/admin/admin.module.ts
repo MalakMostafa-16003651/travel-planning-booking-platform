@@ -4,6 +4,7 @@ import { Airline, AirlineSchema } from '../airlines/schemas/airline.schema';
 import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 import { AuthModule } from '../auth/auth.module';
 import { FlightBookingsModule } from '../flight-bookings/flight-bookings.module';
+import { HotelBookingsModule } from '../hotel-bookings/hotel-bookings.module';
 import { Hotel, HotelSchema } from '../hotels/schemas/hotel.schema';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { User, UserSchema } from '../users/schemas/user.schema';
@@ -24,6 +25,7 @@ import { ModeratorAssignment, ModeratorAssignmentSchema } from './schemas/modera
     AuditLogsModule,
     NotificationsModule,
     FlightBookingsModule,
+    HotelBookingsModule,
     MongooseModule.forFeature([
       { name: User.name, schema: UserSchema },
       // ACC-15: only isActive is changed here; Persons 3 and 5 own the rest of these documents.

@@ -69,7 +69,7 @@ describe('GEN-09/GEN-10 reports and moderation', { concurrency: false }, () => {
     await report(reporter, { targetType: 'PHOTO', targetId: postId, reason: 'Offensive content' }).expect(400);
     await report(reporter, { targetType: 'POST', targetId: 'nope', reason: 'Offensive content' }).expect(400);
     await report(reporter, { targetType: 'POST', targetId: new Types.ObjectId().toString(), reason: 'Offensive content' }).expect(404);
-    await report(reporter, { targetType: 'REVIEW', targetId: new Types.ObjectId().toString(), reason: 'Offensive content' }).expect(400);
+    await report(reporter, { targetType: 'REVIEW', targetId: new Types.ObjectId().toString(), reason: 'Offensive content' }).expect(404);
     await report(reporter, { targetType: 'ITINERARY', targetId: new Types.ObjectId().toString(), reason: 'Offensive content' }).expect(400);
     await report(reporter, { targetType: 'POST', targetId: postId, reason: 'Offensive content', status: 'DISMISSED' }).expect(400);
     assert.equal(await collection('reports').countDocuments(), 0);
@@ -146,6 +146,35 @@ describe('GEN-09/GEN-10 reports and moderation', { concurrency: false }, () => {
     assert.equal(response.body.status, 'CONTENT_DELETED');
   });
 
+  it("GEN-09/GEN-10: reports and moderates hotel reviews through Person 6's operations", async () => {
+    const reviewId = (await collection('reviews').insertOne({
+      userId: new Types.ObjectId(author.userId),
+      hotelId: new Types.ObjectId(),
+      hotelBookingId: new Types.ObjectId(),
+      rating: 1,
+      comment: 'Rude words about the staff',
+      isHidden: false,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })).insertedId;
+    const review = () => collection('reviews').findOne({ _id: reviewId });
+
+    const first = (await report(reporter, { targetType: 'REVIEW', targetId: reviewId.toString(), reason: 'Insulting the staff' }).expect(201)).body.reportId;
+    await report(secondReporter, { targetType: 'REVIEW', targetId: reviewId.toString(), reason: 'Very rude review' }).expect(201);
+
+    assert.equal((await resolve(first, 'HIDE').expect(200)).body.status, 'CONTENT_HIDDEN');
+    assert.equal((await review())!.isHidden, true);
+    assert.equal(await collection('reports').countDocuments({ targetType: 'REVIEW', status: 'CONTENT_HIDDEN' }), 2);
+
+    const shown = await moderate('patch', `review/${reviewId.toString()}/unhide`).expect(200);
+    assert.equal(shown.body.state, 'VISIBLE');
+    assert.equal((await review())!.isHidden, false);
+
+    await moderate('delete', `review/${reviewId.toString()}`).expect(200);
+    assert.equal(await review(), null);
+    assert.deepEqual(await auditActions(), ['CONTENT_DELETED', 'CONTENT_HIDDEN', 'CONTENT_UNHIDDEN']);
+  });
+
   it('GEN-10: two admins resolving the same report at once act once', async () => {
     const reportId = (await reportPost(reporter).expect(201)).body.reportId;
     const results = await Promise.all([resolve(reportId, 'DISMISS'), resolve(reportId, 'HIDE')]);
@@ -176,7 +205,7 @@ describe('GEN-09/GEN-10 reports and moderation', { concurrency: false }, () => {
     await moderate('patch', `photo/${postId}/hide`).expect(400);
     await moderate('patch', `post/nope/hide`).expect(400);
     await moderate('patch', `post/${new Types.ObjectId().toString()}/hide`).expect(404);
-    await moderate('patch', `review/${new Types.ObjectId().toString()}/hide`).expect(400);
+    await moderate('patch', `review/${new Types.ObjectId().toString()}/hide`).expect(404);
     await moderate('delete', `itinerary/${new Types.ObjectId().toString()}`).expect(400);
     assert.equal(await collection('auditlogs').countDocuments(), 0);
     assert.equal(await collection('reports').countDocuments({ status: 'OPEN' }), 1);
