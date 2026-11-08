@@ -5,6 +5,7 @@ import { UserRole } from '../src/common/enums/user-role.enum';
 import { BookingPaymentsAdapter } from '../src/payments/adapters/booking-payments.adapter';
 import { RefundsService } from '../src/payments/refunds.service';
 import { StripeService } from '../src/payments/stripe.service';
+import { NotificationsService } from '../src/notifications/notifications.service';
 import { FakeStripe, TEST_STRIPE_CONFIG } from './fake-stripe';
 import { PaymentsFixture } from './payments-fixture';
 
@@ -266,6 +267,55 @@ describe('PAY-03 refunds', { concurrency: false }, () => {
       }
     });
   }
+
+  describe('PAY-03/GEN-01 refund notifications', () => {
+    const refundNotices = () => fixture.connection.collection('notifications').find({ type: 'REFUND_ISSUED' }).toArray();
+
+    it('notifies the owner once, when Stripe completes the refund', async () => {
+      const cancelled = await fixture.http().post(`/api/flight-bookings/${bookingId}/cancel`).set('Cookie', owner.cookie).expect(200);
+      const stored = await refunds().findOne({ _id: new Types.ObjectId(cancelled.body.refundId) });
+      // Still PENDING at Stripe: nothing to tell yet.
+      assert.equal((await refundNotices()).length, 0);
+      const completed = stripe.setRefundStatus(stored!.stripeRefundId, 'succeeded');
+      await webhook('refund.updated', completed).expect(200);
+      await webhook('refund.updated', completed).expect(200);
+      await webhook('charge.refunded', { id: 'ch_1', object: 'charge', payment_intent: intentId }).expect(200);
+      const notices = await refundNotices();
+      assert.equal(notices.length, 1);
+      assert.equal(notices[0].userId.toString(), owner.userId);
+      assert.equal(notices[0].message, 'Your refund of 75.00 USD has been completed.');
+      // The owner sees it through Person 2's notifications API.
+      const listed = await fixture.http().get('/api/notifications').set('Cookie', owner.cookie).expect(200);
+      assert.ok(JSON.stringify(listed.body).includes('Your refund of 75.00 USD has been completed.'));
+    });
+
+    it('notifies at once when Stripe completes the refund immediately, and tells the user about a failed refund', async () => {
+      stripe.refundStatus = 'succeeded';
+      await fixture.http().post(`/api/flight-bookings/${bookingId}/cancel`).set('Cookie', owner.cookie).expect(200);
+      assert.deepEqual((await refundNotices()).map((notice) => notice.message), ['Your refund of 75.00 USD has been completed.']);
+
+      stripe.refundStatus = 'pending';
+      const failed = await refundsService.createRefund({ bookingType: 'flight', bookingId, amount: 10, reason: 'test' });
+      await webhook('refund.updated', stripe.setRefundStatus(failed.stripeRefundId, 'failed')).expect(200);
+      const messages = (await refundNotices()).map((notice) => notice.message);
+      assert.deepEqual(messages, ['Your refund of 75.00 USD has been completed.', 'Your refund of 10.00 USD could not be completed. Our team will follow up.']);
+    });
+
+    it('keeps the refund when the notification cannot be created', async () => {
+      const notifications = fixture.app.get(NotificationsService);
+      const failing = mock.method(notifications, 'notify', async () => { throw new Error('notifications down'); });
+      try {
+        stripe.refundStatus = 'succeeded';
+        await fixture.http().post(`/api/flight-bookings/${bookingId}/cancel`).set('Cookie', owner.cookie).expect(200);
+      } finally {
+        failing.mock.restore();
+      }
+      assert.equal(failing.mock.callCount(), 1);
+      const stored = await refunds().findOne({ _id: (await booking())!.refundId });
+      assert.equal(stored!.status, 'REFUNDED');
+      assert.equal((await booking())!.refundDue, false);
+    });
+  });
 
   it('lists the refund endpoint in Swagger with PAY-03', async () => {
     const document = (await fixture.http().get('/api/docs-json').expect(200)).body;
