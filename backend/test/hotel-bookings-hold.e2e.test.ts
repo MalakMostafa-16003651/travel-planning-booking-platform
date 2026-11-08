@@ -140,11 +140,6 @@ describe('HTL-16/HTL-18 hotel booking holds', { concurrency: false }, () => {
   });
 
   it('GEN-13: rejects each validation error with 400 and holds nothing', async () => {
-    const otherHotel = await createHotel({ name: 'Delta Inn' });
-    const foreignRoom = await createRoom(otherHotel, 'Elsewhere 1', 4, 5000);
-    const inactiveRoom = await createRoom(hotelId, 'Closed 9', 4, 5000, { isActive: false });
-    const inactiveHotel = await createHotel({ name: 'Closed Hotel', isActive: false });
-    const roomOfInactiveHotel = await createRoom(inactiveHotel, 'Closed Hotel 1', 2, 5000);
     const one = (room: Record<string, unknown>) => ({ rooms: [{ roomId: twin, adults: 1, childrenAges: [], ...room }] });
 
     const cases: [string, Record<string, unknown>, string][] = [
@@ -161,11 +156,6 @@ describe('HTL-16/HTL-18 hotel booking holds', { concurrency: false }, () => {
       ['fractional child age', one({ childrenAges: [4.5] }), 'rooms.0.childrenAges'],
       ['negative adults', one({ adults: -1 }), 'rooms.0.adults'],
       ['room over its capacity', one({ adults: 2, childrenAges: [3] }), 'rooms.0'],
-      ['room of another hotel', one({ roomId: foreignRoom }), 'rooms.0.roomId'],
-      ['inactive room', one({ roomId: inactiveRoom }), 'rooms.0.roomId'],
-      ['unknown room', one({ roomId: new Types.ObjectId().toString() }), 'rooms.0.roomId'],
-      ['inactive hotel', { hotelId: inactiveHotel, rooms: [{ roomId: roomOfInactiveHotel, adults: 1, childrenAges: [] }] }, 'hotelId'],
-      ['unknown hotel', { hotelId: new Types.ObjectId().toString() }, 'hotelId'],
       ['invalid hotel id', { hotelId: 'not-an-id' }, 'hotelId'],
       ['invalid room id', one({ roomId: 'not-an-id' }), 'rooms.0.roomId'],
       ['no rooms', { rooms: [] }, 'rooms'],
@@ -178,6 +168,30 @@ describe('HTL-16/HTL-18 hotel booking holds', { concurrency: false }, () => {
       assert.equal(response.status, 400, name);
       assert.equal(response.body.message, 'Validation failed', name);
       assert.ok(Object.keys(response.body.errors ?? {}).some((key) => key === field || key.startsWith(`${field}.`)), `${name}: ${JSON.stringify(response.body.errors)}`);
+    }
+    assert.equal(await bookings.countDocuments(), 0);
+    for (const roomId of [deluxe, twin]) assert.deepEqual(await ranges(roomId), []);
+  });
+
+  it('ACC-15: an unknown or deactivated hotel, or a room that is unknown, inactive or of another hotel, is 404', async () => {
+    const otherHotel = await createHotel({ name: 'Delta Inn' });
+    const foreignRoom = await createRoom(otherHotel, 'Elsewhere 1', 4, 5000);
+    const inactiveRoom = await createRoom(hotelId, 'Closed 9', 4, 5000, { isActive: false });
+    const inactiveHotel = await createHotel({ name: 'Closed Hotel', isActive: false });
+    const roomOfInactiveHotel = await createRoom(inactiveHotel, 'Closed Hotel 1', 2, 5000);
+    const withRoom = (roomId: string) => request({ rooms: [{ roomId: deluxe, adults: 1, childrenAges: [] }, { roomId, adults: 1, childrenAges: [] }] });
+
+    const cases: [string, Record<string, unknown>, string][] = [
+      ['unknown hotel', request({ hotelId: new Types.ObjectId().toString() }), 'Hotel not found'],
+      ['deactivated hotel', request({ hotelId: inactiveHotel, rooms: [{ roomId: roomOfInactiveHotel, adults: 1, childrenAges: [] }] }), 'Hotel not found'],
+      ['room of another hotel', withRoom(foreignRoom), 'Room not found in this hotel'],
+      ['inactive room', withRoom(inactiveRoom), 'Room not found in this hotel'],
+      ['unknown room', withRoom(new Types.ObjectId().toString()), 'Room not found in this hotel'],
+    ];
+    for (const [name, body, message] of cases) {
+      const response = await post(body, alice);
+      assert.equal(response.status, 404, name);
+      assert.equal(response.body.message, message, name);
     }
     assert.equal(await bookings.countDocuments(), 0);
     for (const roomId of [deluxe, twin, foreignRoom, inactiveRoom, roomOfInactiveHotel]) assert.deepEqual(await ranges(roomId), []);
@@ -305,7 +319,7 @@ describe('HTL-16/HTL-18 hotel booking holds', { concurrency: false }, () => {
     const document = (await fixture.http().get('/api/docs-json').expect(200)).body;
     const operation = document.paths['/api/hotel-bookings'].post;
     assert.match(operation.summary, /^HTL-16\/HTL-18/);
-    assert.deepEqual(Object.keys(operation.responses).sort(), ['201', '400', '401', '403', '409']);
+    assert.deepEqual(Object.keys(operation.responses).sort(), ['201', '400', '401', '403', '404', '409']);
     assert.ok(document.components.schemas.CreateHotelBookingDto.properties.rooms);
   });
 });

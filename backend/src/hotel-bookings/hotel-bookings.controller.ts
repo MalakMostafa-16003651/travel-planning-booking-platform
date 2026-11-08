@@ -28,7 +28,8 @@ export class HotelBookingsController {
     description: 'Books one or more rooms of the same hotel for the same dates as one PENDING (Pending Payment) reservation. Every room is held together for 10 minutes in one transaction; if any room overlaps a blocked range, a booked range or an unexpired hold, nothing is held (409). Prices are copied from the rooms now; the total is nights x price per room, in minor units (USD). Unpaid holds become EXPIRED and release their rooms.',
   })
   @ApiCreatedResponse({ type: HotelBookingDto })
-  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'Invalid dates (check-out not after check-in, check-in in the past), repeated room, no adult, child age outside 0-17, room over capacity, or hotel/room not found, inactive or not of this hotel.' })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'Invalid input: dates (check-out not after check-in, check-in in the past), invalid ids, repeated room, no adult in the reservation, a room without guests, child age outside 0-17, or a room over its capacity.' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'Hotel not found or deactivated, or a room not found, inactive or not of this hotel.' })
   @ApiConflictResponse({ type: ApiErrorDto, description: 'A room is not available for these dates; nothing was held.' })
   create(@Body() input: CreateHotelBookingDto, @Req() request: AuthenticatedRequest): Promise<HotelBookingDto> {
     return this.bookings.hold(input, request.user!.userId);

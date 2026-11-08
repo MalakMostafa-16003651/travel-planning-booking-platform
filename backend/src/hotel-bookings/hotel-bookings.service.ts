@@ -90,18 +90,19 @@ export class HotelBookingsService {
     if (input.rooms.reduce((sum, room) => sum + room.adults, 0) < 1) fail('rooms', 'At least one adult is required');
     if (Object.keys(errors).length > 0) throw new BadRequestException({ message: 'Validation failed', errors });
 
+    // 404, like flight bookings ("Flight or cabin not found") and the hotel detail: an unknown or
+    // deactivated hotel (ACC-15), and an unknown or inactive room or a room of another hotel, do not exist
+    // for booking. Real input errors (dates, guests, capacity, repeated rooms) stay 400.
     const hotel = await this.inventory.getHotel(input.hotelId);
-    // ACC-15: a deactivated hotel cannot be booked.
-    if (!hotel || !hotel.isActive) {
-      throw new BadRequestException({ message: 'Validation failed', errors: { hotelId: ['Hotel not found or not available for booking'] } });
-    }
+    if (!hotel || !hotel.isActive) throw new NotFoundException('Hotel not found');
     const found = new Map((await this.inventory.getRooms(roomIds)).map((room) => [room._id.toString(), room]));
-    const selected = input.rooms.map((request, index) => {
+    const missing = input.rooms.some((request) => {
       const room = found.get(request.roomId.toLowerCase());
-      if (!room || !room.hotelId.equals(hotel._id) || !room.isActive) {
-        fail(`rooms.${index}.roomId`, 'Room not found in this hotel or not available for booking');
-        return null;
-      }
+      return !room || !room.hotelId.equals(hotel._id) || !room.isActive;
+    });
+    if (missing) throw new NotFoundException('Room not found in this hotel');
+    const selected = input.rooms.map((request, index) => {
+      const room = found.get(request.roomId.toLowerCase())!;
       const guests = request.adults + request.childrenAges.length;
       if (guests > room.capacity) fail(`rooms.${index}`, `${room.name} holds at most ${room.capacity} guests`);
       return { room, request };
@@ -111,7 +112,7 @@ export class HotelBookingsService {
     const nights = Math.round((Date.parse(`${input.checkOut}T00:00:00Z`) - Date.parse(`${input.checkIn}T00:00:00Z`)) / 86_400_000);
     // HTL-16/HTL-05: name and price are copied now, so later room edits never change this reservation.
     const rooms = selected.map((entry) => {
-      const { room, request } = entry!;
+      const { room, request } = entry;
       return {
         roomId: room._id,
         roomName: room.name,
@@ -122,12 +123,12 @@ export class HotelBookingsService {
       };
     });
 
-    await this.inventory.ensureAvailability(selected.map((entry) => entry!.room));
+    await this.inventory.ensureAvailability(selected.map((entry) => entry.room));
     const hotelBookingId = new Types.ObjectId();
     const now = new Date();
     const holdExpiresAt = new Date(now.getTime() + HOTEL_BOOKING_HOLD_MS);
     const booking = await this.connection.transaction(async (session) => {
-      for (const { room } of selected.map((entry) => entry!)) {
+      for (const { room } of selected) {
         const held = await this.inventory.holdRoom(room._id, input, { hotelBookingId, holdExpiresAt, now }, session);
         if (!held) throw new ConflictException(`${room.name} is not available for these dates`);
       }
