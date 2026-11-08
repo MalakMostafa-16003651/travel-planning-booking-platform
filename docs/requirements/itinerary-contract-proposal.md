@@ -1,6 +1,6 @@
 # Itineraries, Activities and Budgeting: shared contract
 
-Status: implemented backend corrections on the current feature branch; flight/hotel search adapters remain pending integration with their owners. Person 7 owns this module. Malak's explicitly authorized fixes and tests are recorded in docs/work-logs/16003651.md; no changes are attributed to Kiki that she did not perform.
+Status: implemented backend corrections on `develop`. The ITN-25 hotel search is connected to HotelsService; the ITN-26 flight search adapter remains pending agreement with Person 3 (see below). Person 7 owns this module. Malak's explicitly authorized fixes and tests are recorded in docs/work-logs/16003651.md; no changes are attributed to Kiki that she did not perform.
 
 Sources: reviewed requirements workbook (ITN-01 through ITN-26, GEN-08, ACC-09/11/12), revised project PDF sections 5.1 and 8, and team-leader-approved reference schema design on 2026-11-06. Milestone 1 is backend only.
 
@@ -41,14 +41,29 @@ Existing transport entries without dayId remain readable/editable as part of the
 
 ## Search ports requiring owner integration
 
-These request contracts are corrected to the workbook and documented for coordination. Real adapters remain explicitly unavailable (503) until the owners provide their search services. Tests inject search doubles to verify the criteria; that is not a claim that live search works.
+These request contracts are corrected to the workbook and documented for coordination. Tests inject search doubles to verify the criteria the itinerary derives.
 
 ### ITN-25 / Lama
 
 GET /api/itineraries/:id/hotels takes dayId, guests, rooms and optional page. The city stop determines city/countryCode/checkIn/checkOut. Check-in is its first day; check-out is the day after its last. The HotelSearchPort receives city, countryCode, checkIn, checkOut, guests, rooms, page. Reuse HTL-11/12 rather than copying hotel availability logic.
 
+**Connected (2026-11-08, Person 7).** These fields are exactly `SearchHotelsQueryDto` minus the optional price filters and sort, so `HotelsServiceSearchAdapter` passes them to the exported `HotelsService.search` unchanged and returns its `HotelSearchPage`. ItinerariesModule imports HotelsModule; no Hotels code was edited. HotelsService resolves the city through the shared ReferenceDataModule, so the search returns matches only once the countries/cities Atlas seed has been run. Lama: please confirm this is how you want the search reused.
+
 ### ITN-26 / Gamila
 
 GET /api/itineraries/:id/flights takes departureAirportCode, roundTrip, optional departureDate/returnDate, adults/children/infants, cabinClass and page. The official airports in the first itinerary day's city determine arrivalAirportCodes. Departure defaults to itinerary start; round-trip return defaults to the last itinerary day. Airports must exist, arrival/departure cannot be identical, return cannot precede departure, at least one adult is required and infants cannot outnumber adults. FlightSearchPort receives departureAirportCode, arrivalAirportCodes, roundTrip, departureDate, optional returnDate, counts, optional cabinClass/page. Gamila must confirm the adapter mapping to FLT-11/12/15; no direct FlightsService implementation is edited in this batch.
+
+**Review against FlightsService on `develop` (2026-11-08, Person 7). The port can't be connected as written:**
+
+1. **One airport vs several.** The port sends `arrivalAirportCodes[]` (every official airport in the destination city). `FlightsService.search` and `searchRoundTrip` take a single `arrivalAirportCode`.
+2. **Pagination happens inside FlightsService.** `search` returns one page of 10, and the method that returns the full list (`searchOneWay`) is private. Calling `search` once per airport and merging the pages would give wrong totals, page contents and sort order across airports.
+3. **Two result shapes.** One-way returns `{ items, page, pageSize, total }`; round trip returns `{ outbound, return }`, each paginated. The adapter would branch on `roundTrip` (the port's `unknown` return type allows this).
+4. Cabin classes already match `CabinClass` (ECONOMY, PREMIUM_ECONOMY, BUSINESS, FIRST), and the passenger rules match FLT-11.
+
+**Options (needs a decision from Gamila and the team leader):**
+- **A, no Flights change (Person 7 proposal):** the itinerary sends a single `arrivalAirportCode`. It accepts an optional `arrivalAirportCode` query parameter that must be one of the first city's official airports, defaulting to that city's only airport, and returns 400 listing the choices when there are several. The adapter then calls `search` or `searchRoundTrip` directly.
+- **B, Flights change (Gamila):** FlightsService exposes a public search that accepts several arrival airports and paginates the combined, sorted list.
+
+Until one is chosen, `GET /api/itineraries/:id/flights` returns 503.
 
 Optional ITN-27/28 remain outside this work. Account deactivation itself and its booking-confirmation safeguards remain Person 1's separate ACC-12 task.

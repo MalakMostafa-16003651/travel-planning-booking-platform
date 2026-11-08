@@ -344,7 +344,7 @@ All routes need a login. Another user's booking returns **404**. Booking and can
 
 `FXRATES_API_KEY` is optional (the provider has a keyless tier) and is sent as a bearer header, never in a URL or response.
 
-**Flights and hotels (ITN-25, ITN-26).** The itinerary derives the city and dates and passes them to the Hotels search (HTL-11, HTL-12) and the Flights search (FLT-11, FLT-12, FLT-15). Until those modules exist, these two endpoints return 503.
+**Flights and hotels (ITN-25, ITN-26).** The itinerary derives the city and dates and passes them to the Hotels search (HTL-11, HTL-12) and the Flights search (FLT-11, FLT-12, FLT-15). The hotel search is connected to `HotelsService.search`. The flight search returns 503 until its mapping is agreed with Person 3 (see the contract).
 
 For a manual Swagger check: log in, create an itinerary, add days in Cairo, Cairo and London, then reorder them and confirm day numbers, dates and `cityGroups` follow. Add budget entries in EGP and USD and call `budget-summary?currency=EUR`. Make the itinerary PUBLIC, log in as a second user, then search for it and clone it.
 
@@ -405,7 +405,7 @@ UsersService.getAccountStatuses and getDisplayNames replace the temporary itiner
 
 Budget summary uses the signed-in user's current preferred currency unless overridden; guests use itinerary currency. Rates refresh daily; outages use the last cached rates with their date and stale flag. JPG/PNG are the supported image formats.
 
-ITN-25 hotel criteria now include guests and rooms. ITN-26 takes departureAirportCode and optional roundTrip/departureDate/returnDate, resolving destination airports from the first itinerary city, with default outbound/return dates from the itinerary. The live Flights/Hotels adapters still return 503 pending owner integration. The full corrected contracts are in docs/requirements/itinerary-contract-proposal.md; coordinate their port mappings with Gamila and Lama.
+ITN-25 hotel criteria now include guests and rooms. ITN-26 takes departureAirportCode and optional roundTrip/departureDate/returnDate, resolving destination airports from the first itinerary city, with default outbound/return dates from the itinerary. The hotel adapter now calls HotelsService.search; the flight adapter still returns 503 pending agreement with Gamila (one destination airport vs several). The full corrected contracts are in docs/requirements/itinerary-contract-proposal.md; coordinate their port mappings with Gamila and Lama.
 
 
 ## ACC-11 booking access
