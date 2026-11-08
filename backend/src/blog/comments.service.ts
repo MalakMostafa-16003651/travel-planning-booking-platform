@@ -22,7 +22,12 @@ export class CommentsService {
   async create(postId: string, dto: CreateCommentDto, viewer: Viewer) {
     const post = await this.blog.getPublicPost(postId);
     const comment = await this.comments.create({ postId: post._id, userId: new Types.ObjectId(viewer.userId), content: dto.content });
-    await this.posts.updateOne({ _id: post._id }, { $inc: { commentsCount: 1 } }).exec();
+    const counted = await this.posts.updateOne({ _id: post._id }, { $inc: { commentsCount: 1 } }).exec();
+    if (counted.matchedCount === 0) {
+      // The post was deleted meanwhile: do not leave a comment without its post.
+      await this.comments.deleteOne({ _id: comment._id }).exec();
+      throw new NotFoundException('Post not found');
+    }
     return this.toResponse(comment);
   }
 
@@ -89,7 +94,8 @@ export class CommentsService {
   private async deleteComment(comment: CommentDocument): Promise<void> {
     const deleted = await this.comments.deleteOne({ _id: comment._id }).exec();
     if (deleted.deletedCount === 1) {
-      await this.posts.updateOne({ _id: comment.postId, commentsCount: { $gt: 0 } }, { $inc: { commentsCount: -1 } }).exec();
+      // Unconditional, so every removed row cancels exactly the increment of its creation in any order.
+      await this.posts.updateOne({ _id: comment.postId }, { $inc: { commentsCount: -1 } }).exec();
     }
   }
 

@@ -41,6 +41,8 @@ export class PostImagesService {
     ).exec();
     if (!updated) {
       await this.images.deleteOne({ _id: stored._id }).exec();
+      // Either the post was deleted meanwhile or another upload took the last place.
+      if (!await this.posts.exists({ _id: post._id }).exec()) throw new NotFoundException('Post not found');
       throw validationFailure(`A post can have at most ${MAX_IMAGES_PER_POST} images`);
     }
     return this.blog.toResponse(updated);
