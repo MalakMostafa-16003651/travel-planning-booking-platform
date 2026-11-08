@@ -314,3 +314,5 @@ Malak requested the bonus and approved: **"Approve these names and design"** for
 Configure secrets only in ignored .env; commit only .env.example. Keep password-reset page/third-party assets from leaking fragments and use no-referrer when the M2 client is built. SMTP setup uses a development test inbox. Live SMTP credentials/inbox demonstration are operator setup and must be verified separately.
 
 References checked for this implementation: [OWASP Forgot Password Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Forgot_Password_Cheat_Sheet.html), [Nodemailer SMTP](https://nodemailer.com/smtp), [Mongoose transactions](https://mongoosejs.com/docs/transactions.html). Final executed test evidence is recorded in the single student log. Feature is prepared on the existing session branch, awaiting review/merge.
+
+Final ACC-07 check: production build/test compilation PASS; complete isolated suite527/527 PASS,60 suites (847929.7181ms), source c6410b0. Real inbox delivery remains a separate manual setup check. The future reset page must follow the already-agreed same-origin frontend/API deployment and CSRF policy.

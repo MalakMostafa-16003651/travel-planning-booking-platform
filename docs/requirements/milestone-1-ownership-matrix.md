@@ -310,6 +310,8 @@ Each owner should report exact remaining IDs, blockers, branch and next review d
 
 ACC-07 (secure emailed forgotten-password reset) is the most independent Person1 bonus to plan next: generic response, expiring single-use reset token, invalidation by a newer request and a compliant replacement password. It still needs an agreed mail-delivery integration and new environment-variable names/fields approved before coding. ACC-02 email verification also exists, but enforcing it affects flight/hotel booking gates and needs those owners. ACC-07 was subsequently requested and its configuration/design explicitly approved by Malak on2026-11-08; its M1 backend is now implemented on the same session branch. See the authentication contract and student log for verification/setup limits. ACC-02 remains unimplemented.
 
+ACC-07 follow-up verification (2026-11-08): production build/test compilation PASS; **527/527 tests PASS**,60 suites, zero failures/cancellations/skips/todo,847929.7181ms. Source c6410b0 is on the same session branch, pending review/merge. Development SMTP inbox configuration/delivery demonstration remains operator setup; no M2 reset page or ACC-02 implementation is claimed.
+
 ### Atlas IP access answer
 
 MongoDB documents 0.0.0.0/0 as allowing connections from anywhere. It allows network connection attempts from every IPv4 address; database credentials still authenticate the connection. For this shared team database, use each teammate's public IP (/32) and their own database user, updating the address when it changes. No Atlas setting or account was changed by this feature. Source: https://www.mongodb.com/docs/atlas/security/ip-access-list/
