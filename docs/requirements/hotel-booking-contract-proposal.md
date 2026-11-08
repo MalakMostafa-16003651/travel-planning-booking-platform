@@ -169,7 +169,7 @@ Each owner connects these on their own side; Person 6 does not edit their module
 | L3 | The contract's hold filter rejects any overlapping `bookedRanges` entry, including expired `HELD` ones, and `HotelsService.isRoomFree` treats them as taken. HTL-18 only blocks *unexpired* holds. | An entry blocks if `status: BOOKED`, or `status: HELD` with `holdExpiresAt > now`; search applies the same rule. The expiry sweep also removes expired holds. |
 | L4 | A `RoomAvailability` document exists only after a moderator first blocks dates. May the hold create it (idempotent `$setOnInsert` upsert, the same pattern as `blockDates`)? | Yes, from Person 6's own adapter inside `hotel-bookings/`, writing only `bookedRanges`. |
 | L5 | HTL-06: "reject deactivation/blocking that overlaps a Confirmed or Pending reservation" can use `bookedRanges`; "deletion only if never reserved" cannot, because ranges are removed on cancel/expiry. | Person 6 exports `roomHasEverBeenReserved(roomId)` from `hotelbookings`. |
-| L6 | HTL-22 port: `HotelReservationSummary` has a single `roomId` and `guests: number`; a reservation has several rooms, and the view needs the guest. | Lama changes the port to `rooms[]` (`roomId`, `roomName`, `adults`, `childrenAges`) plus `userId`; she resolves the guest name. |
+| L6 | HTL-22 multi-room reservation response. | **Approved by Malak in the ACC-11 session:** use rooms[] (roomId, roomName, adults, childrenAges), guestCount and bookingReference. Keep userId, dates, status, currency, totalAmount (mapped from totalPrice) and pagination. The adapter resolves guestName using UsersService; booking/payment/policy/private profile documents are not exposed. Prepared on feature/ACC-11-provider-booking-access; available after review/merge. |
 | L7 | Room `type` and `beds` (HTL-03) are not on `Room` yet. | Snapshotted into `rooms[]` once they exist. |
 | L8 | `DATE_ONLY` accepts impossible dates such as 2027-02-31 (audit F5). | Person 6's DTOs validate real calendar dates; one shared helper if Lama prefers. |
 
@@ -206,3 +206,6 @@ Each owner connects these on their own side; Person 6 does not edit their module
 | 4 | `feature/HTL-17-hotel-booking-payment` | Payment integration, confirmation, notification, expiry. | O1-O3 agreed and Omar's hotel support merged. |
 | 5 | `feature/HTL-21-hotel-booking-cancel` | Quote, cancel, room release, refund, notification. | O4-O6 agreed and merged. |
 | 6 | `feature/HTL-26-review-replies` | Bonus, only after everything mandatory. | PR 2. |
+
+
+Session publication (2026-11-08): [PR55](https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/pull/55) contains the approved ACC-11 integration and ACC-07 backend. The team leader requested merging the saved edits. Use the PR record for the final merge state; tests/setup limits remain as documented. Before merging Osama's separate fix/HTL-22-reservations-port-shape branch, reconcile its per-room roomId/guests output with this approved rooms[]/guestCount/bookingReference contract.

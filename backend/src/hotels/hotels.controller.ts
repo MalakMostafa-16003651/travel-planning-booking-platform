@@ -1,3 +1,5 @@
+import { Header } from '@nestjs/common';
+import { HotelReservationsPageDto } from './dto/hotel-reservations-response.dto';
 import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
@@ -204,15 +206,15 @@ export class HotelsController {
   }
 
   @Get(':id/reservations')
+  @Header('Cache-Control', 'no-store')
   @UseGuards(AuthGuard, RolesGuard)
   @Roles(UserRole.HOTEL_MODERATOR)
   @ApiCookieAuth('accessToken')
-  @ApiOperation({ summary: "List reservations for the moderator's own hotel (HTL-22)", description: 'Pending Person 6\'s hotel-bookings module; returns 503 until it exists. Ownership is still checked first.' })
-  @ApiOkResponse({ description: 'A page of reservations', type: Object })
+  @ApiOperation({ summary: "List reservations for the moderator's own hotel (HTL-22)", description: 'ACC-11: read-only multi-room reservations for the assigned hotel, ten per page. Reuses HotelBookingsService and excludes payment/policy/private profile data.' })
+  @ApiOkResponse({ description: 'A page of reservations', type: HotelReservationsPageDto })
   @ApiUnauthorizedResponse({ type: ApiErrorDto })
   @ApiForbiddenResponse({ type: ApiErrorDto })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: ':id is not the caller\'s assigned hotel.' })
-  @ApiServiceUnavailableResponse({ type: ApiErrorDto, description: 'Hotel reservations are not available yet.' })
   getReservations(
     @Req() req: AuthenticatedRequest,
     @Param('id') id: string,

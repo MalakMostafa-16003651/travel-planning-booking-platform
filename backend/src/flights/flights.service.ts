@@ -63,6 +63,14 @@ async onModuleInit(): Promise<void> {
     return new Types.ObjectId(id);
   }
 
+  /** ACC-11/FLT-29: scope the flight before querying any booking. Read-only for every flight status. */
+  async listOwnFlightBookings(moderatorId: string, flightId: string, page = 1) {
+    const airlineId = await this.airlines.getAssignedAirlineId(moderatorId);
+    const flight = await this.flights.findOne({ _id: this.objectId(flightId, 'Flight'), airlineId }).exec();
+    if (!flight) throw new NotFoundException('Flight not found for your airline');
+    return this.bookings.listBookingsForFlight(flight._id.toString(), page);
+  }
+
   // FLT-30: Update flights that have departed
 
   async markDeparted(): Promise<void> {

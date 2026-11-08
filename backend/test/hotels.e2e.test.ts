@@ -792,11 +792,12 @@ describe('Hotels E2E', { concurrency: false }, () => {
       assert.ok(doc.paths['/api/hotels/{id}/reservations'].get);
     });
 
-    it('returns 503 for the caller\'s own hotel, since hotel bookings are not built yet', async () => {
-      await http().get(`/api/hotels/${hotelId}/reservations`).set('Cookie', moderatorCookie).expect(503);
+    it('returns an empty reservation page for the assigned hotel', async () => {
+      const result = await http().get(`/api/hotels/${hotelId}/reservations`).set('Cookie', moderatorCookie).expect(200);
+      assert.deepEqual(result.body, { items: [], page: 1, pageSize: 10, total: 0, totalPages: 0 });
     });
 
-    it('checks ownership before the pending-bookings 503: no assignment is 403, a mismatched one is 404', async () => {
+    it('checks ownership before reading reservations: no assignment is 403, a mismatched one is 404', async () => {
       const otherModerator = await login('other-hotel-moderator@example.com', UserRole.HOTEL_MODERATOR);
       await http().get(`/api/hotels/${hotelId}/reservations`).set('Cookie', otherModerator).expect(403);
 
