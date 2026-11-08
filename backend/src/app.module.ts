@@ -12,6 +12,7 @@ import { PaymentsModule } from './payments/payments.module';
 import { AirportsModule } from './airports/airports.module';
 import { AirlinesModule } from './airlines/airlines.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { ReportsModule } from './reports/reports.module';
 import { ItinerariesModule } from './itineraries/itineraries.module';
 import { FlightsModule } from './flights/flights.module';
 import { HotelsModule } from './hotels/hotels.module';
@@ -43,6 +44,7 @@ import { HotelsModule } from './hotels/hotels.module';
     HotelsModule,
     AuditLogsModule,
     AdminModule,
+    ReportsModule,
   ],
 })
 export class AppModule {}
