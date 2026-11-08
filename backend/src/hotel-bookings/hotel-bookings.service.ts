@@ -134,6 +134,35 @@ export class HotelBookingsService {
     return this.page(filter, { _id: -1 }, options.page ?? 1);
   }
 
+  /**
+   * ACC-12 (Person 1 connects this): true while the user has a Confirmed stay whose check-out date is
+   * still ahead (UTC calendar date), which includes a stay in progress. Such a user cannot deactivate.
+   */
+  async hasUpcomingConfirmedBookings(userId: string): Promise<boolean> {
+    if (!/^[0-9a-f]{24}$/i.test(userId)) return false;
+    const found = await this.bookings.exists({
+      userId: new Types.ObjectId(userId),
+      status: BookingStatus.CONFIRMED,
+      checkOut: { $gt: todayUtc() },
+    }).exec();
+    return found !== null;
+  }
+
+  // Scheduled work (HotelBookingsMaintenanceService)
+
+  /**
+   * GEN-11/HTL-23: Confirmed becomes Completed once the check-out date has arrived (UTC calendar date),
+   * the same boundary as the PAST group. Conditional on CONFIRMED, so it is safe to run on several servers
+   * and never touches cancelled or pending reservations.
+   */
+  async completeFinishedStays(today: string = todayUtc()): Promise<number> {
+    const result = await this.bookings.updateMany(
+      { status: BookingStatus.CONFIRMED, checkOut: { $lte: today } },
+      { $set: { status: BookingStatus.COMPLETED, completedAt: new Date() } },
+    ).exec();
+    return result.modifiedCount;
+  }
+
   private async page(filter: QueryFilter<HotelBooking>, sort: Record<string, 1 | -1>, page: number): Promise<HotelBookingSummaryPage> {
     const [items, total] = await Promise.all([
       this.bookings.find(filter).sort(sort).skip((page - 1) * HOTEL_BOOKINGS_PAGE_SIZE).limit(HOTEL_BOOKINGS_PAGE_SIZE).exec(),
