@@ -136,7 +136,7 @@ describe('HTL-20 hotel reservation records', { concurrency: false }, () => {
 
   it('GEN-13: rejects invalid input', async () => {
     await get(alice, '/not-an-id').expect(400);
-    await get(alice, '?group=UPCOMING').expect(400);
+    await get(alice, '?group=FUTURE').expect(400);
     await get(alice, '?group=cancelled').expect(400);
     await get(alice, '?page=0').expect(400);
     await get(alice, '?page=abc').expect(400);
