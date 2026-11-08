@@ -189,11 +189,11 @@ Each owner connects these on their own side; Person 6 does not edit their module
 | # | Question | Proposal |
 | --- | --- | --- |
 | A1 | Review moderation hooks and ACC-17 query shape as in section 6 | Arwa wires them in `ContentModerationService` and `AdminBookingsService` after PRs 1/2 merge. |
-| A2 | Should the author still see their own hidden review (GEN-10: visible to author and admins)? | Yes, on their own reservation details; never in the public list. |
+| A2 | Should the author still see their own hidden review (GEN-10: visible to author and admins)? | **Decided by the student 2026-11-08:** the same pattern as Omar's `CommentsService`. In `GET /api/hotels/:id/reviews` a hidden review is listed only for its own author and for admins, with `isHidden: true`; guests and other users never see it. Hidden reviews never count in the average or the count. The route uses optional authentication, as the blog does (Person 7's `OptionalAuthGuard`, reused unchanged). Implemented in PR 2. |
 | M1 | ACC-12: is an ongoing stay "upcoming"? Order of a late payment confirmation versus deactivation? | Ongoing stays block deactivation. Confirmation ordering to be agreed with Malak and Omar. |
 | T1 | Notifications: call `NotificationsService` directly, or through a port like flights? | Pending the student's decision. |
 | T2 | Tier rule: reuse `refundPercentageFor` from `flight-booking.rules.ts` (it reads `daysBeforeDeparture`) or a hotel version in Person 6's module? | Pending the student's decision. |
-| T3 | `GET /api/hotels/:id/reviews` for a deactivated hotel | Pending: 404 like Lama's hotel detail, or still listed. |
+| T3 | `GET /api/hotels/:id/reviews` for a deactivated hotel | **Decided by the student 2026-11-08:** 404, exactly like the hotel detail. The route calls Lama's `HotelsService.getById`, so an unknown or deactivated hotel is 404 for guests and users, while admins and the assigned moderator still see it. Implemented in PR 2. |
 
 ## 8. Delivery plan (one PR per step, each from current develop)
 
