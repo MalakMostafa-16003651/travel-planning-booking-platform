@@ -1,10 +1,14 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, QueryFilter, Types } from 'mongoose';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { InjectConnection, InjectModel } from '@nestjs/mongoose';
+import { Connection, Model, QueryFilter, Types } from 'mongoose';
 import { BookingStatus } from '../common/enums/booking-status.enum';
+// PAY-04: the single platform currency, the same constant flight bookings and payments use.
+import { PLATFORM_CURRENCY } from '../flight-bookings/flight-booking.rules';
+import { RoomInventoryAdapter } from './adapters/room-inventory.adapter';
+import { CreateHotelBookingDto } from './dto/create-hotel-booking.dto';
 import { HotelBookingDto, HotelBookingPageDto } from './dto/hotel-booking-response.dto';
 import { HotelBookingGroup } from './dto/list-hotel-bookings-query.dto';
-import { HOTEL_BOOKINGS_PAGE_SIZE } from './hotel-booking.constants';
+import { HOTEL_BOOKING_HOLD_MS, HOTEL_BOOKINGS_PAGE_SIZE } from './hotel-booking.constants';
 import { HotelBookingsClock } from './hotel-booking.dates';
 import { HotelBooking, HotelBookingDocument } from './schemas/hotel-booking.schema';
 
@@ -64,8 +68,91 @@ function summarize(booking: HotelBooking): HotelBookingSummary {
 export class HotelBookingsService {
   constructor(
     @InjectModel(HotelBooking.name) private readonly bookings: Model<HotelBookingDocument>,
+    @InjectConnection() private readonly connection: Connection,
     private readonly clock: HotelBookingsClock,
+    private readonly inventory: RoomInventoryAdapter,
   ) {}
+
+  /**
+   * HTL-16/HTL-18: validates the request, prices it from the rooms' current prices, then holds every
+   * room for 10 minutes and saves one PENDING reservation in ONE transaction. If any room overlaps a
+   * blocked range, a booked range or an unexpired hold, the transaction aborts: 409 and nothing is held.
+   */
+  async hold(input: CreateHotelBookingDto, userId: string): Promise<HotelBookingDto> {
+    const errors: Record<string, string[]> = {};
+    const fail = (field: string, message: string) => { (errors[field] ??= []).push(message); };
+
+    if (input.checkOut <= input.checkIn) fail('checkOut', 'Check-out must be after check-in');
+    if (input.checkIn < this.clock.today()) fail('checkIn', 'Check-in cannot be in the past');
+    const roomIds = input.rooms.map((room) => room.roomId.toLowerCase());
+    if (new Set(roomIds).size !== roomIds.length) fail('rooms', 'Each room can be selected only once');
+    if (input.rooms.reduce((sum, room) => sum + room.adults, 0) < 1) fail('rooms', 'At least one adult is required');
+    if (Object.keys(errors).length > 0) throw new BadRequestException({ message: 'Validation failed', errors });
+
+    const hotel = await this.inventory.getHotel(input.hotelId);
+    // ACC-15: a deactivated hotel cannot be booked.
+    if (!hotel || !hotel.isActive) {
+      throw new BadRequestException({ message: 'Validation failed', errors: { hotelId: ['Hotel not found or not available for booking'] } });
+    }
+    const found = new Map((await this.inventory.getRooms(roomIds)).map((room) => [room._id.toString(), room]));
+    const selected = input.rooms.map((request, index) => {
+      const room = found.get(request.roomId.toLowerCase());
+      if (!room || !room.hotelId.equals(hotel._id) || !room.isActive) {
+        fail(`rooms.${index}.roomId`, 'Room not found in this hotel or not available for booking');
+        return null;
+      }
+      const guests = request.adults + request.childrenAges.length;
+      if (guests > room.capacity) fail(`rooms.${index}`, `${room.name} holds at most ${room.capacity} guests`);
+      return { room, request };
+    });
+    if (Object.keys(errors).length > 0) throw new BadRequestException({ message: 'Validation failed', errors });
+
+    const nights = Math.round((Date.parse(`${input.checkOut}T00:00:00Z`) - Date.parse(`${input.checkIn}T00:00:00Z`)) / 86_400_000);
+    // HTL-16/HTL-05: name and price are copied now, so later room edits never change this reservation.
+    const rooms = selected.map((entry) => {
+      const { room, request } = entry!;
+      return {
+        roomId: room._id,
+        roomName: room.name,
+        pricePerNight: room.pricePerNight,
+        adults: request.adults,
+        childrenAges: request.childrenAges,
+        subtotal: nights * room.pricePerNight,
+      };
+    });
+
+    await this.inventory.ensureAvailability(selected.map((entry) => entry!.room));
+    const hotelBookingId = new Types.ObjectId();
+    const now = new Date();
+    const holdExpiresAt = new Date(now.getTime() + HOTEL_BOOKING_HOLD_MS);
+    const booking = await this.connection.transaction(async (session) => {
+      for (const { room } of selected.map((entry) => entry!)) {
+        const held = await this.inventory.holdRoom(room._id, input, { hotelBookingId, holdExpiresAt, now }, session);
+        if (!held) throw new ConflictException(`${room.name} is not available for these dates`);
+      }
+      const [created] = await this.bookings.create([{
+        _id: hotelBookingId,
+        userId: new Types.ObjectId(userId),
+        hotelId: hotel._id,
+        hotelName: hotel.name,
+        rooms,
+        checkIn: input.checkIn,
+        checkOut: input.checkOut,
+        nights,
+        totalPrice: rooms.reduce((sum, room) => sum + room.subtotal, 0),
+        currency: PLATFORM_CURRENCY,
+        status: BookingStatus.PENDING,
+        holdExpiresAt,
+        policySnapshot: {
+          cancellationTiers: hotel.cancellationTiers.map(({ daysBeforeCheckIn, refundPercentage }) => ({ daysBeforeCheckIn, refundPercentage })),
+          checkInTime: hotel.checkInTime,
+          checkOutTime: hotel.checkOutTime,
+        },
+      }], { session });
+      return created;
+    });
+    return HotelBookingDto.from(booking);
+  }
 
   /**
    * HTL-20: the caller's own reservations, page size 10 (GEN-05). CANCELLED includes EXPIRED
