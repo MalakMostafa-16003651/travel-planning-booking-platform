@@ -5,7 +5,7 @@ import { BookingStatus } from '../common/enums/booking-status.enum';
 import { HotelBookingDto, HotelBookingPageDto } from './dto/hotel-booking-response.dto';
 import { HotelBookingGroup } from './dto/list-hotel-bookings-query.dto';
 import { HOTEL_BOOKINGS_PAGE_SIZE } from './hotel-booking.constants';
-import { todayUtc } from './hotel-booking.dates';
+import { HotelBookingsClock } from './hotel-booking.dates';
 import { HotelBooking, HotelBookingDocument } from './schemas/hotel-booking.schema';
 
 /** One reservation as another owner's view needs it (HTL-22 moderator view, ACC-17 admin view). */
@@ -62,7 +62,10 @@ function summarize(booking: HotelBooking): HotelBookingSummary {
 
 @Injectable()
 export class HotelBookingsService {
-  constructor(@InjectModel(HotelBooking.name) private readonly bookings: Model<HotelBookingDocument>) {}
+  constructor(
+    @InjectModel(HotelBooking.name) private readonly bookings: Model<HotelBookingDocument>,
+    private readonly clock: HotelBookingsClock,
+  ) {}
 
   /**
    * HTL-20: the caller's own reservations, page size 10 (GEN-05). CANCELLED includes EXPIRED
@@ -72,7 +75,7 @@ export class HotelBookingsService {
    */
   async listMine(userId: string, group: HotelBookingGroup | undefined, page = 1): Promise<HotelBookingPageDto> {
     const owner = { userId: new Types.ObjectId(userId) };
-    const today = todayUtc();
+    const today = this.clock.today();
     const filters: Record<HotelBookingGroup, QueryFilter<HotelBooking>> = {
       [HotelBookingGroup.UPCOMING]: { ...owner, status: { $in: [BookingStatus.PENDING, BookingStatus.CONFIRMED] }, checkOut: { $gt: today } },
       [HotelBookingGroup.PAST]: {
@@ -143,7 +146,7 @@ export class HotelBookingsService {
     const found = await this.bookings.exists({
       userId: new Types.ObjectId(userId),
       status: BookingStatus.CONFIRMED,
-      checkOut: { $gt: todayUtc() },
+      checkOut: { $gt: this.clock.today() },
     }).exec();
     return found !== null;
   }
@@ -155,7 +158,7 @@ export class HotelBookingsService {
    * the same boundary as the PAST group. Conditional on CONFIRMED, so it is safe to run on several servers
    * and never touches cancelled or pending reservations.
    */
-  async completeFinishedStays(today: string = todayUtc()): Promise<number> {
+  async completeFinishedStays(today: string = this.clock.today()): Promise<number> {
     const result = await this.bookings.updateMany(
       { status: BookingStatus.CONFIRMED, checkOut: { $lte: today } },
       { $set: { status: BookingStatus.COMPLETED, completedAt: new Date() } },

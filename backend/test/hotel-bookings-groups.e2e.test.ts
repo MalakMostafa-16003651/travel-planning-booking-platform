@@ -4,7 +4,7 @@ import { getModelToken } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { BookingStatus } from '../src/common/enums/booking-status.enum';
 import { UserRole } from '../src/common/enums/user-role.enum';
-import { todayUtc } from '../src/hotel-bookings/hotel-booking.dates';
+import { HotelBookingsClock, todayUtc } from '../src/hotel-bookings/hotel-booking.dates';
 import { HotelBookingsMaintenanceService } from '../src/hotel-bookings/hotel-bookings-maintenance.service';
 import { HotelBookingsModule } from '../src/hotel-bookings/hotel-bookings.module';
 import { HotelBookingsService } from '../src/hotel-bookings/hotel-bookings.service';
@@ -12,10 +12,12 @@ import { HotelBooking } from '../src/hotel-bookings/schemas/hotel-booking.schema
 import { AdminFixture, Session } from './admin-fixture';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+/** Every test runs on this fixed "today", never the real clock, so nothing flakes around UTC midnight. */
+const TODAY = '2026-11-15';
 
-/** A UTC calendar date `days` away from today, so the tests hold on any day they run. */
+/** The calendar date `days` away from the pinned today. */
 function day(days: number): string {
-  return todayUtc(new Date(Date.now() + days * DAY_MS));
+  return todayUtc(new Date(Date.parse(`${TODAY}T12:00:00Z`) + days * DAY_MS));
 }
 
 describe('HTL-20 groups, GEN-11 completion and ACC-12 upcoming stays', { concurrency: false }, () => {
@@ -57,6 +59,8 @@ describe('HTL-20 groups, GEN-11 completion and ACC-12 upcoming stays', { concurr
     bookings = fixture.app.get(getModelToken(HotelBooking.name));
     service = fixture.app.get(HotelBookingsService);
     maintenance = fixture.app.get(HotelBookingsMaintenanceService);
+    // Pin the module's clock (the same instance the HTTP routes and the sweep use).
+    fixture.app.get(HotelBookingsClock).today = () => TODAY;
   }, { timeout: 30 * 60_000 });
   after(() => fixture.stop());
 
@@ -72,6 +76,10 @@ describe('HTL-20 groups, GEN-11 completion and ACC-12 upcoming stays', { concurr
     // 01:30 in Cairo (UTC+2) on the 9th is still the 8th in UTC.
     assert.equal(todayUtc(new Date('2026-11-09T01:30:00+02:00')), '2026-11-08');
     assert.match(todayUtc(), /^\d{4}-\d{2}-\d{2}$/);
+    // Production's clock is todayUtc(); the tests below run on the pinned date.
+    assert.equal(new HotelBookingsClock().today(), todayUtc());
+    assert.equal(fixture.app.get(HotelBookingsClock).today(), TODAY);
+    assert.deepEqual([day(-1), day(0), day(1)], ['2026-11-14', '2026-11-15', '2026-11-16']);
   });
 
   it('HTL-20: UPCOMING lists Pending and Confirmed stays not yet over, nearest check-in first, including stays in progress', async () => {
