@@ -18,6 +18,7 @@ export class MailService {
       logger: false, debug: false, disableFileAccess: true, disableUrlAccess: true,
     });
   }
+  isConfigured(): boolean { return !!this.transport; }
   assertConfigured(): void {
     if (!this.transport) throw new ServiceUnavailableException('Password recovery is not configured');
   }

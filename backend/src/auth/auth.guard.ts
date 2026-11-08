@@ -1,3 +1,4 @@
+import { EmailEligibilityService } from './email-eligibility.service';
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
 import { parse } from 'cookie';
 import { Request } from 'express';
@@ -15,7 +16,7 @@ export interface AuthenticatedRequest extends Request {
 
 @Injectable()
 export class AuthGuard implements CanActivate {
-  constructor(private readonly sessions: AuthSessionsService) {}
+  constructor(private readonly sessions: AuthSessionsService, private readonly emailEligibility: EmailEligibilityService) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
@@ -25,6 +26,7 @@ export class AuthGuard implements CanActivate {
     request.user = { userId: user._id.toString(), role: user.role };
     request.authenticatedUser = AuthenticatedUserDto.fromUser(user);
     request.authenticatedCredentialVersion = user.credentialVersion;
+    await this.emailEligibility.assertHttpBookingAccess(request.method ?? '', request.path ?? '', request.user.userId);
     return true;
   }
 }
