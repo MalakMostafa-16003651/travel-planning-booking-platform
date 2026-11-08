@@ -4,12 +4,14 @@ import { createHash } from 'node:crypto';
 import { Model, Types } from 'mongoose';
 import Stripe from 'stripe';
 import { UserRole } from '../common/enums/user-role.enum';
+import { NotificationType } from '../notifications/notification-type.enum';
+import { NotificationsService } from '../notifications/notifications.service';
 import { bookingRef } from './booking-ref';
 import { BookingType } from './bookings-port';
 import { toMinorUnits } from './money';
 import { PaymentStatus, RefundStatus } from './payment-status.enum';
 import { Payment, PaymentDocument } from './schemas/payment.schema';
-import { Refund } from './schemas/refund.schema';
+import { Refund, RefundDocument } from './schemas/refund.schema';
 import { StripeService } from './stripe.service';
 
 export interface CreateRefundInput {
@@ -40,6 +42,7 @@ export class RefundsService {
     @InjectModel(Refund.name) private readonly refunds: Model<Refund>,
     @InjectModel(Payment.name) private readonly payments: Model<Payment>,
     private readonly stripe: StripeService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /** PAY-03: reads a refund (owner or ADMIN). A PENDING one is checked with Stripe first. */
@@ -102,7 +105,7 @@ export class RefundsService {
       idempotencyKey,
     );
 
-    const refund = await this.storeRefund({
+    const { refund, created } = await this.storeRefund({
       _id: refundId,
       userId: payment.userId,
       paymentId: payment._id,
@@ -115,6 +118,8 @@ export class RefundsService {
       stripePaymentIntentId: payment.stripePaymentIntentId,
       reason,
     });
+    // Stripe can finish a refund at once; otherwise refund.updated notifies later.
+    if (created) await this.notifyIfFinal(refund);
     await this.markPaymentRefundedIfComplete(payment._id);
     return refund;
   }
@@ -134,7 +139,7 @@ export class RefundsService {
       { paymentIntentId: intent.id, amount: intent.amount_received, metadata: { refundId: refundId.toString(), paymentId: payment._id.toString() } },
       idempotencyKey,
     );
-    return this.storeRefund({
+    const { refund, created } = await this.storeRefund({
       _id: refundId,
       userId: payment.userId,
       paymentId: payment._id,
@@ -148,19 +153,39 @@ export class RefundsService {
       stripePaymentIntentId: intent.id,
       reason: 'Automatic refund: the booking was paid twice (an older payment attempt also succeeded)',
     });
+    if (created) await this.notifyIfFinal(refund);
+    return refund;
   }
 
   /** Parallel deliveries can receive the same Stripe refund before either local insert completes. */
+  // created is false when another call already stored this Stripe refund, so only one caller notifies.
   private async storeRefund(input: Partial<Refund> & { _id: Types.ObjectId; stripeRefundId: string }) {
     const existing = await this.refunds.findOne({ stripeRefundId: input.stripeRefundId }).exec();
-    if (existing) return existing;
+    if (existing) return { refund: existing, created: false };
     try {
-      return await this.refunds.create(input);
+      return { refund: await this.refunds.create(input), created: true };
     } catch (error) {
       if ((error as { code?: number }).code !== 11000) throw error;
       const winner = await this.refunds.findOne({ stripeRefundId: input.stripeRefundId }).exec();
       if (!winner) throw error;
-      return winner;
+      return { refund: winner, created: false };
+    }
+  }
+
+  /**
+   * PAY-03 / GEN-01: the user is notified once, when a refund reaches its final status. Person 2's
+   * service owns the notification; a failure to notify must not undo the refund, so it is only logged.
+   */
+  private async notifyIfFinal(refund: RefundDocument) {
+    if (refund.status === RefundStatus.PENDING) return;
+    const amount = `${refund.amount.toFixed(2)} ${refund.currency}`;
+    const message = refund.status === RefundStatus.REFUNDED
+      ? `Your refund of ${amount} has been completed.`
+      : `Your refund of ${amount} could not be completed. Our team will follow up.`;
+    try {
+      await this.notifications.notify({ userId: refund.userId.toString(), type: NotificationType.REFUND_ISSUED, message });
+    } catch {
+      this.logger.error(`Could not notify the user about refund ${refund._id.toString()}`);
     }
   }
 
@@ -171,8 +196,10 @@ export class RefundsService {
       { status: toRefundStatus(stripeRefund.status) },
       { returnDocument: 'after' },
     ).exec();
-    // TODO(Person 2): notify the user when a refund completes, once NotificationsService exists.
-    if (refund) await this.markPaymentRefundedIfComplete(refund.paymentId);
+    if (!refund) return;
+    // The status filter above lets exactly one delivery make this change, so the user is notified once.
+    await this.notifyIfFinal(refund);
+    await this.markPaymentRefundedIfComplete(refund.paymentId);
   }
 
   /** Webhook `charge.refunded`. The event does not reliably include the refunds, so they are listed from Stripe. */

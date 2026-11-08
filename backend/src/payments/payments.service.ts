@@ -298,7 +298,8 @@ export class PaymentsService {
       { returnDocument: 'after' },
     ).exec();
     if (updated) {
-      // TODO(Person 2): notify the user that the payment failed, once NotificationsService exists.
+      // No notification: GEN-01 does not list payment failures and Person 2's types have none; the
+      // failure is shown through the payment's FAILED status and failureReason (PAY-01).
       await this.bookingsPort.markPaymentFailed(updated.bookingType, readBookingId(updated), updated._id.toString());
     }
   }

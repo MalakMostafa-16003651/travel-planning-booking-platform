@@ -3,6 +3,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { AuthModule } from '../auth/auth.module';
 import { MongoFlightInventoryAdapter } from '../flight-bookings/adapters/mongo-flight-inventory.adapter';
 import { FlightBookingsModule } from '../flight-bookings/flight-bookings.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { BookingPaymentsAdapter } from './adapters/booking-payments.adapter';
 import { FlightBookingsAdapter } from './adapters/flight-bookings.adapter';
 import { BOOKINGS_PORT } from './bookings-port';
@@ -22,6 +23,8 @@ import { StripeService } from './stripe.service';
     AuthModule,
     // forwardRef: FlightBookingsModule will import this module for its BOOKING_PAYMENTS port.
     forwardRef(() => FlightBookingsModule),
+    // Person 2's in-app notifications (GEN-01), used for refunds (PAY-03).
+    NotificationsModule,
     MongooseModule.forFeature([
       { name: PolicyAcceptance.name, schema: PolicyAcceptanceSchema },
       { name: Payment.name, schema: PaymentSchema },
