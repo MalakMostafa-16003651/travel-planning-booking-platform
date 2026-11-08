@@ -36,6 +36,7 @@ export interface HotelBookingSummaryPage {
 }
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+const SWEEP_BATCH_SIZE = 100;
 
 function toObjectId(id: string, message: string): Types.ObjectId {
   if (!/^[0-9a-f]{24}$/i.test(id)) throw new NotFoundException(message);
@@ -239,6 +240,32 @@ export class HotelBookingsService {
   }
 
   // Scheduled work (HotelBookingsMaintenanceService)
+
+  /**
+   * HTL-18/GEN-11 (contract L3): a PENDING reservation whose hold has ended becomes EXPIRED and its HELD
+   * entries are removed from its rooms, in one transaction per reservation. The status condition means a
+   * reservation is expired (and released) once, even with several servers. Cancelling Omar's open
+   * PaymentIntent is added in PR 4. Returns how many reservations expired.
+   */
+  async expireOverdueHolds(now: Date = new Date()): Promise<number> {
+    const overdue = await this.bookings.find({ status: BookingStatus.PENDING, holdExpiresAt: { $lte: now } })
+      .select('_id').limit(SWEEP_BATCH_SIZE).exec();
+    let expired = 0;
+    for (const { _id } of overdue) {
+      const done = await this.connection.transaction(async (session) => {
+        const booking = await this.bookings.findOneAndUpdate(
+          { _id, status: BookingStatus.PENDING, holdExpiresAt: { $lte: now } },
+          { $set: { status: BookingStatus.EXPIRED }, $unset: { holdExpiresAt: 1 } },
+          { returnDocument: 'after', session },
+        ).exec();
+        if (!booking) return false;
+        await this.inventory.releaseHolds(booking._id, booking.rooms.map((room) => room.roomId), session);
+        return true;
+      });
+      if (done) expired += 1;
+    }
+    return expired;
+  }
 
   /**
    * GEN-11/HTL-23: Confirmed becomes Completed once the check-out date has arrived (UTC calendar date),
