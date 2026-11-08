@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { resolve } from 'node:path';
+import { AdminModule } from './admin/admin.module';
 import { AuditLogsModule } from './audit-logs/audit-logs.module';
 import { AuthModule } from './auth/auth.module';
 import { validateEnvironment } from './config/validate-environment';
@@ -41,6 +42,7 @@ import { HotelsModule } from './hotels/hotels.module';
     ItinerariesModule,
     HotelsModule,
     AuditLogsModule,
+    AdminModule,
   ],
 })
 export class AppModule {}
