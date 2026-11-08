@@ -11,6 +11,11 @@ import { Payment, PaymentDocument } from './schemas/payment.schema';
 import { Refund } from './schemas/refund.schema';
 import { StripeService } from './stripe.service';
 
+const DUPLICATE_KEY = 11000;
+// Stripe metadata values are limited to 500 characters.
+const STRIPE_METADATA_LIMIT = 500;
+const DOUBLE_PAYMENT_REASON = 'Automatic refund: the booking was paid twice (an older payment attempt also succeeded)';
+
 export interface CreateRefundInput {
   bookingType: BookingType;
   bookingId: string;
@@ -58,6 +63,9 @@ export class RefundsService {
    * because Person 4 retries failed requests: a repeated call returns the refund already created.
    */
   async refundCancelledBooking(input: CreateRefundInput) {
+    const payment = await this.payments.findOne({ ...bookingRef(input.bookingType, input.bookingId), status: PaymentStatus.SUCCEEDED }).exec();
+    // A refund Stripe made whose response or local save was lost is recorded first, so the retry finds it.
+    if (payment) await this.reconcileWithStripe(payment);
     const existing = await this.refunds.findOne({
       ...bookingRef(input.bookingType, input.bookingId),
       reason: input.reason,
@@ -72,6 +80,7 @@ export class RefundsService {
     const payment = await this.payments.findOne({ ...bookingRef(bookingType, bookingId), status: PaymentStatus.SUCCEEDED }).exec();
     if (!payment) throw new NotFoundException('No successful payment for this booking');
     if (!Number.isFinite(amount)) throw new BadRequestException('Refund amount must be a number');
+    await this.reconcileWithStripe(payment);
 
     // Minor units, so 0.1 + 0.2 style float errors cannot matter.
     const amountMinor = toMinorUnits(amount);
@@ -83,13 +92,13 @@ export class RefundsService {
 
     // Same payment + same number of earlier attempts (failed ones too) + same amount = same key:
     // a duplicated call cannot refund twice, but a new try after a FAILED refund gets a fresh key.
+    // The parameters only use stable values, because Stripe rejects a repeated key with different ones.
     const attempts = await this.refunds.countDocuments({ paymentId: payment._id }).exec();
-    const refundId = new Types.ObjectId();
     const stripeRefund = await this.stripe.createRefund(
       {
         paymentIntentId: payment.stripePaymentIntentId,
         amount: amountMinor,
-        metadata: { refundId: refundId.toString(), paymentId: payment._id.toString(), bookingType, bookingId },
+        metadata: { paymentId: payment._id.toString(), bookingType, bookingId, reason: reason.slice(0, STRIPE_METADATA_LIMIT) },
       },
       `refund-${payment._id.toString()}-${attempts}-${amountMinor}`,
     );
@@ -97,7 +106,6 @@ export class RefundsService {
     const existing = await this.refunds.findOne({ stripeRefundId: stripeRefund.id }).exec();
     if (existing) return existing;
     const refund = await this.refunds.create({
-      _id: refundId,
       userId: payment.userId,
       paymentId: payment._id,
       bookingType,
@@ -115,6 +123,7 @@ export class RefundsService {
 
   /** Refunds of the payment itself, not of an extra, double-paid intent. */
   async hasRefunds(payment: PaymentDocument): Promise<boolean> {
+    await this.reconcileWithStripe(payment);
     return await this.refunds.countDocuments(this.ownRefunds(payment)).exec() > 0;
   }
 
@@ -122,13 +131,14 @@ export class RefundsService {
   async refundExtraIntent(payment: PaymentDocument, intent: Stripe.PaymentIntent) {
     const existing = await this.refunds.findOne({ stripePaymentIntentId: intent.id }).exec();
     if (existing) return existing;
-    const refundId = new Types.ObjectId();
+    // Stable parameters: a retry after a lost response replays the same Stripe refund.
     const stripeRefund = await this.stripe.createRefund(
-      { paymentIntentId: intent.id, amount: intent.amount_received, metadata: { refundId: refundId.toString(), paymentId: payment._id.toString() } },
+      { paymentIntentId: intent.id, amount: intent.amount_received, metadata: { paymentId: payment._id.toString(), reason: DOUBLE_PAYMENT_REASON } },
       `refund-extra-${intent.id}`,
     );
+    const replayed = await this.refunds.findOne({ stripeRefundId: stripeRefund.id }).exec();
+    if (replayed) return replayed;
     return this.refunds.create({
-      _id: refundId,
       userId: payment.userId,
       paymentId: payment._id,
       bookingType: payment.bookingType,
@@ -139,8 +149,39 @@ export class RefundsService {
       status: toRefundStatus(stripeRefund.status),
       stripeRefundId: stripeRefund.id,
       stripePaymentIntentId: intent.id,
-      reason: 'Automatic refund: the booking was paid twice (an older payment attempt also succeeded)',
+      reason: DOUBLE_PAYMENT_REASON,
     });
+  }
+
+  /**
+   * Records refunds Stripe made for this payment that have no local row: the Stripe response or the
+   * local save was lost. Without this a retry would not see them and could refund again.
+   */
+  private async reconcileWithStripe(payment: PaymentDocument): Promise<void> {
+    const stripeRefunds = await this.stripe.listRefunds(payment.stripePaymentIntentId);
+    for (const stripeRefund of stripeRefunds) {
+      if (stripeRefund.metadata?.paymentId !== payment._id.toString()) continue;
+      if (await this.refunds.exists({ stripeRefundId: stripeRefund.id }).exec()) continue;
+      try {
+        await this.refunds.create({
+          userId: payment.userId,
+          paymentId: payment._id,
+          bookingType: payment.bookingType,
+          flightBookingId: payment.flightBookingId,
+          hotelBookingId: payment.hotelBookingId,
+          amount: stripeRefund.amount / 100,
+          currency: stripeRefund.currency?.toUpperCase() ?? payment.currency,
+          status: toRefundStatus(stripeRefund.status),
+          stripeRefundId: stripeRefund.id,
+          stripePaymentIntentId: payment.stripePaymentIntentId,
+          reason: stripeRefund.metadata?.reason,
+        });
+      } catch (error) {
+        // A parallel call recorded it first.
+        if ((error as { code?: number }).code !== DUPLICATE_KEY) throw error;
+      }
+    }
+    await this.markPaymentRefundedIfComplete(payment._id);
   }
 
   /** Webhook `refund.updated`. Only a PENDING refund changes, so old or repeated events cannot undo a final status. */

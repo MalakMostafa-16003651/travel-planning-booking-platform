@@ -127,6 +127,41 @@ describe('PAY-03 refunds', { concurrency: false }, () => {
     assert.equal(await refunds().countDocuments({ _id: current!.refundId }), 1);
   });
 
+  it('records, without refunding twice, a refund whose Stripe response was lost', async () => {
+    stripe.loseNextRefundResponse = true;
+    await fixture.http().post(`/api/flight-bookings/${bookingId}/cancel`).set('Cookie', owner.cookie).expect(200);
+    // Stripe made the refund, but there is no local record and the booking still owes it.
+    assert.equal(stripe.refunds.size, 1);
+    assert.equal(await refunds().countDocuments(), 0);
+    assert.equal((await booking())!.refundDue, true);
+
+    await fixture.flightBookings.retryDueRefunds();
+    const current = await booking();
+    assert.equal(current!.refundDue, false);
+    const stored = await refunds().findOne({ _id: current!.refundId });
+    assert.equal(stored!.stripeRefundId, [...stripe.refunds.keys()][0]);
+    assert.equal(stored!.amount, 75);
+    assert.equal(stored!.reason, 'Booking cancelled by the user');
+    assert.equal(stripe.refunds.size, 1);
+    assert.equal(await refunds().countDocuments(), 1);
+  });
+
+  it('records a refund whose local save failed, and then refuses to refund more than was paid', async () => {
+    const service = refundsService as unknown as { refunds: { create: (...args: unknown[]) => Promise<unknown> } };
+    const original = service.refunds.create.bind(service.refunds);
+    service.refunds.create = async () => {
+      service.refunds.create = original;
+      throw new Error('Database write failed');
+    };
+    await assert.rejects(refundsService.createRefund({ bookingType: 'flight', bookingId, amount: 150, reason: 'test' }), /Database write failed/);
+    assert.equal(stripe.refunds.size, 1);
+    assert.equal(await refunds().countDocuments(), 0);
+    // The retry finds Stripe's refund, records it, and sees nothing left to refund.
+    await assert.rejects(refundsService.createRefund({ bookingType: 'flight', bookingId, amount: 150, reason: 'test' }), { status: 400 });
+    assert.equal(await refunds().countDocuments(), 1);
+    assert.equal(stripe.calls.createRefund, 1);
+  });
+
   it('shows a refund only to its owner and admins', async () => {
     const cancelled = await fixture.http().post(`/api/flight-bookings/${bookingId}/cancel`).set('Cookie', owner.cookie).expect(200);
     const refundId = cancelled.body.refundId as string;

@@ -11,11 +11,12 @@ export const TEST_STRIPE_CONFIG = { STRIPE_SECRET_KEY: 'sk_test_never_used_for_n
 export class FakeStripe {
   intents = new Map<string, Stripe.PaymentIntent>();
   refunds = new Map<string, Stripe.Refund>();
-  private refundsByKey = new Map<string, Stripe.Refund>();
+  private refundsByKey = new Map<string, { parameters: string; refund: Stripe.Refund }>();
   calls = { createIntent: 0, createRefund: 0 };
   failNextCancel = false;
   failNextRefund = false;
   failNextRetrieve = false;
+  loseNextRefundResponse = false;
   refundStatus: Stripe.Refund['status'] = 'pending';
   private sequence = 0;
 
@@ -38,17 +39,27 @@ export class FakeStripe {
       return { ...intent };
     };
     service.createRefund = async ({ paymentIntentId, amount, metadata }, idempotencyKey) => {
-      // Stripe replays the same refund for a repeated idempotency key.
+      // Stripe replays the same refund for a repeated idempotency key, but only with identical
+      // parameters; different parameters are an idempotency_error.
+      const parameters = JSON.stringify({ paymentIntentId, amount, metadata });
       const replay = this.refundsByKey.get(idempotencyKey);
-      if (replay) return { ...replay };
+      if (replay) {
+        if (replay.parameters !== parameters) throw new Error('idempotency_error: keys for idempotent requests can only be used with the same parameters');
+        return { ...replay.refund };
+      }
       if (this.failNextRefund) {
         this.failNextRefund = false;
         throw new Error('Stripe is unavailable');
       }
       this.calls.createRefund += 1;
-      const refund = { id: `re_test_${++this.sequence}`, object: 'refund', amount, payment_intent: paymentIntentId, metadata, status: this.refundStatus } as unknown as Stripe.Refund;
+      const refund = { id: `re_test_${++this.sequence}`, object: 'refund', amount, currency: 'usd', payment_intent: paymentIntentId, metadata, status: this.refundStatus } as unknown as Stripe.Refund;
       this.refunds.set(refund.id, refund);
-      this.refundsByKey.set(idempotencyKey, refund);
+      this.refundsByKey.set(idempotencyKey, { parameters, refund });
+      if (this.loseNextRefundResponse) {
+        // Stripe made the refund, but the response never reached us.
+        this.loseNextRefundResponse = false;
+        throw new Error('Connection reset before the response arrived');
+      }
       return { ...refund };
     };
     service.retrieveRefund = async (id) => {
