@@ -399,8 +399,7 @@ export class HotelsService {
   }
 
   /**
-   * HTL-22. Ownership is checked here, independent of the bookings port, so a moderator never
-   * gets a 503 for a hotel that isn't even theirs: the 404/403 case always wins over "not built yet".
+   * ACC-11/HTL-22. Check the authenticated moderator's assignment before the booking query.
    */
   async getReservations(moderatorId: string, hotelId: string, page: number): Promise<HotelReservationsPage> {
     await this.assertOwnHotel(moderatorId, hotelId);

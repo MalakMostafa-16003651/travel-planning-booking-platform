@@ -154,6 +154,10 @@ as a matching city.
 Same open question as flights: `pricePerNight`'s currency (PAY-04). Using
 integer minor units as a placeholder, consistent with `CabinInventory.price`.
 
+## ACC-11 integration update - 2026-11-08
+
+Malak approved the multi-room HTL-22 response while implementing ACC-11. The feature branch replaces the pending reservation binding with HotelBookingsReservationsAdapter, reusing Osama's HotelBookingsService.listForHotel and projected guest names from UsersService. Ownership is checked first. The response has rooms[], guestCount, bookingReference, userId/guestName, dates/status/currency, totalAmount in minor units and the existing page/pageSize/total/totalPages. Single roomId and guests are replaced by the approved fields. No database schema changes. The exact contract is backend/src/hotels/ports/hotel-reservations.port.ts and its Swagger DTO. Older pending-adapter wording below is historical; this change becomes shared develop behavior after PR review/merge. Other availability/booking questions remain open.
+
 ## 5. What Person 5 exports for others
 
 ### Person 6 (HotelBooking, not shipped)
