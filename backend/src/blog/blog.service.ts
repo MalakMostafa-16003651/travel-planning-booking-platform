@@ -208,12 +208,13 @@ export class BlogService {
     };
   }
 
-  // Deleting a post also deletes its comments, likes and images.
+  // Deleting a post also deletes its comments, likes and images. The post goes first: a comment, like
+  // or image written after that finds no post and removes itself, and one written before is removed here.
   private async deletePost(post: BlogPostDocument): Promise<void> {
+    await this.posts.deleteOne({ _id: post._id }).exec();
     await this.comments.deleteMany({ postId: post._id }).exec();
     await this.likes.deleteMany({ postId: post._id }).exec();
     await this.images.deleteMany({ postId: post._id }).exec();
-    await this.posts.deleteOne({ _id: post._id }).exec();
   }
 
   // Author visibility is checked at read time with a $lookup, so deactivating a user hides their

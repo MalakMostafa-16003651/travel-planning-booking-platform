@@ -24,7 +24,13 @@ export class LikesService {
       if ((error as { code?: number }).code === DUPLICATE_KEY) throw new ConflictException('You already liked this post');
       throw error;
     }
-    return this.changeCount(post._id, 1, true);
+    const counted = await this.changeCount(post._id, 1, true);
+    if (!counted) {
+      // The post was deleted meanwhile: do not leave a like without its post.
+      await this.likes.deleteOne({ postId: post._id, userId: new Types.ObjectId(viewer.userId) }).exec();
+      throw new NotFoundException('Post not found');
+    }
+    return counted;
   }
 
   /** BLG-06 */
@@ -32,7 +38,7 @@ export class LikesService {
     if (!Types.ObjectId.isValid(postId)) throw new NotFoundException('You have not liked this post');
     const removed = await this.likes.findOneAndDelete({ postId: new Types.ObjectId(postId), userId: new Types.ObjectId(viewer.userId) }).exec();
     if (!removed) throw new NotFoundException('You have not liked this post');
-    return this.changeCount(removed.postId, -1, false);
+    return (await this.changeCount(removed.postId, -1, false)) ?? { liked: false, likesCount: 0 };
   }
 
   /** Whether this viewer liked the post, for the post page. */
@@ -41,10 +47,10 @@ export class LikesService {
     return await this.likes.countDocuments({ postId, userId: new Types.ObjectId(viewer.userId) }).exec() > 0;
   }
 
-  // Called only after a like was really added or removed.
+  // Called only after a like was really added or removed. Unconditional, so every removed row cancels
+  // exactly the increment of its creation whatever the order. Null when the post no longer exists.
   private async changeCount(postId: Types.ObjectId, by: 1 | -1, liked: boolean) {
-    const filter = by === -1 ? { _id: postId, likesCount: { $gt: 0 } } : { _id: postId };
-    const post = await this.posts.findOneAndUpdate(filter, { $inc: { likesCount: by } }, { returnDocument: 'after' }).exec();
-    return { liked, likesCount: post?.likesCount ?? 0 };
+    const post = await this.posts.findOneAndUpdate({ _id: postId }, { $inc: { likesCount: by } }, { returnDocument: 'after' }).exec();
+    return post ? { liked, likesCount: Math.max(0, post.likesCount) } : null;
   }
 }
