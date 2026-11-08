@@ -129,3 +129,80 @@ DEACTIVATED author is returned as **"Deleted user"** (ACC-12). Nothing is copied
   refund requested after commit with retry; BOOKING_CANCELLED notification.
 - External calls (Stripe through Omar, notifications) never run inside a database transaction; a failed
   notification never undoes a committed change.
+
+## 6. Interfaces with other owners
+
+### Exported by Person 6 (`HotelBookingsModule` exports `HotelBookingsService`, `ReviewsModule` exports `ReviewsService`)
+
+Each owner connects these on their own side; Person 6 does not edit their modules or adapters.
+
+| Consumer | Method | Purpose |
+| --- | --- | --- |
+| Omar (PAY-01/02) | `getPayable(hotelBookingId, userId)` | Owner-only; 404 otherwise. Returns status, `totalPrice` (minor units), currency, `holdExpiresAt`, hotel cancellation tiers and check-in/check-out times for PAY-02. Omar's adapter converts to major units for `PayableBooking`. |
+| Omar (PAY-01) | `confirmPaidBooking(hotelBookingId, paymentId)` | Idempotent per `paymentId`; 409 if the hold ended. |
+| Omar (PAY-01) | `markPaymentFailed(hotelBookingId, paymentId)` | Proposal: no state change; the reservation stays `PENDING` until its hold ends (same as flights). |
+| Lama (HTL-22) | `listForHotel(hotelId, page)` | Reservations of one hotel (guest, dates, rooms, status), page size 10. Lama checks moderator ownership and binds it in place of `PendingHotelReservationsAdapter`. |
+| Lama (HTL-02, HTL-12) | `ReviewsService.getRatingStats(hotelIds)` | `Map<hotelId, { averageRating, ratingCount }>`, visible reviews only; unrated hotels absent. |
+| Lama (HTL-06) | `hasActiveReservationsForRoom(roomId)` / `roomHasEverBeenReserved(roomId)` | Proposal, see question L5. |
+| Arwa (ACC-17) | `listForAdmin({ status, from, to, page })` | Read-only, same shape as `FlightBookingsService.listForAdmin`. |
+| Arwa (ACC-15) | collection `hotelbookings`, fields `hotelId`, `userId`, `status` | Her `confirmedCustomerIds` query for hotel deactivation notices. |
+| Arwa (GEN-09/10) | `ReviewsService.reviewExists(id)`, `setReviewHidden(id, hidden)`, `adminDeleteReview(id)` | Same three operations as Omar's posts/comments; 404 when the review does not exist. |
+| Malak (ACC-12) | `hasUpcomingConfirmedBookings(userId)` | True if a `CONFIRMED` reservation has not checked out yet (includes ongoing stays). |
+
+### Needed by Person 6
+
+| Owner | Needed | Status on develop 2026-11-08 |
+| --- | --- | --- |
+| Malak | `AuthGuard`, `RolesGuard`, `@Roles`, `UsersService.getDisplayNames` | Merged; reused, not copied. |
+| Lama | `Hotel` (`isActive`, `checkInTime`, `checkOutTime`, `cancellationTiers`), `Room` (`capacity`, `pricePerNight`, `isActive`), `RoomAvailability.bookedRanges`, `HotelsService.getAssignedHotelId` | Merged. Positive bookable ranges (HTL-04) and a time zone are **missing** (questions L1, L2). |
+| Omar | A hotel `BookingsPort` adapter in `payments/`, hotel policies in `PoliciesService`, PaymentIntent cancellation on expiry and idempotent refunds for hotel reservations | **Missing**: `PaymentsModule` binds `BOOKINGS_PORT` to `FlightBookingsAdapter` only, which returns null for hotels. |
+| Arwa | `NotificationsService.notify` with `BOOKING_CONFIRMED`, `BOOKING_CANCELLED` | Merged. |
+
+## 7. Open questions
+
+### Lama (Person 5): must be agreed before PR 3 (holds)
+
+| # | Question | Proposal |
+| --- | --- | --- |
+| L1 | HTL-04 requires positive, non-overlapping bookable date ranges. `RoomAvailability` only has `blockedRanges`/`bookedRanges`. What field and shape will hold them? | For example `bookableRanges[{ startDate, endDate }]` on the same document, so the hold filter adds "`[checkIn, checkOut)` lies inside one bookable range" to the same conditional write. |
+| L2 | Time zone for "check-in not in the past", "before the check-in date", tier days, Upcoming/Past and completion. `Hotel` and `City` have no time-zone field. | One rule for both modules, decided by Lama and the team leader: either an IANA `timeZone` on `Hotel`, or calendar dates compared in UTC. |
+| L3 | The contract's hold filter rejects any overlapping `bookedRanges` entry, including expired `HELD` ones, and `HotelsService.isRoomFree` treats them as taken. HTL-18 only blocks *unexpired* holds. | An entry blocks if `status: BOOKED`, or `status: HELD` with `holdExpiresAt > now`; search applies the same rule. The expiry sweep also removes expired holds. |
+| L4 | A `RoomAvailability` document exists only after a moderator first blocks dates. May the hold create it (idempotent `$setOnInsert` upsert, the same pattern as `blockDates`)? | Yes, from Person 6's own adapter inside `hotel-bookings/`, writing only `bookedRanges`. |
+| L5 | HTL-06: "reject deactivation/blocking that overlaps a Confirmed or Pending reservation" can use `bookedRanges`; "deletion only if never reserved" cannot, because ranges are removed on cancel/expiry. | Person 6 exports `roomHasEverBeenReserved(roomId)` from `hotelbookings`. |
+| L6 | HTL-22 port: `HotelReservationSummary` has a single `roomId` and `guests: number`; a reservation has several rooms, and the view needs the guest. | Lama changes the port to `rooms[]` (`roomId`, `roomName`, `adults`, `childrenAges`) plus `userId`; she resolves the guest name. |
+| L7 | Room `type` and `beds` (HTL-03) are not on `Room` yet. | Snapshotted into `rooms[]` once they exist. |
+| L8 | `DATE_ONLY` accepts impossible dates such as 2027-02-31 (audit F5). | Person 6's DTOs validate real calendar dates; one shared helper if Lama prefers. |
+
+### Omar (Person 8): must be agreed before PRs 4 and 5
+
+| # | Question | Proposal |
+| --- | --- | --- |
+| O1 | Who adds the hotel side of `BOOKINGS_PORT`? | Omar, in `payments/adapters/`, calling `getPayable`/`confirmPaidBooking`/`markPaymentFailed`. |
+| O2 | Payment failure | No state change; the user may retry until the hold ends (PAY-01). |
+| O3 | Hold expiry | Person 6's sweep marks `EXPIRED`, releases rooms, then calls Omar's `cancelPendingPayment('hotel', hotelBookingId)` through a port in Person 6's module that Omar implements. A success after expiry gets 409 from `confirmPaidBooking`, and Omar refunds it in full. |
+| O4 | Refunds | Person 6 calls `createRefund({ bookingType: 'hotel', bookingId, amount, reason })` after commit, amount in minor units; it must be idempotent per reservation because failed requests are retried every minute. Refund status is shown on the reservation details. |
+| O5 | Which tiers apply at cancellation: the snapshot accepted before payment, or the hotel's current tiers? | Snapshot, so the user gets the policy they accepted (PAY-02). Needs Omar's and Lama's agreement. |
+| O6 | Days before check-in for tier selection | Depends on L2; same selection rule as FLT-09. |
+
+### Arwa (Person 2), Malak (Person 1) and the team leader
+
+| # | Question | Proposal |
+| --- | --- | --- |
+| A1 | Review moderation hooks and ACC-17 query shape as in section 6 | Arwa wires them in `ContentModerationService` and `AdminBookingsService` after PRs 1/2 merge. |
+| A2 | Should the author still see their own hidden review (GEN-10: visible to author and admins)? | Yes, on their own reservation details; never in the public list. |
+| M1 | ACC-12: is an ongoing stay "upcoming"? Order of a late payment confirmation versus deactivation? | Ongoing stays block deactivation. Confirmation ordering to be agreed with Malak and Omar. |
+| T1 | Notifications: call `NotificationsService` directly, or through a port like flights? | Pending the student's decision. |
+| T2 | Tier rule: reuse `refundPercentageFor` from `flight-booking.rules.ts` (it reads `daysBeforeDeparture`) or a hotel version in Person 6's module? | Pending the student's decision. |
+| T3 | `GET /api/hotels/:id/reviews` for a deactivated hotel | Pending: 404 like Lama's hotel detail, or still listed. |
+
+## 8. Delivery plan (one PR per step, each from current develop)
+
+| PR | Branch | Content | Dependencies |
+| --- | --- | --- | --- |
+| 0 | `docs/HTL-16-hotel-booking-contract` | This proposal and the work log. | None. |
+| 1 | `feature/HTL-20-hotel-booking-records` | Schema, own list/detail, `listForHotel`, `listForAdmin`, `hasUpcomingConfirmedBookings`, completion sweep. | Upcoming/Past grouping and the sweep wait for L2. |
+| 2 | `feature/HTL-23-hotel-reviews` | Reviews, public list with average/count, moderation and rating-stat exports. | PR 1. |
+| 3 | `feature/HTL-16-hotel-booking` | `POST /api/hotel-bookings` with transactional holds and concurrency tests. | L1-L4 and L2 agreed and merged. |
+| 4 | `feature/HTL-17-hotel-booking-payment` | Payment integration, confirmation, notification, expiry. | O1-O3 agreed and Omar's hotel support merged. |
+| 5 | `feature/HTL-21-hotel-booking-cancel` | Quote, cancel, room release, refund, notification. | O4-O6 agreed and merged. |
+| 6 | `feature/HTL-26-review-replies` | Bonus, only after everything mandatory. | PR 2. |
