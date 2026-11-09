@@ -319,3 +319,14 @@ Final ACC-07 check: production build/test compilation PASS; complete isolated su
 
 
 Session publication (2026-11-08): [PR55](https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/pull/55) contains the approved ACC-11 integration and ACC-07 backend. The team leader requested merging the saved edits. Use the PR record for the final merge state; tests/setup limits remain as documented. Before merging Osama's separate fix/HTL-22-reservations-port-shape branch, reconcile its per-room roomId/guests output with this approved rooms[]/guestCount/bookingReference contract.
+
+
+## ACC-02 accepted implementation and booking handoff - 2026-11-09
+
+Malak approved User.emailVerifiedAt, EMAIL_VERIFICATION_URL and default-off EMAIL_VERIFICATION_REQUIRED, private24-hour single-use latest-email proofs and the reusable booking guard/service. On2026-11-09 she explicitly resolved the later no-teammate-edits constraint: **"Add only the required verification checks (recommended)"**. Accordingly the only teammate implementation edits are calls/injection of EmailEligibilityService in FlightBookingsService, HotelBookingsService and PaymentsService. No booking schema, financial algorithm, role/status enum, target ownership rule or new environment name is introduced.
+
+- Current endpoints: GET /api/auth/email-verification (own booleans), POST /api/auth/resend-verification (own normal session, generic202), POST /api/auth/verify-email (proof-only204). Registration queues email when ready; failed delivery does not misreport registration failure. No automatic login.
+- New holds/payment attempts require a currently active verified account when the flag is on. Flight confirmation rechecks in its transaction before converting inventory. Hotel hold creation rechecks in its transaction. Late ineligible payment success follows the existing full-refund path; transient eligibility lookup failure propagates for retry. Confirmed history and idempotent replay remain valid.
+- SMTP configuration plus trusted verification URL are required before activation. The flag remains false in the example; private .env is not changed. Existing unverified/legacy accounts need proof too. Profiles cannot edit email; any future email-change operation must clear verification/invalidate prior proofs atomically.
+- Future paid hotel confirmation, which is not yet implemented by its owner, must reuse EmailEligibilityService.canBook(userId, session) before inventory state writes. The generic PaymentsService check already gates its booking-port confirmation calls for either type. Do not duplicate verification fields, proof storage or enums in booking modules.
+- Full operational instructions are in backend/README.md. The single student log records executed tests and their limits; automated fake delivery does not prove a real inbox or real Stripe account. M2 client pages are outside this M1 backend change.

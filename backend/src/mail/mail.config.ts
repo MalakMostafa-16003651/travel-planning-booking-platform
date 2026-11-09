@@ -17,8 +17,10 @@ export function readMailConfiguration(config: ConfigService): MailConfiguration 
   return { host, port, user, pass, from };
 }
 
-export function readPasswordResetUrl(config: ConfigService): string | undefined {
-  const value = config.get<unknown>('PASSWORD_RESET_URL');
+export function readPasswordResetUrl(config: ConfigService): string | undefined { return readTrustedMailUrl(config, 'PASSWORD_RESET_URL'); }
+
+export function readTrustedMailUrl(config: ConfigService, key: 'PASSWORD_RESET_URL' | 'EMAIL_VERIFICATION_URL'): string | undefined {
+  const value = config.get<unknown>(key);
   if (value === undefined || value === '') return undefined;
   try {
     if (typeof value !== 'string' || /[\r\n]/.test(value)) throw new Error();
@@ -26,5 +28,5 @@ export function readPasswordResetUrl(config: ConfigService): string | undefined 
     const localHttp = url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
     if ((!localHttp && url.protocol !== 'https:') || url.username || url.password || url.search || url.hash) throw new Error();
     return url.toString();
-  } catch { throw new Error('PASSWORD_RESET_URL must be a trusted HTTPS URL without credentials, query or fragment (HTTP allowed only on loopback)'); }
+  } catch { throw new Error(key + ' must be a trusted HTTPS URL without credentials, query or fragment (HTTP allowed only on loopback)'); }
 }

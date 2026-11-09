@@ -78,6 +78,21 @@ export class UsersService implements OnModuleInit {
       .map((id) => id.toLowerCase()))].map((id) => new Types.ObjectId(id));
   }
 
+  /** Private verification lookup: no password or session secrets are selected. */
+  async findForEmailVerification(userId: string, session?: ClientSession): Promise<UserDocument | null> {
+    if (!Types.ObjectId.isValid(userId)) return null;
+    return this.users.findById(userId).select('+emailVerifiedAt').session(session ?? null).exec();
+  }
+  async hasVerifiedEmail(userId: string, session?: ClientSession): Promise<boolean> {
+    if (!Types.ObjectId.isValid(userId)) return false;
+    return !!await this.users.exists({ _id: userId, status: AccountStatus.ACTIVE, emailVerifiedAt: { $type: 'date' } }).session(session ?? null).exec();
+  }
+  async markEmailVerified(userId: string, email: string, session: ClientSession): Promise<boolean> {
+    const result = await this.users.updateOne({ _id: userId, email, status: AccountStatus.ACTIVE, emailVerifiedAt: null },
+      { $currentDate: { emailVerifiedAt: true } }, { session, upsert: false }).exec();
+    return result.matchedCount === 1;
+  }
+
   async findForAuthentication(email: string): Promise<UserDocument | null> {
     // Sensitive fields are loaded only for the authentication service, never an API response.
     return this.users.findOne({ email: email.trim().toLowerCase() })

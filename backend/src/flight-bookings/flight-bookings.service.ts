@@ -1,3 +1,4 @@
+import { EmailEligibilityService } from '../auth/email-eligibility.service';
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { ClientSession, Connection, QueryFilter, Model, Types } from 'mongoose';
@@ -53,6 +54,7 @@ export class FlightBookingsService {
     @Inject(FLIGHT_INVENTORY) private readonly inventory: FlightInventoryPort,
     @Inject(BOOKING_PAYMENTS) private readonly payments: BookingPaymentsPort,
     @Inject(BOOKING_NOTIFICATIONS) private readonly notifications: BookingNotificationsPort,
+    private readonly emailEligibility: EmailEligibilityService,
   ) {}
 
   /** FLT-19/FLT-21: prices the request without reserving or storing anything. */
@@ -73,6 +75,7 @@ export class FlightBookingsService {
   /** FLT-22: seats and booking commit together, so a round trip never half-reserves. */
   async hold(input: CreateFlightBookingDto, userId: string): Promise<FlightBookingDto> {
     const booking = await this.connection.transaction(async (session) => {
+      await this.emailEligibility.assertCanBook(userId, session);
       const selected = await this.selectSegments(input, session);
       const priced = this.price(input.passengers, selected);
       for (const { cabin } of selected) {
@@ -418,6 +421,10 @@ export class FlightBookingsService {
     const existing = await this.bookings.findById(_id).session(session).exec();
     if (!existing) throw new NotFoundException('Flight booking not found');
     if (existing.status === BookingStatus.CONFIRMED && existing.paymentId?.toString() === paymentId) return null;
+    // ACC-02: already-confirmed deliveries stay idempotent; deny a new confirmation before inventory writes.
+    if (existing.status === BookingStatus.PENDING && !await this.emailEligibility.canBook(existing.userId.toString(), session)) {
+      throw new ConflictException('Verify your email before booking');
+    }
     const confirmed = await this.bookings.findOneAndUpdate(
       { _id, status: BookingStatus.PENDING, holdExpiresAt: { $gt: new Date() } },
       {

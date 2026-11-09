@@ -1,3 +1,4 @@
+import { FavoritesModule } from './favorites/favorites.module';
 import { ItineraryExportsModule } from './itinerary-exports/itinerary-exports.module';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -45,6 +46,7 @@ import { ReviewsModule } from './reviews/reviews.module';
     FlightsModule,
     ItinerariesModule,
     ItineraryExportsModule,
+    FavoritesModule,
     HotelsModule,
     HotelBookingsModule,
     ReviewsModule,
