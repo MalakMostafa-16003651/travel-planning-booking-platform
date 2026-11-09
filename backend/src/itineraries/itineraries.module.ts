@@ -8,7 +8,9 @@ import { UsersModule } from '../users/users.module';
 import { UsersService } from '../users/users.service';
 import { AirportsModule } from '../airports/airports.module';
 import { ReferenceDataModule } from '../reference-data/reference-data.module';
-import { PendingFlightSearchAdapter, PendingHotelSearchAdapter } from './adapters/pending-travel-search.adapters';
+import { HotelsModule } from '../hotels/hotels.module';
+import { HotelsServiceSearchAdapter } from './adapters/hotel-search.adapter';
+import { PendingFlightSearchAdapter } from './adapters/pending-travel-search.adapters';
 import { ExchangeRatesService } from './currency/exchange-rates.service';
 import { FxRatesClient } from './currency/fx-rates.client';
 import { ItinerariesController } from './itineraries.controller';
@@ -29,6 +31,7 @@ import { Itinerary, ItinerarySchema } from './schemas/itinerary.schema';
     UsersModule,
     ReferenceDataModule,
     AirportsModule,
+    HotelsModule,
     MongooseModule.forFeature([
       { name: Itinerary.name, schema: ItinerarySchema },
       { name: ActivityImage.name, schema: ActivityImageSchema },
@@ -48,7 +51,7 @@ import { Itinerary, ItinerarySchema } from './schemas/itinerary.schema';
     { provide: ITINERARY_AUTHOR_NAMES, useExisting: UsersService },
     { provide: ITINERARY_CURRENCIES, useExisting: CurrenciesService },
     { provide: ITINERARY_FLIGHT_SEARCH, useClass: PendingFlightSearchAdapter }, // -> FlightsService (Person 3)
-    { provide: ITINERARY_HOTEL_SEARCH, useClass: PendingHotelSearchAdapter }, // -> HotelsService (Person 5)
+    { provide: ITINERARY_HOTEL_SEARCH, useClass: HotelsServiceSearchAdapter }, // HotelsService.search (HTL-11, HTL-12)
   ],
   exports: [ItinerariesService],
 })
