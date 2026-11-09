@@ -241,7 +241,7 @@ export class ItinerariesController {
   @Get(':id/flights')
   @UseGuards(OptionalAuthGuard)
   @ApiCookieAuth('accessToken')
-  @ApiOperation({ summary: 'ITN-26: search flights to the first itinerary city', description: 'Select an origin airport and one-way or round-trip search. Destination airports come from the first day city; departure defaults to itinerary start and return to its last day. Reuses Flights search; returns 503 until its adapter is connected.' })
+  @ApiOperation({ summary: 'ITN-26: search flights to the first itinerary city', description: 'Select an origin airport and one-way or round-trip search. Destination airports come from the first day city; departure defaults to itinerary start and return to its last day. Reuses the Flights search (FLT-11, FLT-12, FLT-15) across every airport of that city. One-way returns a result page; round trip returns outbound and return pages.' })
   @ApiOkResponse({ description: '{ itineraryId, criteria, results } where results come from flight search.' })
   @ApiBadRequestResponse({ type: ApiErrorDto })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: READ_NOT_FOUND_DOC })

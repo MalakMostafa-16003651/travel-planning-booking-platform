@@ -1,6 +1,6 @@
 # Itineraries, Activities and Budgeting: shared contract
 
-Status: implemented backend corrections on `develop`. The ITN-25 hotel search is connected to HotelsService; the ITN-26 flight search adapter remains pending agreement with Person 3 (see below). Person 7 owns this module. Malak's explicitly authorized fixes and tests are recorded in docs/work-logs/16003651.md; no changes are attributed to Kiki that she did not perform.
+Status: implemented backend corrections on `develop`. Both search ports are connected: ITN-25 to `HotelsService.search` and ITN-26 to `FlightsService.searchForItinerary` (see below). Person 7 owns this module. Malak's explicitly authorized fixes and tests are recorded in docs/work-logs/16003651.md; no changes are attributed to Kiki that she did not perform.
 
 Sources: reviewed requirements workbook (ITN-01 through ITN-26, GEN-08, ACC-09/11/12), revised project PDF sections 5.1 and 8, and team-leader-approved reference schema design on 2026-11-06. Milestone 1 is backend only.
 
@@ -64,6 +64,6 @@ GET /api/itineraries/:id/flights takes departureAirportCode, roundTrip, optional
 - **A, no Flights change (Person 7 proposal):** the itinerary sends a single `arrivalAirportCode`. It accepts an optional `arrivalAirportCode` query parameter that must be one of the first city's official airports, defaulting to that city's only airport, and returns 400 listing the choices when there are several. The adapter then calls `search` or `searchRoundTrip` directly.
 - **B, Flights change (Gamila):** FlightsService exposes a public search that accepts several arrival airports and paginates the combined, sorted list.
 
-Until one is chosen, `GET /api/itineraries/:id/flights` returns 503.
+**Decision: option B (2026-11-09).** Gamila added `FlightsService.searchForItinerary(criteria)`, which takes the port's criteria unchanged. It runs the FLT-11 one-way search for each destination airport (and each return leg), merges and sorts by departure time, then paginates once (10 per page). One-way returns `{ items, page, pageSize, total }`; round trip returns `{ outbound, return }`, each paginated, keeping only returns that leave after an outbound arrival. FlightsModule exports `ItineraryFlightSearchAdapter`, and ItinerariesModule binds it with `{ provide: ITINERARY_FLIGHT_SEARCH, useExisting: ItineraryFlightSearchAdapter }`. The itinerary keeps its own validation (airports exist, departure differs from every destination, return date, passenger counts).
 
 Optional ITN-27/28 remain outside this work. Account deactivation itself and its booking-confirmation safeguards remain Person 1's separate ACC-12 task.

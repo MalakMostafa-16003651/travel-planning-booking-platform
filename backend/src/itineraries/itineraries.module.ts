@@ -10,7 +10,8 @@ import { AirportsModule } from '../airports/airports.module';
 import { ReferenceDataModule } from '../reference-data/reference-data.module';
 import { HotelsModule } from '../hotels/hotels.module';
 import { HotelsServiceSearchAdapter } from './adapters/hotel-search.adapter';
-import { PendingFlightSearchAdapter } from './adapters/pending-travel-search.adapters';
+import { ItineraryFlightSearchAdapter } from '../flights/adapters/itinerary-flight-search.adapter';
+import { FlightsModule } from '../flights/flights.module';
 import { ExchangeRatesService } from './currency/exchange-rates.service';
 import { FxRatesClient } from './currency/fx-rates.client';
 import { ItinerariesController } from './itineraries.controller';
@@ -32,6 +33,7 @@ import { Itinerary, ItinerarySchema } from './schemas/itinerary.schema';
     ReferenceDataModule,
     AirportsModule,
     HotelsModule,
+    FlightsModule,
     MongooseModule.forFeature([
       { name: Itinerary.name, schema: ItinerarySchema },
       { name: ActivityImage.name, schema: ActivityImageSchema },
@@ -46,11 +48,11 @@ import { Itinerary, ItinerarySchema } from './schemas/itinerary.schema';
     ExchangeRatesService,
     FxRatesClient,
     OptionalAuthGuard,
-    // Swap these for the real modules as they land; nothing else in this module changes.
+    // Shared services from other modules, bound to this module's ports.
     { provide: ITINERARY_ACCOUNT_STATUSES, useExisting: UsersService },
     { provide: ITINERARY_AUTHOR_NAMES, useExisting: UsersService },
     { provide: ITINERARY_CURRENCIES, useExisting: CurrenciesService },
-    { provide: ITINERARY_FLIGHT_SEARCH, useClass: PendingFlightSearchAdapter }, // -> FlightsService (Person 3)
+    { provide: ITINERARY_FLIGHT_SEARCH, useExisting: ItineraryFlightSearchAdapter }, // FlightsService.searchForItinerary (FLT-11, FLT-12, FLT-15)
     { provide: ITINERARY_HOTEL_SEARCH, useClass: HotelsServiceSearchAdapter }, // HotelsService.search (HTL-11, HTL-12)
   ],
   exports: [ItinerariesService],
