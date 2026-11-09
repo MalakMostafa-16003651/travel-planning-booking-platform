@@ -1,3 +1,4 @@
+import { EmailEligibilityService } from '../auth/email-eligibility.service';
 import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { isValidObjectId, Model, Types } from 'mongoose';
@@ -34,10 +35,12 @@ export class PaymentsService {
     private readonly policies: PoliciesService,
     private readonly refunds: RefundsService,
     private readonly stripe: StripeService,
+    private readonly emailEligibility: EmailEligibilityService,
   ) {}
 
   /** PAY-01: starts paying for a booking. Returns the clientSecret for Stripe.js. */
   async create(dto: CreatePaymentDto, user: AuthUser) {
+    await this.emailEligibility.assertCanBook(user.userId);
     const { bookingType, bookingId } = dto;
     const booking = await this.policies.getOwnedBooking(bookingType, bookingId, user.userId);
     this.assertPayable(booking);
@@ -47,6 +50,7 @@ export class PaymentsService {
     // current policies are accepted, so a provider change after the first attempt needs a new acceptance.
     if (existing && existing.status !== PaymentStatus.PENDING) return this.reuseExisting(existing);
     await this.assertPoliciesAccepted(user.userId, bookingType, booking);
+    await this.emailEligibility.assertCanBook(user.userId);
     if (existing) return this.reuseExisting(existing);
 
     // The id comes first so it can go into the PaymentIntent metadata.
@@ -79,6 +83,7 @@ export class PaymentsService {
 
   /** PAY-01: tries again after a failed payment, on the same Payment record. */
   async retry(id: string, user: AuthUser) {
+    await this.emailEligibility.assertCanBook(user.userId);
     const payment = await this.findOwnedPayment(id, user, false);
     if (payment.status !== PaymentStatus.FAILED) throw new ConflictException('Only a FAILED payment can be retried');
     if (payment.failureReason === AMOUNT_MISMATCH_REASON) {
@@ -90,6 +95,7 @@ export class PaymentsService {
     if (!booking) throw new NotFoundException('Booking not found');
     this.assertPayable(booking);
     await this.assertPoliciesAccepted(payment.userId.toString(), bookingType, booking);
+    await this.emailEligibility.assertCanBook(user.userId);
 
     // The old intent must not be paid later by mistake. If cancelling fails, it may have been paid after all.
     try {
@@ -105,6 +111,7 @@ export class PaymentsService {
       }
     }
 
+    await this.emailEligibility.assertCanBook(user.userId);
     const intent = await this.stripe.createPaymentIntent({
       amount: toMinorUnits(payment.amount),
       currency: payment.currency,
@@ -284,6 +291,8 @@ export class PaymentsService {
     const booking = await this.bookingsPort.getBooking(bookingType, bookingId, userId);
     if (booking?.status === BookingStatus.CONFIRMED) return true;
     if (!booking || !this.isPayable(booking)) return false;
+    // ACC-02: keep historical confirmations; a newly ineligible paid hold follows the existing full-refund path.
+    if (!await this.emailEligibility.canBook(userId)) return false;
     if (await this.bookingsPort.markConfirmed(bookingType, bookingId, payment._id.toString())) return true;
     // The booking changed meanwhile. If a parallel delivery of this success confirmed it, that is a success too.
     const latest = await this.bookingsPort.getBooking(bookingType, bookingId, userId);

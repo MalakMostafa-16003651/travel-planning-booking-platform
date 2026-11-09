@@ -15,6 +15,9 @@ export class User {
   @Prop({ required: true, lowercase: true, trim: true })
   email!: string;
 
+  @Prop({ type: Date, default: null, select: false })
+  emailVerifiedAt!: Date | null;
+
   @Prop({ required: true, select: false })
   passwordHash!: string;
 

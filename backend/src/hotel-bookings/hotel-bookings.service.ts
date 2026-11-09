@@ -1,3 +1,4 @@
+import { EmailEligibilityService } from '../auth/email-eligibility.service';
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, QueryFilter, Types } from 'mongoose';
@@ -72,6 +73,7 @@ export class HotelBookingsService {
     @InjectConnection() private readonly connection: Connection,
     private readonly clock: HotelBookingsClock,
     private readonly inventory: RoomInventoryAdapter,
+    private readonly emailEligibility: EmailEligibilityService,
   ) {}
 
   /**
@@ -80,6 +82,7 @@ export class HotelBookingsService {
    * blocked range, a booked range or an unexpired hold, the transaction aborts: 409 and nothing is held.
    */
   async hold(input: CreateHotelBookingDto, userId: string): Promise<HotelBookingDto> {
+    await this.emailEligibility.assertCanBook(userId);
     const errors: Record<string, string[]> = {};
     const fail = (field: string, message: string) => { (errors[field] ??= []).push(message); };
 
@@ -132,6 +135,7 @@ export class HotelBookingsService {
     const now = new Date();
     const holdExpiresAt = new Date(now.getTime() + HOTEL_BOOKING_HOLD_MS);
     const booking = await this.connection.transaction(async (session) => {
+      await this.emailEligibility.assertCanBook(userId, session);
       for (const { room } of selected) {
         const held = await this.inventory.holdRoom(room._id, input, { hotelBookingId, holdExpiresAt, now }, session);
         if (!held) throw new ConflictException(`${room.name} is not available for these dates`);
