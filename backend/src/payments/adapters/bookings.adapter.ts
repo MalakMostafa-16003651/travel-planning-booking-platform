@@ -112,11 +112,13 @@ export class BookingsAdapter implements BookingsPort {
       throw error;
     }
     const { cancellationTiers, checkInTime, checkOutTime } = booking.policySnapshot;
+    const hooks = this.hotelHooks();
     return {
       bookingId: booking._id.toString(),
       userId: booking.userId.toString(),
       status: booking.status,
       totalPrice: booking.totalPrice / 100,
+      checkoutReady: typeof hooks.confirmPaidBooking === 'function' && typeof hooks.markPaymentFailed === 'function',
       currency: booking.currency,
       policies: {
         cancellation: {

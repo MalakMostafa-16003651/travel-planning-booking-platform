@@ -1,5 +1,5 @@
 import { EmailEligibilityService } from '../auth/email-eligibility.service';
-import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { isValidObjectId, Model, Types } from 'mongoose';
 import Stripe from 'stripe';
@@ -351,5 +351,6 @@ export class PaymentsService {
     if (booking.currency !== PLATFORM_CURRENCY) throw new ConflictException('The booking is not in the platform currency');
     if (booking.status !== BookingStatus.PENDING) throw new ConflictException('Only a PENDING booking can be paid');
     if (!this.isPayable(booking)) throw new ConflictException('The booking hold has expired');
+    if (booking.checkoutReady === false) throw new ServiceUnavailableException('Hotel checkout is temporarily unavailable');
   }
 }

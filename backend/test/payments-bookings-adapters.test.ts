@@ -88,6 +88,7 @@ describe('PAY-01/PAY-02 BookingsAdapter: hotel reservations', () => {
       userId: userId.toString(),
       status: BookingStatus.PENDING,
       totalPrice: 450.5,
+      checkoutReady: true,
       currency: 'USD',
       policies: {
         cancellation: { tiers: [{ daysBeforeCheckIn: 7, refundPercentage: 100 }, { daysBeforeCheckIn: 1, refundPercentage: 50 }] },
@@ -97,6 +98,16 @@ describe('PAY-01/PAY-02 BookingsAdapter: hotel reservations', () => {
     });
   });
 
+  it('marks hotel checkout unavailable for missing or non-callable lifecycle hooks without hiding policies', async () => {
+    for (const missing of ['both', 'confirmPaidBooking', 'markPaymentFailed']) {
+      const { service } = fakeHotelBookings({ withHooks: missing !== 'both' });
+      if (missing !== 'both') (service as unknown as Record<string, unknown>)[missing] = 'not callable';
+      const booking = await adapter(service).getBooking('hotel', hotelBookingId.toString(), userId.toString());
+      assert.equal(booking?.checkoutReady, false);
+      assert.equal(booking?.totalPrice, 450.5);
+      assert.ok(booking?.policies.cancellation);
+    }
+  });
   it("returns null for an unknown reservation or another user's reservation", async () => {
     const { service } = fakeHotelBookings({ withHooks: true });
     assert.equal(await adapter(service).getBooking('hotel', new Types.ObjectId().toString(), userId.toString()), null);
