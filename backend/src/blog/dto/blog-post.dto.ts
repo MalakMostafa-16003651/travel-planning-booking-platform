@@ -83,6 +83,16 @@ export class PageQueryDto {
   page: number = 1;
 }
 
+/** BLG-12: `page` is for the posts, `itinerariesPage` for the public itineraries. */
+export class AuthorPageQueryDto extends PageQueryDto {
+  @ApiPropertyOptional({ default: 1, minimum: 1, description: 'Page of the public itineraries (page size 10).' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  itinerariesPage: number = 1;
+}
+
 export class ListPostsQueryDto extends PageQueryDto {
   @ApiPropertyOptional({ description: 'BLG-09: keyword in the title, tags or author name. Results are ordered by likes + comments, newest first on ties.' })
   @IsOptional()
