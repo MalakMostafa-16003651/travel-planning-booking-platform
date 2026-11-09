@@ -62,6 +62,10 @@ export class BlogPost {
   @Prop({ type: Date })
   publishedAt?: Date;
 
+  // BLG-13 (bonus): one of the author's own public itineraries, attached to the post.
+  @Prop({ type: Types.ObjectId, ref: 'Itinerary' })
+  itineraryId?: Types.ObjectId;
+
   // GEN-10: set by Person 2's moderation through BlogService.setPostHidden.
   @Prop({ type: Boolean, default: false })
   isHidden!: boolean;
