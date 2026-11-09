@@ -430,7 +430,7 @@ For a manual M1 development-inbox check:
 
 All SMTP values and PASSWORD_RESET_URL may be blank to leave recovery disabled; existing mandatory auth still runs. Recovery request then returns503 uniformly. No raw token or delivery status is returned by the API. Request limits:20/IP and5/email per15minutes (silently202); reset attempts20/IP per15minutes (then429). Private TTL records contain hashes/HMAC keys, not plaintext email/IP/token. Queue capacity is bounded; delivery is in-process, not durable across restart. Retry with a new request after an interrupted delivery.
 
-MailModule exports MailService for coordinated reuse; this feature does not implement ACC-02 verification, GEN-01-B email notifications or ACC-12 account deactivation. The shared response/naming decisions are recorded in the authentication contract and docs/work-logs/16003651.md.
+MailModule exports MailService for coordinated reuse; ACC-02 verification is documented below; GEN-01-B notification emails and ACC-12 account deactivation remain separate features. The shared response/naming decisions are recorded in the authentication contract and docs/work-logs/16003651.md.
 
 
 ## ITN-28 bonus: printable itinerary PDF
@@ -440,3 +440,23 @@ GET /api/itineraries/:itineraryId/pdf downloads an A4 PDF for a logged-in user. 
 The printable document includes attribution, derived dates/day order, activities, recorded budget entries and intercity transport. Amounts retain their original currencies; this export does not recalculate FX or confirm bookings. Photos are referenced by count rather than fetched or embedded. No external image/URL request is made. Cache-Control is no-store and the download filename uses only the validated itineraryId.
 
 Keep backend/assets/fonts with the deployed backend. The bundled Noto Latin/Arabic fonts use the included SIL Open Font License; no system-font installation or runtime download is required. Tests cover actual PDF bytes/headers, owner/public/privacy rules, missing/invalid IDs and unchanged stored data. A synthetic two-page sample was rendered and inspected for font alignment, page breaks and footer placement. Frontend download/print controls remain M2.
+
+
+## ACC-02 bonus: account email verification
+
+The backend sends a verification email after successful registration when SMTP and EMAIL_VERIFICATION_URL are configured. Registered users can request a replacement link through POST /api/auth/resend-verification. GET /api/auth/email-verification returns only the current session owner's emailVerified and requiredForBooking booleans. POST /api/auth/verify-email accepts {"token":"<64 hex characters from the email fragment>"} and returns204 after success. It is proof-only: no automatic login and no password, role, status or credential-version changes.
+
+Proofs are random256-bit tokens, stored only as hashes, bound to the current email/account, expire after24hours, are single-use, and are superseded by a newer accepted request. Verification and password-reset proofs have separate collections/purposes. Shared mail has bounded workers/capacity; delivery failures do not undo successful registration, and the user can resend. Accepted mail is not a durable outbox: a process interruption may require a new request. Request limits are20/IP and5/account per15minutes; proof attempts are20/IP per15minutes. No raw proof, private verification timestamp or SMTP delivery detail is returned by account APIs.
+
+Activation uses the already agreed local settings:
+
+1. Configure the existing SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS and SMTP_FROM together for a development test inbox. Keep credentials in the ignored root .env.
+2. Set EMAIL_VERIFICATION_URL to the trusted verification-page URL. Use HTTPS except loopback HTTP locally; no embedded credentials, query or fragment. The email appends #token=...; the M2 client submits that token in the POST body. During M1, submit it yourself in Swagger without sharing the proof or inbox credentials.
+3. Leave EMAIL_VERIFICATION_REQUIRED=false until setup is ready. Set it to true and restart to enforce verification; startup fails clearly if required SMTP/URL settings are missing. This implementation does not read/change your private .env or enable the flag automatically.
+4. With enforcement on, test an unverified login followed by flight/hotel hold or payment create/retry:403 and no new booking/payment/inventory side effect. Verify the emailed proof, repeat with the same valid cookie, and check success. Used/expired/superseded proofs must fail400.
+
+All existing accounts lacking a verification timestamp remain unverified; no seeded account is silently grandfathered. Login, profile/favourites access, and permitted existing booking/refund reads/cancellation retain their own authorization rules. Existing confirmed bookings are not retroactively invalidated. Future email-change code must atomically clear emailVerifiedAt and invalidate old proofs; there is currently no public email-change endpoint.
+
+The shared EmailEligibilityService is exported from AuthModule. Flight holds and pending-booking confirmation check it inside the booking transaction; hotel creation checks before preparation and inside the hold transaction. Payment create/retry checks it before external side effects, and late success for an ineligible pending hold uses the existing automatic full-refund handling. Lookup failures remain retryable errors, not a false reason to refund. The already-confirmed replay path is preserved. The limited integrations in Ismail's, Osama's and Hicham's services were approved by Malak on2026-11-09; their domain algorithms are unchanged. When Osama adds the not-yet-implemented paid hotel confirmation method, it must call the same session-aware policy before HELD-to-BOOKED writes; the generic payment confirmation gate already covers both booking types.
+
+Automated tests use controlled mail/Stripe gateways, real webhook signature checks and isolated local MongoDB. Actual inbox delivery and a deployed M2 verification page are separate setup/client checks, not certified by these tests. No new PDF is committed or generated for this feature.
