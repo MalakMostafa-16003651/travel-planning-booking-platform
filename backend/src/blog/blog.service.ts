@@ -1,8 +1,11 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { isValidObjectId, Model, PipelineStage, Types } from 'mongoose';
 import { AccountStatus } from '../common/enums/account-status.enum';
 import { UserRole } from '../common/enums/user-role.enum';
+import { ItinerarySummaryDto } from '../itineraries/dto/itinerary-response.dto';
+import { ItineraryVisibility } from '../itineraries/itinerary.rules';
+import { Itinerary } from '../itineraries/schemas/itinerary.schema';
 import { User } from '../users/schemas/user.schema';
 import { BLOG_PAGE_SIZE, DELETED_USER_NAME, escapeRegex, excerpt, PostStatus } from './blog.rules';
 import { CreateBlogPostDto, ListPostsQueryDto, UpdateBlogPostDto } from './dto/blog-post.dto';
@@ -37,6 +40,10 @@ export interface Page<T> {
   totalPages: number;
 }
 
+// The fields Person 7's ItinerarySummaryDto needs (the same projection as Person 7's public search).
+const ITINERARY_SUMMARY_FIELDS = { title: 1, description: 1, countries: 1, startDate: 1, visibility: 1, currency: 1, userId: 1,
+  clonedFrom: 1, publishedAt: 1, createdAt: 1, updatedAt: 1, 'days._id': 1, 'days.city': 1, 'days.countryCode': 1 };
+
 function page<T>(items: T[], pageNumber: number, total: number): Page<T> {
   return { items, page: pageNumber, pageSize: BLOG_PAGE_SIZE, total, totalPages: Math.ceil(total / BLOG_PAGE_SIZE) };
 }
@@ -50,11 +57,14 @@ export class BlogService {
     @InjectModel(PostImage.name) private readonly images: Model<PostImage>,
     // Read-only: author name, status and join date.
     @InjectModel(User.name) private readonly users: Model<User>,
+    // Read-only: Person 7's itineraries, for the author page (BLG-12).
+    @InjectModel(Itinerary.name) private readonly itineraries: Model<Itinerary>,
   ) {}
 
   /** BLG-01: saved as DRAFT unless published. */
   async create(dto: CreateBlogPostDto, viewer: Viewer) {
     const status = dto.status ?? PostStatus.DRAFT;
+    if (dto.itineraryId) await this.assertAttachableItinerary(dto.itineraryId, viewer.userId);
     const post = await this.posts.create({
       userId: new Types.ObjectId(viewer.userId),
       title: dto.title,
@@ -62,6 +72,7 @@ export class BlogService {
       tags: dto.tags ?? [],
       status,
       publishedAt: status === PostStatus.PUBLISHED ? new Date() : undefined,
+      ...(dto.itineraryId ? { itineraryId: new Types.ObjectId(dto.itineraryId) } : {}),
     });
     return this.toResponse(post);
   }
@@ -111,6 +122,11 @@ export class BlogService {
     if (dto.content !== undefined) post.content = dto.content;
     if (dto.tags !== undefined) post.tags = dto.tags;
     if (dto.status !== undefined) post.status = dto.status;
+    if (dto.itineraryId === null) post.itineraryId = undefined;
+    if (dto.itineraryId) {
+      await this.assertAttachableItinerary(dto.itineraryId, viewer.userId);
+      post.itineraryId = new Types.ObjectId(dto.itineraryId);
+    }
     if (post.status === PostStatus.PUBLISHED && !post.publishedAt) post.publishedAt = new Date();
     await post.save();
     return this.toResponse(post);
@@ -122,12 +138,72 @@ export class BlogService {
     await this.deletePost(post);
   }
 
-  /** BLG-12: public author page. Deactivated or unknown authors are 404 (ACC-12). */
-  async getAuthor(userId: string, pageNumber: number) {
+  /**
+   * BLG-12: public author page with name, join date, published posts and public itineraries.
+   * Deactivated or unknown authors are 404 (ACC-12). Each list has its own page number.
+   */
+  async getAuthor(userId: string, pageNumber: number, itinerariesPage = 1) {
     const user = await this.users.findById(userId, { name: 1, status: 1, createdAt: 1 }).exec();
     if (!user || user.status === AccountStatus.DEACTIVATED) throw new NotFoundException('Author not found');
-    const posts = await this.findPublicPosts({ userId: user._id }, pageNumber);
-    return { userId: user._id.toString(), name: user.name, joinedAt: user.createdAt, posts };
+    const [posts, itineraries] = await Promise.all([
+      this.findPublicPosts({ userId: user._id }, pageNumber),
+      this.findPublicItineraries(user, itinerariesPage),
+    ]);
+    return { userId: user._id.toString(), name: user.name, joinedAt: user.createdAt, posts, itineraries };
+  }
+
+  /**
+   * BLG-12: the author's PUBLIC itineraries (ITN-20), newest published first, in Person 7's list shape.
+   * Read-only query on Person 7's collection: private itineraries never appear. A clone's original
+   * author is shown as "Deleted user" when deactivated or missing (ACC-12), as Person 7 does.
+   */
+  private async findPublicItineraries(author: { _id: Types.ObjectId; name: string }, pageNumber: number) {
+    const filter = { userId: author._id, visibility: ItineraryVisibility.PUBLIC };
+    const [rows, total] = await Promise.all([
+      this.itineraries.find(filter, ITINERARY_SUMMARY_FIELDS).sort({ publishedAt: -1, _id: -1 })
+        .skip((pageNumber - 1) * BLOG_PAGE_SIZE).limit(BLOG_PAGE_SIZE).lean<Itinerary[]>().exec(),
+      this.itineraries.countDocuments(filter).exec(),
+    ]);
+    const names = await this.cloneAttribution(rows, author._id, author.name);
+    return page(rows.map((row) => ItinerarySummaryDto.from(row, names)), pageNumber, total);
+  }
+
+  /** Names for itinerary summaries: the author, and each clone's original author ("Deleted user" when deactivated or missing). */
+  private async cloneAttribution(rows: Itinerary[], authorId: Types.ObjectId, authorName: string) {
+    const originalAuthorIds = rows.flatMap((row) => (row.clonedFrom ? [row.clonedFrom.userId] : []));
+    const originalAuthors = originalAuthorIds.length > 0
+      ? await this.users.find({ _id: { $in: originalAuthorIds } }, { name: 1, status: 1 }).exec()
+      : [];
+    const names = new Map<string, string>([[authorId.toString(), authorName]]);
+    for (const id of originalAuthorIds) names.set(id.toString(), DELETED_USER_NAME);
+    for (const original of originalAuthors) names.set(original._id.toString(), toAuthor(original).name);
+    return names;
+  }
+
+  /** BLG-13: only the author's own PUBLIC itinerary can be attached, so every reader can open it. */
+  private async assertAttachableItinerary(itineraryId: string, userId: string) {
+    const found = await this.itineraries.exists({
+      _id: new Types.ObjectId(itineraryId),
+      userId: new Types.ObjectId(userId),
+      visibility: ItineraryVisibility.PUBLIC,
+    }).exec();
+    if (!found) {
+      throw new BadRequestException({ message: 'Validation failed', errors: { itineraryId: ['Attach one of your own public itineraries'] } });
+    }
+  }
+
+  /**
+   * BLG-13: the attached itinerary in Person 7's list shape, or null. It is shown only while it is still
+   * PUBLIC: if the author later makes it private or deletes it, the post no longer shows it.
+   */
+  private async attachedItinerary(post: BlogPostDocument, authorName: string) {
+    if (!post.itineraryId) return null;
+    const itinerary = await this.itineraries.findOne(
+      { _id: post.itineraryId, userId: post.userId, visibility: ItineraryVisibility.PUBLIC },
+      ITINERARY_SUMMARY_FIELDS,
+    ).lean<Itinerary>().exec();
+    if (!itinerary) return null;
+    return ItinerarySummaryDto.from(itinerary, await this.cloneAttribution([itinerary], post.userId, authorName));
   }
 
   // GEN-10: for Person 2's moderation. No HTTP routes here; Person 2 owns /api/admin.
@@ -184,6 +260,7 @@ export class BlogService {
 
   async toResponse(post: BlogPostDocument) {
     const author = toAuthor(await this.users.findById(post.userId, { name: 1, status: 1 }).exec());
+    const itinerary = await this.attachedItinerary(post, author.name);
     return {
       postId: post._id.toString(),
       title: post.title,
@@ -205,6 +282,8 @@ export class BlogService {
       createdAt: post.createdAt,
       updatedAt: post.updatedAt,
       author,
+      // BLG-13 (bonus): the attached public itinerary, or null.
+      itinerary,
     };
   }
 

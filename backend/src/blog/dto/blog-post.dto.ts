@@ -40,6 +40,11 @@ export class CreateBlogPostDto {
   @OptionalNotNull()
   @IsEnum(PostStatus)
   status?: PostStatus;
+
+  @ApiPropertyOptional({ description: 'BLG-13 (bonus): attach one of your own PUBLIC itineraries.' })
+  @OptionalNotNull()
+  @IsMongoId({ message: 'itineraryId must be a valid id' })
+  itineraryId?: string;
 }
 
 /** Every field optional, but null is rejected. Written out because PartialType lets null through. */
@@ -71,6 +76,11 @@ export class UpdateBlogPostDto {
   @OptionalNotNull()
   @IsEnum(PostStatus)
   status?: PostStatus;
+
+  @ApiPropertyOptional({ type: String, nullable: true, description: 'BLG-13 (bonus): attach one of your own PUBLIC itineraries; null removes it.' })
+  @ValidateIf((_object, value: unknown) => value !== undefined && value !== null)
+  @IsMongoId({ message: 'itineraryId must be a valid id' })
+  itineraryId?: string | null;
 }
 
 /** GEN-05: page size is fixed at 10. */
@@ -81,6 +91,16 @@ export class PageQueryDto {
   @IsInt()
   @Min(1)
   page: number = 1;
+}
+
+/** BLG-12: `page` is for the posts, `itinerariesPage` for the public itineraries. */
+export class AuthorPageQueryDto extends PageQueryDto {
+  @ApiPropertyOptional({ default: 1, minimum: 1, description: 'Page of the public itineraries (page size 10).' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  itinerariesPage: number = 1;
 }
 
 export class ListPostsQueryDto extends PageQueryDto {
