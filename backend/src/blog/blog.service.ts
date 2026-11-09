@@ -194,16 +194,16 @@ export class BlogService {
 
   /**
    * BLG-13: the attached itinerary in Person 7's list shape, or null. It is shown only while it is still
-   * PUBLIC: if the author later makes it private or deletes it, the post no longer shows it.
+   * PUBLIC and its author exists and is not deactivated, matching the public itinerary reader.
    */
-  private async attachedItinerary(post: BlogPostDocument, authorName: string) {
-    if (!post.itineraryId) return null;
+  private async attachedItinerary(post: BlogPostDocument, author: Author) {
+    if (!post.itineraryId || !author.userId) return null;
     const itinerary = await this.itineraries.findOne(
       { _id: post.itineraryId, userId: post.userId, visibility: ItineraryVisibility.PUBLIC },
       ITINERARY_SUMMARY_FIELDS,
     ).lean<Itinerary>().exec();
     if (!itinerary) return null;
-    return ItinerarySummaryDto.from(itinerary, await this.cloneAttribution([itinerary], post.userId, authorName));
+    return ItinerarySummaryDto.from(itinerary, await this.cloneAttribution([itinerary], post.userId, author.name));
   }
 
   // GEN-10: for Person 2's moderation. No HTTP routes here; Person 2 owns /api/admin.
@@ -260,7 +260,7 @@ export class BlogService {
 
   async toResponse(post: BlogPostDocument) {
     const author = toAuthor(await this.users.findById(post.userId, { name: 1, status: 1 }).exec());
-    const itinerary = await this.attachedItinerary(post, author.name);
+    const itinerary = await this.attachedItinerary(post, author);
     return {
       postId: post._id.toString(),
       title: post.title,
