@@ -431,3 +431,12 @@ For a manual M1 development-inbox check:
 All SMTP values and PASSWORD_RESET_URL may be blank to leave recovery disabled; existing mandatory auth still runs. Recovery request then returns503 uniformly. No raw token or delivery status is returned by the API. Request limits:20/IP and5/email per15minutes (silently202); reset attempts20/IP per15minutes (then429). Private TTL records contain hashes/HMAC keys, not plaintext email/IP/token. Queue capacity is bounded; delivery is in-process, not durable across restart. Retry with a new request after an interrupted delivery.
 
 MailModule exports MailService for coordinated reuse; this feature does not implement ACC-02 verification, GEN-01-B email notifications or ACC-12 account deactivation. The shared response/naming decisions are recorded in the authentication contract and docs/work-logs/16003651.md.
+
+
+## ITN-28 bonus: printable itinerary PDF
+
+GET /api/itineraries/:itineraryId/pdf downloads an A4 PDF for a logged-in user. Private itineraries remain owner-only, including against admins/moderators; public export follows the existing readable-itinerary and deactivated-author rules. The separate ItineraryExportsModule reuses ItinerariesService.getReadable without editing the itinerary owner's module.
+
+The printable document includes attribution, derived dates/day order, activities, recorded budget entries and intercity transport. Amounts retain their original currencies; this export does not recalculate FX or confirm bookings. Photos are referenced by count rather than fetched or embedded. No external image/URL request is made. Cache-Control is no-store and the download filename uses only the validated itineraryId.
+
+Keep backend/assets/fonts with the deployed backend. The bundled Noto Latin/Arabic fonts use the included SIL Open Font License; no system-font installation or runtime download is required. Tests cover actual PDF bytes/headers, owner/public/privacy rules, missing/invalid IDs and unchanged stored data. A synthetic two-page sample was rendered and inspected for font alignment, page breaks and footer placement. Frontend download/print controls remain M2.
