@@ -17,6 +17,7 @@ import { CabinInventory } from './schemas/cabin-inventory.schema';
 import { Flight } from './schemas/flight.schema';
 import { FlightSearchDto, FlightSort, RoundTripSearchDto } from './dto/flight-search.dto';
 import { localDateBounds, localDateTimeToUtc, utcToLocalDateTime } from './flight-time.util';
+import { ItineraryFlightSearch } from '../itineraries/ports/travel-search.port';
 
 const SEARCH_PAGE_SIZE = BOOKINGS_PAGE_SIZE; // GEN-05: 10 per page
 
@@ -630,7 +631,11 @@ async onModuleInit(): Promise<void> {
     return { items: all.slice(start, start + SEARCH_PAGE_SIZE), page, pageSize: SEARCH_PAGE_SIZE, total: all.length };
   }
 
-  async search(input: FlightSearchDto) { return this.paginate(await this.searchOneWay(input), input.page); }
+   async search(input: FlightSearchDto) {
+    // roundTrip=true here behaves like /search/round-trip (the DTO already requires a returnDate).
+    if (input.roundTrip) return this.searchRoundTrip(input as RoundTripSearchDto);
+    return this.paginate(await this.searchOneWay(input), input.page);
+  }
 
   async searchRoundTrip(input: RoundTripSearchDto) {
     if (input.returnDate < input.departureDate) throw new BadRequestException('Return date cannot be before departure date');
@@ -639,6 +644,33 @@ async onModuleInit(): Promise<void> {
     const returnOptions = await this.searchOneWay({ ...outboundInput, departureAirportCode: input.arrivalAirportCode, arrivalAirportCode: input.departureAirportCode, departureDate: returnDate });
     const validReturn = returnOptions.filter((ret) => outbound.some((out) => Date.parse(ret.departureAtUtc) > Date.parse(out.arrivalAtUtc)));
     return { outbound: this.paginate(outbound, input.page), return: this.paginate(validReturn, input.page) };
+  }
+  /**
+   * ITN-26 (Person 7): search from one airport to ANY of several airports (all airports of the
+   * itinerary's first city). Every leg reuses searchOneWay, so seats, active airlines, filters and
+   * paging rules are identical to /flights/search.
+   */
+  async searchForItinerary(criteria: ItineraryFlightSearch) {
+    const { adults, children, infants } = criteria;
+    const cabinClass = criteria.cabinClass as FlightSearchDto['cabinClass'];
+    const legs = (from: string, targets: string[], date: string): Promise<any[][]> =>
+      Promise.all(targets.map((to) => this.searchOneWay({
+        departureAirportCode: from, arrivalAirportCode: to, departureDate: date, roundTrip: false,
+        adults, children, infants, cabinClass,
+      } as FlightSearchDto)));
+    const byDeparture = (a: any, b: any) => Date.parse(a.departureAtUtc) - Date.parse(b.departureAtUtc);
+
+    const outbound = (await legs(criteria.departureAirportCode, criteria.arrivalAirportCodes, criteria.departureDate)).flat().sort(byDeparture);
+    if (!criteria.roundTrip) return this.paginate(outbound, criteria.page);
+
+    if (!criteria.returnDate) throw new BadRequestException('A round-trip search requires a return date');
+    if (criteria.returnDate < criteria.departureDate) throw new BadRequestException('Return date cannot be before departure date');
+    const returning = (await Promise.all(criteria.arrivalAirportCodes.map((from) => this.searchOneWay({
+      departureAirportCode: from, arrivalAirportCode: criteria.departureAirportCode, departureDate: criteria.returnDate!, roundTrip: false,
+      adults, children, infants, cabinClass,
+    } as FlightSearchDto)))).flat().sort(byDeparture);
+    const validReturn = returning.filter((ret) => outbound.some((out) => Date.parse(ret.departureAtUtc) > Date.parse(out.arrivalAtUtc)));
+    return { outbound: this.paginate(outbound, criteria.page), return: this.paginate(validReturn, criteria.page) };
   }
 
   async details(flightId: string): Promise<any> {
