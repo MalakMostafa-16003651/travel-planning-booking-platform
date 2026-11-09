@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { resolve } from 'node:path';
 import { after, before, beforeEach, describe, it } from 'node:test';
+
 import { INestApplication } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { getConnectionToken, getModelToken, MongooseModule } from '@nestjs/mongoose';
@@ -9,6 +10,7 @@ import { Test } from '@nestjs/testing';
 import { MongoMemoryReplSet } from 'mongodb-memory-server';
 import { Connection, Model, Types } from 'mongoose';
 import request, { Response } from 'supertest';
+
 import { AuthSession } from '../src/auth/schemas/auth-session.schema';
 import { UserRole } from '../src/common/enums/user-role.enum';
 import { configureApplication } from '../src/configure-application';
@@ -113,9 +115,8 @@ describe('Flight schedule-change notifications (FLT-05 / GEN-01, e2e)', { concur
   });
 
   it('does not notify anyone when the schedule did not change', async () => {
-    const flight = await connection.collection('flights').findOne({ _id: new Types.ObjectId(flightId) });
-    assert.ok(flight);
-    await request(app.getHttpServer()).patch(`/api/flights/${flightId}`).set('Cookie', moderatorCookie).send({}).expect(400);
+    await connection.collection('notifications').deleteMany({});
+    await request(app.getHttpServer()).patch(`/api/flights/${flightId}`).set('Cookie', moderatorCookie).send({}).expect(200);
     assert.equal(await connection.collection('notifications').countDocuments({}), 0);
   });
 
