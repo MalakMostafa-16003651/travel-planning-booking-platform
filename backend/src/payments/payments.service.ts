@@ -165,8 +165,15 @@ export class PaymentsService {
    * the success is applied, which refunds it because the booking is no longer payable.
    */
   async cancelPendingPayment(bookingType: BookingType, bookingId: string): Promise<void> {
-    const payment = await this.payments.findOne({ ...bookingRef(bookingType, bookingId), status: { $in: [PaymentStatus.PENDING, PaymentStatus.FAILED] } }).exec();
+    const payment = await this.payments.findOne({ ...bookingRef(bookingType, bookingId), $or: [
+      { status: { $in: [PaymentStatus.PENDING, PaymentStatus.FAILED] } },
+      { status: PaymentStatus.SUCCEEDED, bookingConfirmedAt: null, autoRefundedAt: null },
+    ] }).exec();
     if (!payment) return;
+    if (payment.status === PaymentStatus.SUCCEEDED) {
+      await this.finishSucceededPayment(payment);
+      return;
+    }
     try {
       await this.stripe.cancelPaymentIntent(payment.stripePaymentIntentId);
     } catch (error) {

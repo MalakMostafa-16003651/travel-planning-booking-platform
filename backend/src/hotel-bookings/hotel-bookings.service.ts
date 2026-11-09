@@ -1,3 +1,5 @@
+import { BookingPaymentsAdapter } from '../payments/adapters/booking-payments.adapter';
+import { HOLD_EXPIRED_REASON } from '../payments/payments.service';
 import { randomBytes } from 'node:crypto';
 import { UsersService } from '../users/users.service';
 import { AccountStatus } from '../common/enums/account-status.enum';
@@ -7,7 +9,7 @@ import { PaymentStatus } from '../payments/payment-status.enum';
 import { toMinorUnits } from '../payments/money';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailEligibilityService } from '../auth/email-eligibility.service';
-import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, forwardRef, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, QueryFilter, Types } from 'mongoose';
 import { BookingStatus } from '../common/enums/booking-status.enum';
@@ -86,6 +88,7 @@ export class HotelBookingsService {
     private readonly users: UsersService,
     private readonly notifications: NotificationsService,
     @InjectModel(Payment.name) private readonly payments: Model<Payment>,
+    @Inject(forwardRef(() => BookingPaymentsAdapter)) private readonly bookingPayments: BookingPaymentsAdapter,
   ) {}
 
   /**
@@ -323,8 +326,8 @@ export class HotelBookingsService {
   /**
    * HTL-18/GEN-11 (contract L3): a PENDING reservation whose hold has ended becomes EXPIRED and its HELD
    * entries are removed from its rooms, in one transaction per reservation. The status condition means a
-   * reservation is expired (and released) once, even with several servers. Cancelling Omar's open
-   * PaymentIntent is added in PR 4. Returns how many reservations expired.
+   * reservation is expired (and released) once, even with several servers. Payment cancellation runs
+   * after commit and retries unresolved expired payments on later sweeps. Returns reservations expired.
    */
   async expireOverdueHolds(now: Date = new Date()): Promise<number> {
     const overdue = await this.bookings.find({ status: BookingStatus.PENDING, holdExpiresAt: { $lte: now } })
@@ -343,7 +346,32 @@ export class HotelBookingsService {
       });
       if (done) expired += 1;
     }
+    await this.cancelExpiredPayments();
     return expired;
+  }
+
+  /** Recover cancellation failures after expiry committed, including a process restart. */
+  private async cancelExpiredPayments(): Promise<void> {
+    const pending = await this.payments.aggregate<{ hotelBookingId: Types.ObjectId }>([
+      { $match: { bookingType: 'hotel', $or: [
+        { status: PaymentStatus.PENDING },
+        { status: PaymentStatus.FAILED, failureReason: { $ne: HOLD_EXPIRED_REASON } },
+        { status: PaymentStatus.SUCCEEDED, bookingConfirmedAt: null, autoRefundedAt: null },
+      ] } },
+      { $lookup: { from: this.bookings.collection.name, localField: 'hotelBookingId', foreignField: '_id', as: 'booking' } },
+      { $match: { 'booking.status': BookingStatus.EXPIRED } },
+      { $sort: { updatedAt: 1, _id: 1 } },
+      { $limit: SWEEP_BATCH_SIZE },
+      { $project: { hotelBookingId: 1 } },
+    ]).exec();
+    for (const payment of pending) {
+      try {
+        await this.bookingPayments.cancelPendingPayment({ bookingType: 'HOTEL', bookingId: payment.hotelBookingId.toString() });
+      } catch {
+        // The Payment stays unresolved, so the next sweep finds it again. No external call in a transaction.
+        this.logger.error('Could not cancel payment for expired hotel reservation; it will be retried');
+      }
+    }
   }
 
   /**

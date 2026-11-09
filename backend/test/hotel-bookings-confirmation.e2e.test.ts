@@ -199,6 +199,68 @@ describe('HTL-17 real hotel payment confirmation', { concurrency: false }, () =>
     assert.equal(stripe.calls.createRefund, 0);
   });
 
+  it('cancels the real pending payment after committing hold expiry and room release', async () => {
+    const { paymentId, intentId } = await startPayment();
+    await bookings().updateOne({ _id: new Types.ObjectId(bookingId) }, { $set: { holdExpiresAt: new Date(0) } });
+    assert.equal(await service.expireOverdueHolds(), 1);
+    assert.equal((await booking())?.status, 'EXPIRED');
+    assert.equal((await ranges()).length, 0);
+    assert.equal(stripe.intent(intentId).status, 'canceled');
+    assert.equal((await payments().findOne({ _id: new Types.ObjectId(paymentId) }))?.failureReason, 'The booking hold expired before the payment succeeded');
+    assert.equal(await service.expireOverdueHolds(), 0);
+    assert.equal(stripe.calls.createRefund, 0);
+  });
+
+  it('retries payment cancellation on a later sweep after expiry already committed', async (context) => {
+    const { paymentId, intentId } = await startPayment();
+    await bookings().updateOne({ _id: new Types.ObjectId(bookingId) }, { $set: { holdExpiresAt: new Date(0) } });
+    const gateway = fixture.app.get(StripeService);
+    const original = gateway.cancelPaymentIntent.bind(gateway);
+    let fail = true;
+    const probe = mock.method(gateway, 'cancelPaymentIntent', async (id: string) => {
+      if (fail) throw new Error('synthetic gateway outage'); return original(id);
+    });
+    context.after(() => probe.mock.restore());
+    assert.equal(await service.expireOverdueHolds(), 1);
+    assert.equal((await booking())?.status, 'EXPIRED');
+    assert.equal((await ranges()).length, 0);
+    assert.equal((await payments().findOne({ _id: new Types.ObjectId(paymentId) }))?.status, 'PENDING');
+    fail = false;
+    assert.equal(await service.expireOverdueHolds(), 0);
+    assert.equal(stripe.intent(intentId).status, 'canceled');
+    const calls = probe.mock.callCount();
+    await service.expireOverdueHolds();
+    assert.equal(probe.mock.callCount(), calls);
+  });
+
+  it('refunds an already-paid intent discovered by the expiry cancellation and stays idempotent', async () => {
+    const { intentId } = await startPayment();
+    stripe.succeed(intentId); stripe.failNextCancel = true;
+    await bookings().updateOne({ _id: new Types.ObjectId(bookingId) }, { $set: { holdExpiresAt: new Date(0) } });
+    await service.expireOverdueHolds();
+    assert.equal((await booking())?.status, 'EXPIRED');
+    assert.equal((await ranges()).length, 0);
+    assert.equal(stripe.calls.createRefund, 1);
+    await service.expireOverdueHolds();
+    await webhook('payment_intent.succeeded', stripe.intent(intentId)).expect(200);
+    assert.equal(stripe.calls.createRefund, 1);
+  });
+  it('recovers an expired SUCCEEDED payment whose automatic refund previously failed', async () => {
+    const { paymentId, intentId } = await startPayment();
+    stripe.succeed(intentId); stripe.failNextCancel = true; stripe.failNextRefund = true;
+    await bookings().updateOne({ _id: new Types.ObjectId(bookingId) }, { $set: { holdExpiresAt: new Date(0) } });
+    await service.expireOverdueHolds();
+    const interrupted = await payments().findOne({ _id: new Types.ObjectId(paymentId) });
+    assert.equal(interrupted?.status, 'SUCCEEDED');
+    assert.equal(interrupted?.autoRefundedAt, undefined);
+    assert.equal((await ranges()).length, 0);
+    assert.equal(stripe.calls.createRefund, 0);
+    await service.expireOverdueHolds();
+    assert.equal(stripe.calls.createRefund, 1);
+    assert.ok((await payments().findOne({ _id: new Types.ObjectId(paymentId) }))?.autoRefundedAt);
+    await service.expireOverdueHolds();
+    assert.equal(stripe.calls.createRefund, 1);
+  });
   it('keeps the pending reservation retryable after a signed decline using the real no-op failure hook', async () => {
     const { paymentId, intentId } = await startPayment();
     await webhook('payment_intent.payment_failed', stripe.decline(intentId)).expect(200);

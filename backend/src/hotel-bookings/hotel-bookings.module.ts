@@ -1,7 +1,8 @@
 import { Payment, PaymentSchema } from '../payments/schemas/payment.schema';
 import { UsersModule } from '../users/users.module';
 import { NotificationsModule } from '../notifications/notifications.module';
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
+import { PaymentsModule } from '../payments/payments.module';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AuthModule } from '../auth/auth.module';
 import { Hotel, HotelSchema } from '../hotels/schemas/hotel.schema';
@@ -19,6 +20,7 @@ import { HotelBooking, HotelBookingSchema } from './schemas/hotel-booking.schema
     AuthModule,
     UsersModule,
     NotificationsModule,
+    forwardRef(() => PaymentsModule),
     MongooseModule.forFeature([
       { name: HotelBooking.name, schema: HotelBookingSchema },
       { name: Payment.name, schema: PaymentSchema },
