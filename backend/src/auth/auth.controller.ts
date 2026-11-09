@@ -1,3 +1,5 @@
+import { EmailVerificationService } from './email-verification.service';
+import { EmailVerificationRequestedDto, EmailVerificationStatusDto, ResendVerificationDto, VerifyEmailDto } from './dto/email-verification.dto';
 import { ApiAcceptedResponse, ApiServiceUnavailableResponse, ApiTooManyRequestsResponse } from '@nestjs/swagger';
 import { Request } from 'express';
 import { ForgotPasswordDto, ForgotPasswordResponseDto } from './dto/forgot-password.dto';
@@ -25,11 +27,44 @@ import { PasswordManagementService } from './password-management.service';
 @Controller('auth')
 export class AuthController {
   constructor(
+    private readonly verification: EmailVerificationService,
     private readonly recovery: PasswordRecoveryService,
     private readonly auth: AuthService,
     private readonly sessions: AuthSessionsService,
     private readonly passwords: PasswordManagementService,
   ) {}
+
+  @Get('email-verification')
+  @UseGuards(AuthGuard)
+  @Header('Cache-Control', 'no-store')
+  @ApiCookieAuth('accessToken')
+  @ApiOperation({ summary: 'ACC-02 bonus: view your live email verification status', description: 'Returns your verification state and whether verification is required for booking. It exposes no proof, private timestamp or account directory.' })
+  @ApiOkResponse({ type: EmailVerificationStatusDto })
+  @ApiUnauthorizedResponse({ type: ApiErrorDto })
+  emailVerificationStatus(@Req() request: AuthenticatedRequest): Promise<EmailVerificationStatusDto> { return this.verification.status(request.user!.userId); }
+
+  @Post('resend-verification')
+  @UseGuards(AuthGuard)
+  @HttpCode(202)
+  @Header('Cache-Control', 'no-store')
+  @ApiCookieAuth('accessToken')
+  @ApiOperation({ summary: 'ACC-02 bonus: resend your own verification link', description: 'Normal login required. No email/userId/role is accepted. Generic response for verified or silently limited accounts. The newest link replaces the previous one and expires after 24 hours. Registration also queues verification when SMTP and EMAIL_VERIFICATION_URL are configured.' })
+  @ApiAcceptedResponse({ type: EmailVerificationRequestedDto })
+  @ApiBadRequestResponse({ type: ApiErrorDto })
+  @ApiUnauthorizedResponse({ type: ApiErrorDto })
+  @ApiForbiddenResponse({ type: ApiErrorDto })
+  @ApiServiceUnavailableResponse({ type: ApiErrorDto })
+  resendVerification(@Body() _input: ResendVerificationDto, @Req() request: AuthenticatedRequest): Promise<EmailVerificationRequestedDto> { return this.verification.request(request.user!.userId, request.ip ?? request.socket.remoteAddress ?? 'unknown'); }
+
+  @Post('verify-email')
+  @HttpCode(204)
+  @Header('Cache-Control', 'no-store')
+  @ApiOperation({ summary: 'ACC-02 bonus: verify the email using its single-use proof', description: 'Public proof-only endpoint. Submit the URL fragment token in JSON. Atomically verifies the current active account/email and consumes the latest unexpired proof. No password, role, status or credential epoch change; no login cookie or automatic login. Password-reset proofs cannot be used here.' })
+  @ApiNoContentResponse({ description: 'Email verified.' })
+  @ApiBadRequestResponse({ type: ApiErrorDto })
+  @ApiForbiddenResponse({ type: ApiErrorDto })
+  @ApiTooManyRequestsResponse({ type: ApiErrorDto })
+  verifyEmail(@Body() input: VerifyEmailDto, @Req() request: Request): Promise<void> { return this.verification.verify(input.token, request.ip ?? request.socket.remoteAddress ?? 'unknown'); }
 
   @Post('forgot-password')
   @HttpCode(202)
@@ -64,8 +99,8 @@ export class AuthController {
   @ApiCreatedResponse({ type: RegisteredUserDto, description: 'User registered successfully.' })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'Invalid fields, missing consent, or unknown properties.' })
   @ApiConflictResponse({ type: ApiErrorDto, description: 'Email is already registered.' })
-  register(@Body() input: RegisterDto): Promise<RegisteredUserDto> {
-    return this.auth.register(input);
+  register(@Body() input: RegisterDto, @Req() request: Request): Promise<RegisteredUserDto> {
+    return this.auth.register(input, request.ip ?? request.socket.remoteAddress ?? 'unknown');
   }
 
   @Post('login')

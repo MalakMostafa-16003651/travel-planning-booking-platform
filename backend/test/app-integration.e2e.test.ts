@@ -56,7 +56,7 @@ describe('merged production module integration', { concurrency: false }, () => {
       MONGODB_URI: replicaSet.getUri('merged-app-integration'),
       JWT_SECRET: randomBytes(48).toString('hex'),
       PORT: '3000', STRIPE_SECRET_KEY: '', STRIPE_WEBHOOK_SECRET: '', FXRATES_API_KEY: '',
-      SMTP_HOST: '', SMTP_PORT: '', SMTP_USER: '', SMTP_PASS: '', SMTP_FROM: '', PASSWORD_RESET_URL: '',
+      SMTP_HOST: '', SMTP_PORT: '', SMTP_USER: '', SMTP_PASS: '', SMTP_FROM: '', PASSWORD_RESET_URL: '', EMAIL_VERIFICATION_URL: '', EMAIL_VERIFICATION_REQUIRED: 'false',
     };
     for (const [key, value] of Object.entries(environment)) {
       previousEnvironment.set(key, process.env[key]);
