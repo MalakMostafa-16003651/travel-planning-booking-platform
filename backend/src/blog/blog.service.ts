@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { isValidObjectId, Model, PipelineStage, Types } from 'mongoose';
 import { AccountStatus } from '../common/enums/account-status.enum';
@@ -40,6 +40,10 @@ export interface Page<T> {
   totalPages: number;
 }
 
+// The fields Person 7's ItinerarySummaryDto needs (the same projection as Person 7's public search).
+const ITINERARY_SUMMARY_FIELDS = { title: 1, description: 1, countries: 1, startDate: 1, visibility: 1, currency: 1, userId: 1,
+  clonedFrom: 1, publishedAt: 1, createdAt: 1, updatedAt: 1, 'days._id': 1, 'days.city': 1, 'days.countryCode': 1 };
+
 function page<T>(items: T[], pageNumber: number, total: number): Page<T> {
   return { items, page: pageNumber, pageSize: BLOG_PAGE_SIZE, total, totalPages: Math.ceil(total / BLOG_PAGE_SIZE) };
 }
@@ -60,6 +64,7 @@ export class BlogService {
   /** BLG-01: saved as DRAFT unless published. */
   async create(dto: CreateBlogPostDto, viewer: Viewer) {
     const status = dto.status ?? PostStatus.DRAFT;
+    if (dto.itineraryId) await this.assertAttachableItinerary(dto.itineraryId, viewer.userId);
     const post = await this.posts.create({
       userId: new Types.ObjectId(viewer.userId),
       title: dto.title,
@@ -67,6 +72,7 @@ export class BlogService {
       tags: dto.tags ?? [],
       status,
       publishedAt: status === PostStatus.PUBLISHED ? new Date() : undefined,
+      ...(dto.itineraryId ? { itineraryId: new Types.ObjectId(dto.itineraryId) } : {}),
     });
     return this.toResponse(post);
   }
@@ -116,6 +122,11 @@ export class BlogService {
     if (dto.content !== undefined) post.content = dto.content;
     if (dto.tags !== undefined) post.tags = dto.tags;
     if (dto.status !== undefined) post.status = dto.status;
+    if (dto.itineraryId === null) post.itineraryId = undefined;
+    if (dto.itineraryId) {
+      await this.assertAttachableItinerary(dto.itineraryId, viewer.userId);
+      post.itineraryId = new Types.ObjectId(dto.itineraryId);
+    }
     if (post.status === PostStatus.PUBLISHED && !post.publishedAt) post.publishedAt = new Date();
     await post.save();
     return this.toResponse(post);
@@ -148,19 +159,51 @@ export class BlogService {
    */
   private async findPublicItineraries(author: { _id: Types.ObjectId; name: string }, pageNumber: number) {
     const filter = { userId: author._id, visibility: ItineraryVisibility.PUBLIC };
-    const projection = { title: 1, description: 1, countries: 1, startDate: 1, visibility: 1, currency: 1, userId: 1,
-      clonedFrom: 1, publishedAt: 1, createdAt: 1, updatedAt: 1, 'days._id': 1, 'days.city': 1, 'days.countryCode': 1 };
     const [rows, total] = await Promise.all([
-      this.itineraries.find(filter, projection).sort({ publishedAt: -1, _id: -1 })
+      this.itineraries.find(filter, ITINERARY_SUMMARY_FIELDS).sort({ publishedAt: -1, _id: -1 })
         .skip((pageNumber - 1) * BLOG_PAGE_SIZE).limit(BLOG_PAGE_SIZE).lean<Itinerary[]>().exec(),
       this.itineraries.countDocuments(filter).exec(),
     ]);
+    const names = await this.cloneAttribution(rows, author._id, author.name);
+    return page(rows.map((row) => ItinerarySummaryDto.from(row, names)), pageNumber, total);
+  }
+
+  /** Names for itinerary summaries: the author, and each clone's original author ("Deleted user" when deactivated or missing). */
+  private async cloneAttribution(rows: Itinerary[], authorId: Types.ObjectId, authorName: string) {
     const originalAuthorIds = rows.flatMap((row) => (row.clonedFrom ? [row.clonedFrom.userId] : []));
-    const originalAuthors = await this.users.find({ _id: { $in: originalAuthorIds } }, { name: 1, status: 1 }).exec();
-    const names = new Map<string, string>([[author._id.toString(), author.name]]);
+    const originalAuthors = originalAuthorIds.length > 0
+      ? await this.users.find({ _id: { $in: originalAuthorIds } }, { name: 1, status: 1 }).exec()
+      : [];
+    const names = new Map<string, string>([[authorId.toString(), authorName]]);
     for (const id of originalAuthorIds) names.set(id.toString(), DELETED_USER_NAME);
     for (const original of originalAuthors) names.set(original._id.toString(), toAuthor(original).name);
-    return page(rows.map((row) => ItinerarySummaryDto.from(row, names)), pageNumber, total);
+    return names;
+  }
+
+  /** BLG-13: only the author's own PUBLIC itinerary can be attached, so every reader can open it. */
+  private async assertAttachableItinerary(itineraryId: string, userId: string) {
+    const found = await this.itineraries.exists({
+      _id: new Types.ObjectId(itineraryId),
+      userId: new Types.ObjectId(userId),
+      visibility: ItineraryVisibility.PUBLIC,
+    }).exec();
+    if (!found) {
+      throw new BadRequestException({ message: 'Validation failed', errors: { itineraryId: ['Attach one of your own public itineraries'] } });
+    }
+  }
+
+  /**
+   * BLG-13: the attached itinerary in Person 7's list shape, or null. It is shown only while it is still
+   * PUBLIC: if the author later makes it private or deletes it, the post no longer shows it.
+   */
+  private async attachedItinerary(post: BlogPostDocument, authorName: string) {
+    if (!post.itineraryId) return null;
+    const itinerary = await this.itineraries.findOne(
+      { _id: post.itineraryId, userId: post.userId, visibility: ItineraryVisibility.PUBLIC },
+      ITINERARY_SUMMARY_FIELDS,
+    ).lean<Itinerary>().exec();
+    if (!itinerary) return null;
+    return ItinerarySummaryDto.from(itinerary, await this.cloneAttribution([itinerary], post.userId, authorName));
   }
 
   // GEN-10: for Person 2's moderation. No HTTP routes here; Person 2 owns /api/admin.
@@ -217,6 +260,7 @@ export class BlogService {
 
   async toResponse(post: BlogPostDocument) {
     const author = toAuthor(await this.users.findById(post.userId, { name: 1, status: 1 }).exec());
+    const itinerary = await this.attachedItinerary(post, author.name);
     return {
       postId: post._id.toString(),
       title: post.title,
@@ -238,6 +282,8 @@ export class BlogService {
       createdAt: post.createdAt,
       updatedAt: post.updatedAt,
       author,
+      // BLG-13 (bonus): the attached public itinerary, or null.
+      itinerary,
     };
   }
 
