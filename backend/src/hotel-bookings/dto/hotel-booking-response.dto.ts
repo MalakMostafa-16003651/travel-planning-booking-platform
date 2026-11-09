@@ -1,3 +1,4 @@
+import { RefundStatus } from '../../payments/payment-status.enum';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { BookingStatus } from '../../common/enums/booking-status.enum';
 import { HOTEL_BOOKINGS_PAGE_SIZE } from '../hotel-booking.constants';
@@ -56,6 +57,7 @@ export class HotelBookingDto {
   @ApiPropertyOptional({ enum: HotelBookingCancelledBy }) cancelledBy?: HotelBookingCancelledBy;
   @ApiPropertyOptional({ description: 'Minor units.' }) refundAmount?: number;
   @ApiPropertyOptional() refundId?: string;
+  @ApiPropertyOptional({ enum: RefundStatus, description: 'Current refund status on the reservation detail/cancellation response.' }) refundStatus?: RefundStatus;
   @ApiPropertyOptional() completedAt?: Date;
   @ApiProperty() createdAt!: Date;
 

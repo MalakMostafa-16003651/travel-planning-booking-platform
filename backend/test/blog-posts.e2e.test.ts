@@ -307,6 +307,32 @@ describe('BLG-01/02/03/04/08/09/12 blog posts', { concurrency: false }, () => {
     assert.equal(plain.body.itinerary, null);
   });
 
+  it('BLG-13/ACC-12: hides attachments of deactivated or missing authors from admin moderation reads', async () => {
+    const itineraryId = new Types.ObjectId();
+    const itineraries = fixture.connection.collection('itineraries');
+    await itineraries.insertOne({
+      _id: itineraryId, userId: new Types.ObjectId(author.userId), title: 'Author itinerary',
+      countries: ['EG'], startDate: new Date('2027-03-01T00:00:00Z'), currency: 'USD',
+      transportCosts: [], days: [], visibility: 'PUBLIC', publishedAt: new Date(),
+    });
+    const postId = await fixture.post(author, { itineraryId: itineraryId.toString() });
+    const adminRead = () => fixture.http().get(`/api/posts/${postId}`).set('Cookie', admin.cookie);
+    assert.equal((await adminRead().expect(200)).body.itinerary.itineraryId, itineraryId.toString());
+
+    await fixture.deactivate(author.userId);
+    await fixture.http().get(`/api/posts/${postId}`).expect(404);
+    const deactivated = await adminRead().expect(200);
+    assert.equal(deactivated.body.itinerary, null);
+    assert.deepEqual(deactivated.body.author, { userId: null, name: 'Deleted user' });
+    assert.equal(deactivated.body.content, 'Temples and the Nile.');
+
+    await fixture.users.deleteOne({ _id: author.userId });
+    const missing = await adminRead().expect(200);
+    assert.equal(missing.body.itinerary, null);
+    assert.deepEqual(missing.body.author, { userId: null, name: 'Deleted user' });
+    assert.ok(await itineraries.findOne({ _id: itineraryId }));
+    assert.equal((await posts().findOne({ _id: new Types.ObjectId(postId) }))!.itineraryId.toString(), itineraryId.toString());
+  });
   it('GEN-10: gives moderation the hide, delete and exists operations', async () => {
     const blog = fixture.app.get(BlogService);
     const postId = await fixture.post(author);

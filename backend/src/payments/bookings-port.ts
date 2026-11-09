@@ -12,6 +12,8 @@ export interface PayableBooking {
   /** The provider policies the user accepts before paying (PAY-02). */
   policies: { cancellation: unknown; baggage?: unknown; checkInOut?: unknown };
   holdExpiresAt?: Date;
+  /** Internal capability flag: false blocks new checkout/retry, never reads or webhook compensation. */
+  checkoutReady?: boolean;
 }
 
 /** The only things Payments needs from the booking modules. */

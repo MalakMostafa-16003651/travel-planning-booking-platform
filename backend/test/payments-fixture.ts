@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { resolve } from 'node:path';
-import { INestApplication } from '@nestjs/common';
+import { INestApplication, Type } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { getConnectionToken, getModelToken, MongooseModule } from '@nestjs/mongoose';
 import { Test, TestingModuleBuilder } from '@nestjs/testing';
@@ -56,7 +56,7 @@ export class PaymentsFixture {
   private readonly cairo = new Types.ObjectId();
   private readonly dubai = new Types.ObjectId();
 
-  async start(dbName: string, configure: (builder: TestingModuleBuilder) => TestingModuleBuilder = (builder) => builder, config: Record<string, string> = {}) {
+  async start(dbName: string, configure: (builder: TestingModuleBuilder) => TestingModuleBuilder = (builder) => builder, config: Record<string, string> = {}, additionalModules: Type<unknown>[] = []) {
     this.replicaSet = await MongoMemoryReplSet.create({
       replSet: { count: 1, storageEngine: 'wiredTiger' },
       binary: { downloadDir: resolve(process.cwd(), 'node_modules/.cache/mongodb-binaries') },
@@ -73,6 +73,7 @@ export class PaymentsFixture {
         AuthModule,
         FlightBookingsModule,
         PaymentsModule,
+        ...additionalModules,
       ],
     }).overrideProvider(BOOKING_NOTIFICATIONS).useValue(this.notifications)
       .overrideProvider(BOOKING_PAYMENTS).useValue(this.paymentsBridge);

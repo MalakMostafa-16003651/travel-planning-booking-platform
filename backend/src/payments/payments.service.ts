@@ -1,5 +1,5 @@
 import { EmailEligibilityService } from '../auth/email-eligibility.service';
-import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { isValidObjectId, Model, Types } from 'mongoose';
 import Stripe from 'stripe';
@@ -165,8 +165,15 @@ export class PaymentsService {
    * the success is applied, which refunds it because the booking is no longer payable.
    */
   async cancelPendingPayment(bookingType: BookingType, bookingId: string): Promise<void> {
-    const payment = await this.payments.findOne({ ...bookingRef(bookingType, bookingId), status: { $in: [PaymentStatus.PENDING, PaymentStatus.FAILED] } }).exec();
+    const payment = await this.payments.findOne({ ...bookingRef(bookingType, bookingId), $or: [
+      { status: { $in: [PaymentStatus.PENDING, PaymentStatus.FAILED] } },
+      { status: PaymentStatus.SUCCEEDED, bookingConfirmedAt: null, autoRefundedAt: null },
+    ] }).exec();
     if (!payment) return;
+    if (payment.status === PaymentStatus.SUCCEEDED) {
+      await this.finishSucceededPayment(payment);
+      return;
+    }
     try {
       await this.stripe.cancelPaymentIntent(payment.stripePaymentIntentId);
     } catch (error) {
@@ -255,6 +262,10 @@ export class PaymentsService {
       await this.payments.updateOne({ _id: payment._id }, { bookingConfirmedAt: new Date() }).exec();
       return;
     }
+    // Another delivery may have finalized confirmation while this handler awaited the booking.
+    // Respect that durable marker before treating a later user cancellation as a failed payment.
+    const latest = await this.payments.findById(payment._id).exec();
+    if (!latest || latest.bookingConfirmedAt || latest.autoRefundedAt) return;
     // The money arrived, but the booking is gone, cancelled or its hold expired.
     if (!await this.refunds.hasRefunds(payment)) {
       const bookingId = readBookingId(payment);
@@ -351,5 +362,6 @@ export class PaymentsService {
     if (booking.currency !== PLATFORM_CURRENCY) throw new ConflictException('The booking is not in the platform currency');
     if (booking.status !== BookingStatus.PENDING) throw new ConflictException('Only a PENDING booking can be paid');
     if (!this.isPayable(booking)) throw new ConflictException('The booking hold has expired');
+    if (booking.checkoutReady === false) throw new ServiceUnavailableException('Hotel checkout is temporarily unavailable');
   }
 }

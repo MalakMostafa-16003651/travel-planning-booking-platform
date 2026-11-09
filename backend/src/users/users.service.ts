@@ -25,8 +25,8 @@ function unlockedLoginFilter(userId: string, passwordHash: string) {
   };
 }
 
-function incrementableCredentialVersion() {
-  const version = { $ifNull: ['$credentialVersion', 0] };
+function incrementableVersion(field: 'credentialVersion' | 'bookingVersion') {
+  const version = { $ifNull: ['$' + field, 0] };
   return {
     // Pipeline updates bypass schema validation. Reject malformed stored values
     // and reserve room for one exact integer increment; legacy missing means zero.
@@ -54,6 +54,29 @@ export class UsersService implements OnModuleInit {
   async onModuleInit(): Promise<void> {
     // Requests must not arrive before MongoDB enforces email uniqueness.
     await this.users.init();
+  }
+
+  /** ACC-12: NEW confirmations and deactivation write the same User in their transactions. */
+  async acquireBookingGate(userId: string, session: ClientSession): Promise<void> {
+    if (!/^[0-9a-f]{24}$/i.test(userId)) throw new ConflictException('Account is no longer eligible for booking');
+    const result = await this.users.updateOne({ _id: userId, status: AccountStatus.ACTIVE, role: UserRole.USER,
+      $expr: incrementableVersion('bookingVersion'),
+    }, [{ $set: { bookingVersion: { $add: [{ $ifNull: ['$bookingVersion', 0] }, 1] }, updatedAt: '$$NOW' } }],
+    { session, updatePipeline: true, timestamps: false, upsert: false }).exec();
+    if (result.matchedCount !== 1) throw new ConflictException('Account is no longer eligible for booking');
+  }
+
+  /** Only after acquiring the gate and checking BOTH booking modules in this transaction. */
+  async deactivateUnderBookingGate(userId: string, credentialVersion: number, session: ClientSession): Promise<boolean> {
+    if (!Number.isSafeInteger(credentialVersion) || credentialVersion < 0) return false;
+    const result = await this.users.updateOne({ _id: userId, status: AccountStatus.ACTIVE, role: UserRole.USER,
+      mustChangePassword: false, $expr: { $and: [
+        { $eq: [{ $ifNull: ['$credentialVersion', 0] }, credentialVersion] }, incrementableVersion('credentialVersion'),
+      ] },
+    }, [{ $set: { status: AccountStatus.DEACTIVATED,
+      credentialVersion: { $add: [{ $ifNull: ['$credentialVersion', 0] }, 1] }, updatedAt: '$$NOW' } }],
+    { session, updatePipeline: true, timestamps: false, upsert: false }).exec();
+    return result.matchedCount === 1;
   }
 
   /** Shared internal lookup: no credentials or whole User documents leave this service. */
@@ -237,7 +260,7 @@ export class UsersService implements OnModuleInit {
         $expr: {
           $and: [
             { $eq: [{ $ifNull: ['$credentialVersion', 0] }, expectedVersion] },
-            incrementableCredentialVersion(),
+            incrementableVersion('credentialVersion'),
           ],
         },
       },
@@ -261,7 +284,7 @@ export class UsersService implements OnModuleInit {
       {
         _id: userId,
         role: { $in: [UserRole.USER, UserRole.AIRLINE_MODERATOR, UserRole.HOTEL_MODERATOR] },
-        $expr: incrementableCredentialVersion(),
+        $expr: incrementableVersion('credentialVersion'),
       },
       [{
         $set: {

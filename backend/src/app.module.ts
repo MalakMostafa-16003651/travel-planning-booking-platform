@@ -1,3 +1,4 @@
+import { AccountDeactivationModule } from './users/account-deactivation.module';
 import { FavoritesModule } from './favorites/favorites.module';
 import { ItineraryExportsModule } from './itinerary-exports/itinerary-exports.module';
 import { Module } from '@nestjs/common';
@@ -37,6 +38,7 @@ import { ReviewsModule } from './reviews/reviews.module';
       }),
     }),
     AuthModule,
+    AccountDeactivationModule,
     NotificationsModule,
     FlightBookingsModule,
     BlogModule,

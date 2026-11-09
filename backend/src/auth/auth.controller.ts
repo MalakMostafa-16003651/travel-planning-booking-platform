@@ -1,3 +1,4 @@
+import { clearAuthenticationCookies } from './auth-cookies';
 import { EmailVerificationService } from './email-verification.service';
 import { EmailVerificationRequestedDto, EmailVerificationStatusDto, ResendVerificationDto, VerifyEmailDto } from './dto/email-verification.dto';
 import { ApiAcceptedResponse, ApiServiceUnavailableResponse, ApiTooManyRequestsResponse } from '@nestjs/swagger';
@@ -180,9 +181,7 @@ export class AuthController {
   }
 
   private clearAuthenticationCookies(response: Response): void {
-    response.clearCookie(ACCESS_TOKEN_COOKIE, AUTH_COOKIE_OPTIONS);
-    response.clearCookie(REFRESH_TOKEN_COOKIE, AUTH_COOKIE_OPTIONS);
-    response.clearCookie(PASSWORD_CHANGE_TOKEN_COOKIE, AUTH_COOKIE_OPTIONS);
+    clearAuthenticationCookies(response);
   }
 
   @Get('me')

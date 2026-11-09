@@ -131,6 +131,47 @@ describe('PAY-01/02/03 hotel reservation payments', { concurrency: false }, () =
     assert.ok(acceptance?.acceptedAt instanceof Date);
   });
 
+  it('PAY-01 blocks hotel checkout when the confirmation connection is unavailable before creating any payment', async () => {
+    const service = fixture.app.get(HotelBookingsService, { strict: false }) as unknown as Record<string, unknown>;
+    service.confirmPaidBooking = undefined;
+    service.markPaymentFailed = undefined;
+    await fixture.http().get(`/api/bookings/hotel/${bookingId}/policies`).set('Cookie', owner.cookie).expect(200);
+    await accept().expect(200);
+    await pay(stranger).expect(404);
+    const before = await reservation();
+    const blocked = await pay().expect(503);
+    assert.equal(blocked.body.message, 'Hotel checkout is temporarily unavailable');
+    assert.equal(stripe.calls.createIntent, 0);
+    assert.equal(await payments().countDocuments(), 0);
+    assert.equal(await refunds().countDocuments(), 0);
+    assert.deepEqual(await reservation(), before);
+  });
+
+  it('PAY-01 blocks retry when hotel confirmation becomes unavailable, preserving the old payment and intent', async () => {
+    const { paymentId, intentId } = await startPayment();
+    await webhook('payment_intent.payment_failed', stripe.decline(intentId)).expect(200);
+    const before = await payments().findOne({ _id: new Types.ObjectId(paymentId) });
+    const oldIntent = structuredClone(stripe.intent(intentId));
+    const service = fixture.app.get(HotelBookingsService, { strict: false }) as unknown as Record<string, unknown>;
+    service.markPaymentFailed = undefined;
+    await fixture.http().post(`/api/payments/${paymentId}/retry`).set('Cookie', owner.cookie).expect(503);
+    assert.equal(stripe.calls.createIntent, 1);
+    assert.deepEqual(stripe.intent(intentId), oldIntent);
+    assert.deepEqual(await payments().findOne({ _id: new Types.ObjectId(paymentId) }), before);
+    await fixture.http().get(`/api/payments/${paymentId}`).set('Cookie', owner.cookie).expect(200);
+  });
+
+  it('PAY-01 still refunds an existing signed success if the hotel confirmation connection disappears', async () => {
+    const { paymentId, intentId } = await startPayment();
+    const service = fixture.app.get(HotelBookingsService, { strict: false }) as unknown as Record<string, unknown>;
+    service.confirmPaidBooking = undefined;
+    const success = stripe.succeed(intentId);
+    await webhook('payment_intent.succeeded', success).expect(200);
+    await webhook('payment_intent.succeeded', success).expect(200);
+    assert.equal((await reservation())?.status, 'PENDING');
+    assert.equal(stripe.calls.createRefund, 1);
+    assert.ok((await payments().findOne({ _id: new Types.ObjectId(paymentId) }))?.autoRefundedAt);
+  });
   it('PAY-01 charges the reservation total and confirms the reservation only after a verified success', async () => {
     const { paymentId, intentId } = await startPayment();
     const intent = stripe.intent(intentId);
