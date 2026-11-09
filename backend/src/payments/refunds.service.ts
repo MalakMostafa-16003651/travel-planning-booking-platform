@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { createHash } from 'node:crypto';
-import { Model, Types } from 'mongoose';
+import { isValidObjectId, Model, Types } from 'mongoose';
 import Stripe from 'stripe';
 import { UserRole } from '../common/enums/user-role.enum';
 import { NotificationType } from '../notifications/notification-type.enum';
@@ -74,6 +74,23 @@ export class RefundsService {
       status: { $in: [RefundStatus.PENDING, RefundStatus.REFUNDED] },
     }).exec();
     return existing ?? this.createRefund(input);
+  }
+
+  /**
+   * PAY-03 for the booking details pages (Persons 4 and 6): the booking's latest refund. A PENDING one
+   * is checked with Stripe first; if Stripe is unreachable the stored status is returned.
+   */
+  async findLatestForBooking(bookingType: BookingType, bookingId: string) {
+    if (!isValidObjectId(bookingId)) return null;
+    const refund = await this.refunds.findOne(bookingRef(bookingType, bookingId)).sort({ createdAt: -1, _id: -1 }).exec();
+    if (!refund || refund.status !== RefundStatus.PENDING) return refund;
+    try {
+      await this.syncStripeRefund(await this.stripe.retrieveRefund(refund.stripeRefundId));
+    } catch {
+      this.logger.error(`Could not check refund ${refund._id.toString()} with Stripe`);
+      return refund;
+    }
+    return this.refunds.findById(refund._id).exec();
   }
 
   /** Refunds part or all of a booking's successful payment. */
