@@ -25,6 +25,7 @@ export class HotelBookingsMaintenanceService implements OnApplicationBootstrap, 
     if (this.running) return;
     this.running = true;
     try {
+      await this.bookings.expireOverdueHolds();
       await this.bookings.completeFinishedStays();
     } catch {
       this.logger.error('Hotel booking maintenance failed; it will run again');

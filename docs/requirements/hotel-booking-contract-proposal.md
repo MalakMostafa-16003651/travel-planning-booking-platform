@@ -1,10 +1,22 @@
 # Hotel Bookings and Reviews: shared contract
 
-Status: **proposal, not yet agreed.** Person 6 (Osama, 16005523) owns `backend/src/hotel-bookings` and
-`backend/src/reviews`. No code exists yet. The plan, endpoints and integration approach were approved by
-the team leader on 2026-11-08 (section 2). The schemas and exported methods below are the integration
-surface for Lama (Person 5), Omar (Person 8), Arwa (Person 2) and Malak (Person 1). Anything still open
-is listed in section 7 and is not built until the owner agrees.
+Status (updated 2026-11-08): **partly implemented; the remaining parts wait on other owners.**
+Person 6 (Osama, 16005523) owns `backend/src/hotel-bookings` and `backend/src/reviews`. The plan,
+endpoints and integration approach were approved by the team leader on 2026-11-08 (section 2). The schemas
+and exported methods below are the integration surface for Lama (Person 5), Omar (Person 8), Arwa
+(Person 2) and Malak (Person 1).
+
+| State | PR | What it delivers |
+| --- | --- | --- |
+| Merged | [#50](https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/pull/50) | This contract proposal and the student work log. |
+| Merged | [#51](https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/pull/51) | `HotelBooking` schema, `GET /api/hotel-bookings` and `GET /api/hotel-bookings/:id` (owner only), `listForHotel` (HTL-22, mapped by Malak's adapter from #55) and `listForAdmin` (ACC-17, connected by Arwa in #53). |
+| Merged | [#52](https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/pull/52) | `Review` schema, `POST /api/hotel-bookings/:id/review`, `PATCH`/`DELETE /api/reviews/:id`, `GET /api/hotels/:id/reviews` with average and count on read, the GEN-09/10 hooks and `getRatingStats`. |
+| Merged | [#54](https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/pull/54) | UTC "today" (L2) through `HotelBookingsClock`, UPCOMING/PAST groups, the CONFIRMED → COMPLETED sweep (GEN-11) and `hasUpcomingConfirmedBookings` (ACC-12). |
+| In review | [#56](https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/pull/56) | `POST /api/hotel-bookings`: validated multi-room request, one-transaction 10-minute holds with 409 on any overlap, and the expiry sweep (HTL-16, HTL-18). |
+| Waiting for Omar | PR 4, PR 5 | Payment confirmation, notification and PaymentIntent cancellation on expiry (HTL-17); cancellation quote, cancel and refund (HTL-21). See questions O1-O6. |
+| Optional, last | PR 6 | HTL-26 review replies (bonus). |
+
+Anything still open is listed in section 7 and is not built until the owner agrees.
 
 Sources: the reviewed requirements workbook as quoted in the
 [Milestone 1 ownership matrix](milestone-1-ownership-matrix.md) (HTL-16/17/18/20/21/23/24, HTL-26 bonus,
@@ -43,6 +55,15 @@ endpoints; each owner connects the exported method on their side.
   approach for both modules (section 7, question L2). Person 6 does not pick one alone.
 - The room availability contract is finalised with Lama before holds are built (PR 3).
 - Payment failure, expiry and refund behaviour is agreed with Omar before PRs 4 and 5.
+
+### Person 6 (student) decisions for `POST /api/hotel-bookings` (2026-11-08)
+
+These are the student's own decisions, not workbook rules:
+
+- **At most 10 rooms per reservation.** The workbook sets no maximum; this is a safety bound on request size, the same idea as the flight module's passenger limit. A larger request is a 400.
+- **At least one guest in every room.** HTL-16 assigns guests to each room, so a room with no adults and no children is a 400. The workbook's "at least one adult per reservation" is kept as is, so a room may hold only children.
+- **404 for what cannot be booked.** An unknown or deactivated hotel (ACC-15), and a room that is unknown, inactive or of another hotel, return 404, like flight bookings ("Flight or cabin not found") and the hotel detail. Real input errors (dates, guests, capacity, repeated rooms, malformed ids) stay 400.
+- **A stay is finished on its check-out date** (Upcoming/Past, completion, ACC-12), consistent with Lama's half-open ranges where the check-out night is free. Left open for the team leader's confirmation in #54.
 
 ## 3. API
 

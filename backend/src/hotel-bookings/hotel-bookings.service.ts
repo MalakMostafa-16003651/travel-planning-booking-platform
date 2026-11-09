@@ -1,10 +1,14 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, QueryFilter, Types } from 'mongoose';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { InjectConnection, InjectModel } from '@nestjs/mongoose';
+import { Connection, Model, QueryFilter, Types } from 'mongoose';
 import { BookingStatus } from '../common/enums/booking-status.enum';
+// PAY-04: the single platform currency, the same constant flight bookings and payments use.
+import { PLATFORM_CURRENCY } from '../flight-bookings/flight-booking.rules';
+import { RoomInventoryAdapter } from './adapters/room-inventory.adapter';
+import { CreateHotelBookingDto } from './dto/create-hotel-booking.dto';
 import { HotelBookingDto, HotelBookingPageDto } from './dto/hotel-booking-response.dto';
 import { HotelBookingGroup } from './dto/list-hotel-bookings-query.dto';
-import { HOTEL_BOOKINGS_PAGE_SIZE } from './hotel-booking.constants';
+import { HOTEL_BOOKING_HOLD_MS, HOTEL_BOOKINGS_PAGE_SIZE } from './hotel-booking.constants';
 import { HotelBookingsClock } from './hotel-booking.dates';
 import { HotelBooking, HotelBookingDocument } from './schemas/hotel-booking.schema';
 
@@ -32,6 +36,7 @@ export interface HotelBookingSummaryPage {
 }
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+const SWEEP_BATCH_SIZE = 100;
 
 function toObjectId(id: string, message: string): Types.ObjectId {
   if (!/^[0-9a-f]{24}$/i.test(id)) throw new NotFoundException(message);
@@ -64,8 +69,96 @@ function summarize(booking: HotelBooking): HotelBookingSummary {
 export class HotelBookingsService {
   constructor(
     @InjectModel(HotelBooking.name) private readonly bookings: Model<HotelBookingDocument>,
+    @InjectConnection() private readonly connection: Connection,
     private readonly clock: HotelBookingsClock,
+    private readonly inventory: RoomInventoryAdapter,
   ) {}
+
+  /**
+   * HTL-16/HTL-18: validates the request, prices it from the rooms' current prices, then holds every
+   * room for 10 minutes and saves one PENDING reservation in ONE transaction. If any room overlaps a
+   * blocked range, a booked range or an unexpired hold, the transaction aborts: 409 and nothing is held.
+   */
+  async hold(input: CreateHotelBookingDto, userId: string): Promise<HotelBookingDto> {
+    const errors: Record<string, string[]> = {};
+    const fail = (field: string, message: string) => { (errors[field] ??= []).push(message); };
+
+    if (input.checkOut <= input.checkIn) fail('checkOut', 'Check-out must be after check-in');
+    if (input.checkIn < this.clock.today()) fail('checkIn', 'Check-in cannot be in the past');
+    const roomIds = input.rooms.map((room) => room.roomId.toLowerCase());
+    if (new Set(roomIds).size !== roomIds.length) fail('rooms', 'Each room can be selected only once');
+    if (input.rooms.reduce((sum, room) => sum + room.adults, 0) < 1) fail('rooms', 'At least one adult is required');
+    // HTL-16 assigns guests to each room, so every selected room needs at least one guest.
+    input.rooms.forEach((room, index) => {
+      if (room.adults + room.childrenAges.length < 1) fail(`rooms.${index}`, 'Each room needs at least one guest');
+    });
+    if (Object.keys(errors).length > 0) throw new BadRequestException({ message: 'Validation failed', errors });
+
+    // 404, like flight bookings ("Flight or cabin not found") and the hotel detail: an unknown or
+    // deactivated hotel (ACC-15), and an unknown or inactive room or a room of another hotel, do not exist
+    // for booking. Real input errors (dates, guests, capacity, repeated rooms) stay 400.
+    const hotel = await this.inventory.getHotel(input.hotelId);
+    if (!hotel || !hotel.isActive) throw new NotFoundException('Hotel not found');
+    const found = new Map((await this.inventory.getRooms(roomIds)).map((room) => [room._id.toString(), room]));
+    const missing = input.rooms.some((request) => {
+      const room = found.get(request.roomId.toLowerCase());
+      return !room || !room.hotelId.equals(hotel._id) || !room.isActive;
+    });
+    if (missing) throw new NotFoundException('Room not found in this hotel');
+    const selected = input.rooms.map((request, index) => {
+      const room = found.get(request.roomId.toLowerCase())!;
+      const guests = request.adults + request.childrenAges.length;
+      if (guests > room.capacity) fail(`rooms.${index}`, `${room.name} holds at most ${room.capacity} guests`);
+      return { room, request };
+    });
+    if (Object.keys(errors).length > 0) throw new BadRequestException({ message: 'Validation failed', errors });
+
+    const nights = Math.round((Date.parse(`${input.checkOut}T00:00:00Z`) - Date.parse(`${input.checkIn}T00:00:00Z`)) / 86_400_000);
+    // HTL-16/HTL-05: name and price are copied now, so later room edits never change this reservation.
+    const rooms = selected.map((entry) => {
+      const { room, request } = entry;
+      return {
+        roomId: room._id,
+        roomName: room.name,
+        pricePerNight: room.pricePerNight,
+        adults: request.adults,
+        childrenAges: request.childrenAges,
+        subtotal: nights * room.pricePerNight,
+      };
+    });
+
+    await this.inventory.ensureAvailability(selected.map((entry) => entry.room));
+    const hotelBookingId = new Types.ObjectId();
+    const now = new Date();
+    const holdExpiresAt = new Date(now.getTime() + HOTEL_BOOKING_HOLD_MS);
+    const booking = await this.connection.transaction(async (session) => {
+      for (const { room } of selected) {
+        const held = await this.inventory.holdRoom(room._id, input, { hotelBookingId, holdExpiresAt, now }, session);
+        if (!held) throw new ConflictException(`${room.name} is not available for these dates`);
+      }
+      const [created] = await this.bookings.create([{
+        _id: hotelBookingId,
+        userId: new Types.ObjectId(userId),
+        hotelId: hotel._id,
+        hotelName: hotel.name,
+        rooms,
+        checkIn: input.checkIn,
+        checkOut: input.checkOut,
+        nights,
+        totalPrice: rooms.reduce((sum, room) => sum + room.subtotal, 0),
+        currency: PLATFORM_CURRENCY,
+        status: BookingStatus.PENDING,
+        holdExpiresAt,
+        policySnapshot: {
+          cancellationTiers: hotel.cancellationTiers.map(({ daysBeforeCheckIn, refundPercentage }) => ({ daysBeforeCheckIn, refundPercentage })),
+          checkInTime: hotel.checkInTime,
+          checkOutTime: hotel.checkOutTime,
+        },
+      }], { session });
+      return created;
+    });
+    return HotelBookingDto.from(booking);
+  }
 
   /**
    * HTL-20: the caller's own reservations, page size 10 (GEN-05). CANCELLED includes EXPIRED
@@ -152,6 +245,32 @@ export class HotelBookingsService {
   }
 
   // Scheduled work (HotelBookingsMaintenanceService)
+
+  /**
+   * HTL-18/GEN-11 (contract L3): a PENDING reservation whose hold has ended becomes EXPIRED and its HELD
+   * entries are removed from its rooms, in one transaction per reservation. The status condition means a
+   * reservation is expired (and released) once, even with several servers. Cancelling Omar's open
+   * PaymentIntent is added in PR 4. Returns how many reservations expired.
+   */
+  async expireOverdueHolds(now: Date = new Date()): Promise<number> {
+    const overdue = await this.bookings.find({ status: BookingStatus.PENDING, holdExpiresAt: { $lte: now } })
+      .select('_id').limit(SWEEP_BATCH_SIZE).exec();
+    let expired = 0;
+    for (const { _id } of overdue) {
+      const done = await this.connection.transaction(async (session) => {
+        const booking = await this.bookings.findOneAndUpdate(
+          { _id, status: BookingStatus.PENDING, holdExpiresAt: { $lte: now } },
+          { $set: { status: BookingStatus.EXPIRED }, $unset: { holdExpiresAt: 1 } },
+          { returnDocument: 'after', session },
+        ).exec();
+        if (!booking) return false;
+        await this.inventory.releaseHolds(booking._id, booking.rooms.map((room) => room.roomId), session);
+        return true;
+      });
+      if (done) expired += 1;
+    }
+    return expired;
+  }
 
   /**
    * GEN-11/HTL-23: Confirmed becomes Completed once the check-out date has arrived (UTC calendar date),
