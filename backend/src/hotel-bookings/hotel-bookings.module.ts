@@ -1,3 +1,4 @@
+import { HotelCancellationQuotesService } from './hotel-cancellation-quotes.service';
 import { Payment, PaymentSchema } from '../payments/schemas/payment.schema';
 import { UsersModule } from '../users/users.module';
 import { NotificationsModule } from '../notifications/notifications.module';
@@ -31,7 +32,7 @@ import { HotelBooking, HotelBookingSchema } from './schemas/hotel-booking.schema
     ]),
   ],
   controllers: [HotelBookingsController],
-  providers: [HotelBookingsService, HotelBookingsMaintenanceService, HotelBookingsClock, RoomInventoryAdapter],
+  providers: [HotelCancellationQuotesService, HotelBookingsService, HotelBookingsMaintenanceService, HotelBookingsClock, RoomInventoryAdapter],
   // Person 5 (HTL-22 listForHotel), Person 2 (ACC-17 listForAdmin) and Person 1 (ACC-12
   // hasUpcomingConfirmedBookings) connect these on their side.
   exports: [HotelBookingsService],

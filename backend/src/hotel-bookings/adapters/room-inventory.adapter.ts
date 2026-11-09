@@ -102,6 +102,12 @@ export class RoomInventoryAdapter {
     return result.modifiedCount === 1;
   }
 
+  /** HTL-21: release only this cancelled reservation's booked ranges. */
+  async releaseBookedRooms(hotelBookingId: Types.ObjectId, roomIds: Types.ObjectId[], session: ClientSession): Promise<void> {
+    await this.availabilities.updateMany({ roomId: { $in: roomIds } },
+      { $pull: { bookedRanges: { hotelBookingId, status: BookedRangeStatus.BOOKED } } }, { session }).exec();
+  }
+
   /** Expiry: removes this reservation's HELD entries from its rooms (BOOKED ones are never touched). */
   async releaseHolds(hotelBookingId: Types.ObjectId, roomIds: Types.ObjectId[], session: ClientSession): Promise<void> {
     await this.availabilities.updateMany(

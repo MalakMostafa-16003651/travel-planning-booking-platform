@@ -262,6 +262,10 @@ export class PaymentsService {
       await this.payments.updateOne({ _id: payment._id }, { bookingConfirmedAt: new Date() }).exec();
       return;
     }
+    // Another delivery may have finalized confirmation while this handler awaited the booking.
+    // Respect that durable marker before treating a later user cancellation as a failed payment.
+    const latest = await this.payments.findById(payment._id).exec();
+    if (!latest || latest.bookingConfirmedAt || latest.autoRefundedAt) return;
     // The money arrived, but the booking is gone, cancelled or its hold expired.
     if (!await this.refunds.hasRefunds(payment)) {
       const bookingId = readBookingId(payment);

@@ -1,3 +1,7 @@
+import { HotelCancellationQuotesService } from './hotel-cancellation-quotes.service';
+import { HotelCancellationQuoteDto } from './dto/cancel-hotel-booking.dto';
+import { HotelBookingCancelledBy } from './schemas/hotel-booking.schema';
+import { RefundStatus } from '../payments/payment-status.enum';
 import { BookingPaymentsAdapter } from '../payments/adapters/booking-payments.adapter';
 import { HOLD_EXPIRED_REASON } from '../payments/payments.service';
 import { randomBytes } from 'node:crypto';
@@ -89,6 +93,7 @@ export class HotelBookingsService {
     private readonly notifications: NotificationsService,
     @InjectModel(Payment.name) private readonly payments: Model<Payment>,
     @Inject(forwardRef(() => BookingPaymentsAdapter)) private readonly bookingPayments: BookingPaymentsAdapter,
+    private readonly cancellationQuotes: HotelCancellationQuotesService,
   ) {}
 
   /**
@@ -177,6 +182,71 @@ export class HotelBookingsService {
       return created;
     });
     return HotelBookingDto.from(booking);
+  }
+
+  /** HTL-21: preview is owner-only and does not change reservation, inventory or money. */
+  async getCancellationQuote(hotelBookingId: string, userId: string): Promise<HotelCancellationQuoteDto> {
+    return this.cancellationQuotes.issue(await this.getMine(hotelBookingId, userId));
+  }
+
+  /** Detail uses Payments' authoritative refund read, without changing the shared raw-booking reader. */
+  async getDetails(hotelBookingId: string, userId: string): Promise<HotelBookingDto> {
+    const booking = await this.getMine(hotelBookingId, userId);
+    const dto = HotelBookingDto.from(booking);
+    if (booking.status === BookingStatus.CANCELLED && booking.refundAmount && booking.refundAmount > 0) {
+      const refund = await this.bookingPayments.getRefundStatus({ bookingType: 'HOTEL', bookingId: hotelBookingId });
+      dto.refundStatus = refund?.status ?? (booking.refundDue ? RefundStatus.PENDING : undefined);
+      dto.refundId = refund?.refundId ?? dto.refundId;
+    }
+    return dto;
+  }
+
+  async cancel(hotelBookingId: string, userId: string, quoteToken: string): Promise<HotelBookingDto> {
+    const _id = toObjectId(hotelBookingId, 'Hotel booking not found');
+    const cancelled = await this.connection.transaction(async (session) => {
+      const booking = await this.bookings.findOne({ _id, userId: new Types.ObjectId(userId) }).session(session).exec();
+      if (!booking) throw new NotFoundException('Hotel booking not found');
+      const quote = this.cancellationQuotes.assertValid(booking, quoteToken);
+      // Do not race cancellation against a webhook still finalizing confirmation/compensation.
+      const paid = await this.payments.exists({ _id: booking.paymentId, hotelBookingId: _id, bookingType: 'hotel',
+        userId: booking.userId, status: PaymentStatus.SUCCEEDED, bookingConfirmedAt: { $type: 'date' } }).session(session);
+      if (!paid) throw new ConflictException('The reservation payment is still being finalized');
+      await this.inventory.releaseBookedRooms(_id, booking.rooms.map(room => room.roomId), session);
+      // A delayed transaction must not cancel across a UTC check-in/tier boundary or proof expiry.
+      const latest = this.cancellationQuotes.assertValid(booking, quoteToken);
+      if (latest.today !== quote.today) throw new ConflictException('Request a new cancellation quote');
+      booking.status = BookingStatus.CANCELLED;
+      booking.cancelledAt = new Date();
+      booking.cancelledBy = HotelBookingCancelledBy.USER;
+      booking.refundAmount = quote.refundAmount;
+      booking.refundDue = quote.refundAmount > 0;
+      await booking.save({ session });
+      return booking;
+    });
+    await this.settleCancellationRefund(cancelled);
+    try {
+      await this.notifications.notify({ userId, type: 'BOOKING_CANCELLED', message: 'Hotel booking '
+        + cancelled.bookingReference + ' at ' + cancelled.hotelName + ' (' + cancelled.checkIn + ' to '
+        + cancelled.checkOut + ') is cancelled. Refund due: ' + ((cancelled.refundAmount ?? 0) / 100).toFixed(2) + ' ' + cancelled.currency + '.' });
+    } catch { this.logger.error('Could not deliver hotel booking cancellation notification'); }
+    return this.getDetails(hotelBookingId, userId);
+  }
+
+  /** Recovery after commit: external refunds are idempotent and never keep room inventory locked. */
+  async retryDueRefunds(): Promise<void> {
+    const due = await this.bookings.find({ status: BookingStatus.CANCELLED, refundDue: true, refundAmount: { $gt: 0 } })
+      .sort({ updatedAt: 1, _id: 1 }).limit(SWEEP_BATCH_SIZE).exec();
+    for (const booking of due) await this.settleCancellationRefund(booking);
+  }
+
+  private async settleCancellationRefund(booking: HotelBookingDocument): Promise<void> {
+    if (!booking.refundDue || !booking.refundAmount) return;
+    try {
+      const { refundId } = await this.bookingPayments.createRefund({ bookingType: 'HOTEL', bookingId: booking._id.toString(),
+        amount: booking.refundAmount, reason: 'Hotel reservation cancelled by the user' });
+      await this.bookings.updateOne({ _id: booking._id, status: BookingStatus.CANCELLED, refundDue: true },
+        { $set: { refundDue: false, refundId: new Types.ObjectId(refundId) } }).exec();
+    } catch { this.logger.error('Could not request hotel cancellation refund; it will be retried'); }
   }
 
   /** HTL-17: internal verified-payment callback; never exposed as a client confirmation endpoint. */
