@@ -1,3 +1,7 @@
+import { UserRole } from '../src/common/enums/user-role.enum';
+import { CreateFlightBookingDto } from '../src/flight-bookings/dto/create-flight-booking.dto';
+import { PaymentsService } from '../src/payments/payments.service';
+import { PoliciesService } from '../src/payments/policies.service';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import { after, before, beforeEach, describe, it, mock } from 'node:test';
@@ -184,6 +188,77 @@ describe('ACC-02 account email verification and shared HTTP booking access', { c
     for (const path of ['/api/auth/email-verification', '/api/auth/resend-verification', '/api/auth/verify-email']) assert.ok(document.paths[path]);
     assert.equal(document.components.schemas.VerifyEmailDto.properties.token.writeOnly, true); assert.equal(JSON.stringify(document.components.schemas).includes('emailVerifiedAt'), false);
     await verify(latest()).expect(204);
+  });
+  it('blocks direct internal flight holds and payment create/retry calls before any side effects', async () => {
+    const owner = await login();
+    const input = { segments: [{ flightId: new Types.ObjectId().toString(), cabinId: new Types.ObjectId().toString() }], passengers: [] } as CreateFlightBookingDto;
+    const forbidden = (error: unknown) => (error as { getStatus(): number }).getStatus() === 403;
+    await assert.rejects(() => fixture.flightBookings.hold(input, owner.userId), forbidden);
+    const payments = fixture.app.get(PaymentsService), user = { userId: owner.userId, role: UserRole.USER };
+    await assert.rejects(() => payments.create({ bookingType: 'flight', bookingId: new Types.ObjectId().toString() }, user), forbidden);
+    await assert.rejects(() => payments.retry(new Types.ObjectId().toString(), user), forbidden);
+    assert.equal(await fixture.connection.collection('flightbookings').countDocuments({}), 0);
+    assert.equal(await fixture.connection.collection('payments').countDocuments({}), 0);
+    assert.equal(stripe.calls.createIntent, 0);
+  });
+  it('rejects internal confirmation of a newly unverified pending booking without converting seats', async () => {
+    const owner = await login(); await verify(latest()).expect(204); const id = await fixture.holdBooking(owner.cookie);
+    const before = await fixture.connection.collection('cabininventories').findOne({});
+    await fixture.users.updateOne({ _id: owner.userId }, { $unset: { emailVerifiedAt: '' } });
+    await assert.rejects(() => fixture.flightBookings.confirmPaidBooking(id, new Types.ObjectId().toString()),
+      (error: unknown) => (error as { getStatus(): number }).getStatus() === 409);
+    assert.equal(await fixture.bookingStatus(id), 'PENDING');
+    assert.deepEqual(await fixture.connection.collection('cabininventories').findOne({}), before);
+  });
+  async function startVerifiedPayment() {
+    const owner = await login(); await verify(latest()).expect(204); const bookingId = await fixture.holdBooking(owner.cookie);
+    await http().post('/api/bookings/flight/' + bookingId + '/accept-policies').set('Cookie', owner.cookie).send({ accepted: true }).expect(200);
+    const created = await http().post('/api/payments').set('Cookie', owner.cookie).send({ bookingType: 'flight', bookingId }).expect(201);
+    return { owner, bookingId, paymentId: created.body.payment._id as string, intentId: created.body.payment.stripePaymentIntentId as string };
+  }
+  const webhook = (intent: unknown) => {
+    const event = FakeStripe.signedEvent('payment_intent.succeeded', intent);
+    return http().post('/api/payments/webhook').set('stripe-signature', event.signature).set('Content-Type', 'application/json').send(event.payload);
+  };
+  it('routes a late paid-but-unverified hold through the existing full-refund path exactly once', async () => {
+    const { owner, bookingId, paymentId, intentId } = await startVerifiedPayment();
+    await fixture.users.updateOne({ _id: owner.userId }, { $unset: { emailVerifiedAt: '' } });
+    const paid = stripe.succeed(intentId);
+    await webhook(paid).expect(200); await webhook(paid).expect(200);
+    assert.equal(await fixture.bookingStatus(bookingId), 'PENDING');
+    assert.equal(stripe.calls.createRefund, 1);
+    const payment = (await fixture.connection.collection('payments').findOne({ _id: new Types.ObjectId(paymentId) }))!;
+    assert.ok(payment.autoRefundedAt); assert.equal(payment.bookingConfirmedAt, undefined);
+    const refunds = await fixture.connection.collection('refunds').find({}).toArray();
+    assert.equal(refunds.length, 1); assert.equal(refunds[0].amount, payment.amount);
+    assert.equal((await fixture.connection.collection('cabininventories').findOne({}))!.bookedSeats, 0);
+    await http().get('/api/payments/' + paymentId).set('Cookie', owner.cookie).expect(200);
+  });
+  it('confirms a verified payment and preserves historical/idempotent confirmations after verification state changes', async () => {
+    const { owner, bookingId, paymentId, intentId } = await startVerifiedPayment(), paid = stripe.succeed(intentId);
+    await webhook(paid).expect(200); assert.equal(await fixture.bookingStatus(bookingId), 'CONFIRMED');
+    await fixture.users.updateOne({ _id: owner.userId }, { $unset: { emailVerifiedAt: '' } });
+    await webhook(paid).expect(200); await fixture.flightBookings.confirmPaidBooking(bookingId, paymentId);
+    assert.equal(await fixture.bookingStatus(bookingId), 'CONFIRMED'); assert.equal(stripe.calls.createRefund, 0);
+    await http().get('/api/flight-bookings/' + bookingId).set('Cookie', owner.cookie).expect(200);
+  });
+  it('retries a verification lookup outage during a signed success without treating it as grounds for a refund', async () => {
+    const { bookingId, intentId } = await startVerifiedPayment(), paid = stripe.succeed(intentId);
+    const failure = mock.method(fixture.app.get(UsersService), 'hasVerifiedEmail', async () => { throw new Error('injected eligibility outage'); });
+    try { await webhook(paid).expect(500); } finally { failure.mock.restore(); }
+    assert.equal(await fixture.bookingStatus(bookingId), 'PENDING'); assert.equal(stripe.calls.createRefund, 0);
+    await webhook(paid).expect(200); assert.equal(await fixture.bookingStatus(bookingId), 'CONFIRMED');
+  });
+  it('rechecks verification after asynchronous policy checks before creating a Stripe intent', async () => {
+    const owner = await login(); await verify(latest()).expect(204); const bookingId = await fixture.holdBooking(owner.cookie);
+    await http().post('/api/bookings/flight/' + bookingId + '/accept-policies').set('Cookie', owner.cookie).send({ accepted: true }).expect(200);
+    const policies = fixture.app.get(PoliciesService), original = policies.hasAccepted.bind(policies);
+    const changed = mock.method(policies, 'hasAccepted', async (...args: Parameters<typeof policies.hasAccepted>) => {
+      const result = await original(...args); await fixture.users.updateOne({ _id: owner.userId }, { $unset: { emailVerifiedAt: '' } }); return result;
+    });
+    try { await http().post('/api/payments').set('Cookie', owner.cookie).send({ bookingType: 'flight', bookingId }).expect(403); }
+    finally { changed.mock.restore(); }
+    assert.equal(stripe.calls.createIntent, 0); assert.equal(await fixture.connection.collection('payments').countDocuments({}), 0);
   });
   it('validates enforcement settings and refuses required verification without mail readiness', () => {
     assert.equal(readEmailVerificationRequired(new ConfigService({})), false); assert.equal(readEmailVerificationRequired(new ConfigService({ EMAIL_VERIFICATION_REQUIRED: 'false' })), false);
