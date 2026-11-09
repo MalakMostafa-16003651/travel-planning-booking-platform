@@ -1,5 +1,13 @@
+import { randomBytes } from 'node:crypto';
+import { UsersService } from '../users/users.service';
+import { AccountStatus } from '../common/enums/account-status.enum';
+import { UserRole } from '../common/enums/user-role.enum';
+import { Payment } from '../payments/schemas/payment.schema';
+import { PaymentStatus } from '../payments/payment-status.enum';
+import { toMinorUnits } from '../payments/money';
+import { NotificationsService } from '../notifications/notifications.service';
 import { EmailEligibilityService } from '../auth/email-eligibility.service';
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, QueryFilter, Types } from 'mongoose';
 import { BookingStatus } from '../common/enums/booking-status.enum';
@@ -68,12 +76,16 @@ function summarize(booking: HotelBooking): HotelBookingSummary {
 
 @Injectable()
 export class HotelBookingsService {
+  private readonly logger = new Logger(HotelBookingsService.name);
   constructor(
     @InjectModel(HotelBooking.name) private readonly bookings: Model<HotelBookingDocument>,
     @InjectConnection() private readonly connection: Connection,
     private readonly clock: HotelBookingsClock,
     private readonly inventory: RoomInventoryAdapter,
     private readonly emailEligibility: EmailEligibilityService,
+    private readonly users: UsersService,
+    private readonly notifications: NotificationsService,
+    @InjectModel(Payment.name) private readonly payments: Model<Payment>,
   ) {}
 
   /**
@@ -163,6 +175,64 @@ export class HotelBookingsService {
     });
     return HotelBookingDto.from(booking);
   }
+
+  /** HTL-17: internal verified-payment callback; never exposed as a client confirmation endpoint. */
+  async confirmPaidBooking(hotelBookingId: string, paymentId: string): Promise<void> {
+    const _id = toObjectId(hotelBookingId, 'Hotel booking not found');
+    const paidId = toObjectId(paymentId, 'Payment not found');
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const confirmed = await this.connection.transaction(async (session) => {
+          const booking = await this.bookings.findById(_id).session(session).exec();
+          if (!booking) throw new NotFoundException('Hotel booking not found');
+          // Historical replay must not rebook rooms or depend on later account/provider changes.
+          if ([BookingStatus.CONFIRMED, BookingStatus.COMPLETED].includes(booking.status)
+            && booking.paymentId?.equals(paidId)) return null;
+          const now = new Date();
+          if (booking.status !== BookingStatus.PENDING || !booking.holdExpiresAt || booking.holdExpiresAt <= now)
+            throw new ConflictException('The hotel booking hold has ended');
+          const payment = await this.payments.findOne({ _id: paidId, bookingType: 'hotel', hotelBookingId: _id,
+            userId: booking.userId, status: PaymentStatus.SUCCEEDED, currency: booking.currency }).session(session).exec();
+          if (!payment || toMinorUnits(payment.amount) !== booking.totalPrice)
+            throw new ConflictException('A verified matching payment is required');
+          const owner = await this.users.findForEmailVerification(booking.userId.toString(), session);
+          if (!owner || owner.status !== AccountStatus.ACTIVE || owner.role !== UserRole.USER
+            || !await this.emailEligibility.canBook(booking.userId.toString(), session))
+            throw new ConflictException('The booking account is no longer eligible');
+          const hotel = await this.inventory.getHotel(booking.hotelId.toString(), session);
+          const rooms = await this.inventory.getRooms(booking.rooms.map(room => room.roomId.toString()), session);
+          if (!hotel?.isActive || booking.checkIn < this.clock.today() || rooms.length !== booking.rooms.length
+            || rooms.some(room => !room.isActive || !room.hotelId.equals(booking.hotelId)))
+            throw new ConflictException('The reserved hotel or rooms are no longer available');
+          for (const room of booking.rooms) {
+            if (!await this.inventory.confirmHeldRoom(room.roomId, _id, booking, now, session))
+              throw new ConflictException('The reserved room hold is no longer available');
+          }
+          booking.status = BookingStatus.CONFIRMED;
+          booking.paymentId = paidId;
+          booking.bookingReference = 'HTL-' + randomBytes(8).toString('hex').toUpperCase();
+          booking.holdExpiresAt = undefined;
+          await booking.save({ session });
+          return booking;
+        });
+        if (confirmed) {
+          try {
+            await this.notifications.notify({ userId: confirmed.userId.toString(), type: 'BOOKING_CONFIRMED',
+              message: 'Hotel booking ' + confirmed.bookingReference + ' at ' + confirmed.hotelName
+                + ' (' + confirmed.checkIn + ' to ' + confirmed.checkOut + ', ' + confirmed.rooms.length
+                + ' rooms) is confirmed. Total paid: ' + (confirmed.totalPrice / 100).toFixed(2) + ' ' + confirmed.currency + '.' });
+          } catch { this.logger.error('Could not deliver hotel booking confirmation notification'); }
+        }
+        return;
+      } catch (error) {
+        const collision = error as { code?: number; keyPattern?: Record<string, number> };
+        if (collision.code !== 11000 || !collision.keyPattern?.bookingReference || attempt === 2) throw error;
+      }
+    }
+  }
+
+  /** PAY-01: a decline leaves the hold untouched; the user may retry until expiry. */
+  async markPaymentFailed(_hotelBookingId: string, _paymentId: string): Promise<void> {}
 
   /**
    * HTL-20: the caller's own reservations, page size 10 (GEN-05). CANCELLED includes EXPIRED

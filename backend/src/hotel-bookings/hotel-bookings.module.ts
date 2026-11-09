@@ -1,3 +1,6 @@
+import { Payment, PaymentSchema } from '../payments/schemas/payment.schema';
+import { UsersModule } from '../users/users.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AuthModule } from '../auth/auth.module';
@@ -14,8 +17,11 @@ import { HotelBooking, HotelBookingSchema } from './schemas/hotel-booking.schema
 @Module({
   imports: [
     AuthModule,
+    UsersModule,
+    NotificationsModule,
     MongooseModule.forFeature([
       { name: HotelBooking.name, schema: HotelBookingSchema },
+      { name: Payment.name, schema: PaymentSchema },
       // Person 5's schemas, reused unchanged for RoomInventoryAdapter (read hotels/rooms, write bookedRanges only).
       { name: Hotel.name, schema: HotelSchema },
       { name: Room.name, schema: RoomSchema },

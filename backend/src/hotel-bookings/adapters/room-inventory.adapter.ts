@@ -19,12 +19,12 @@ export class RoomInventoryAdapter {
     @InjectModel(RoomAvailability.name) private readonly availabilities: Model<RoomAvailabilityDocument>,
   ) {}
 
-  getHotel(hotelId: string): Promise<HotelDocument | null> {
-    return this.hotels.findById(hotelId).exec();
+  getHotel(hotelId: string, session?: ClientSession): Promise<HotelDocument | null> {
+    return this.hotels.findById(hotelId).session(session ?? null).exec();
   }
 
-  getRooms(roomIds: string[]): Promise<RoomDocument[]> {
-    return this.rooms.find({ _id: { $in: roomIds.map((id) => new Types.ObjectId(id)) } }).exec();
+  getRooms(roomIds: string[], session?: ClientSession): Promise<RoomDocument[]> {
+    return this.rooms.find({ _id: { $in: roomIds.map((id) => new Types.ObjectId(id)) } }).session(session ?? null).exec();
   }
 
   /**
@@ -85,6 +85,20 @@ export class RoomInventoryAdapter {
       },
       { session, runValidators: true },
     ).exec();
+    return result.modifiedCount === 1;
+  }
+
+  /** HTL-17: convert exactly this reservation's live hold, inside the booking transaction. */
+  async confirmHeldRoom(roomId: Types.ObjectId, hotelBookingId: Types.ObjectId,
+    stay: { checkIn: string; checkOut: string }, now: Date, session: ClientSession): Promise<boolean> {
+    const held = { hotelBookingId, status: BookedRangeStatus.HELD,
+      startDate: stay.checkIn, endDate: stay.checkOut, holdExpiresAt: { $gt: now } };
+    const result = await this.availabilities.updateOne({ roomId,
+      blockedRanges: { $not: { $elemMatch: { startDate: { $lt: stay.checkOut }, endDate: { $gt: stay.checkIn } } } },
+      bookedRanges: { $elemMatch: held },
+    }, { $set: { 'bookedRanges.$[held].status': BookedRangeStatus.BOOKED },
+      $unset: { 'bookedRanges.$[held].holdExpiresAt': 1 } },
+    { session, arrayFilters: [Object.fromEntries(Object.entries(held).map(([key, value]) => ['held.' + key, value]))] }).exec();
     return result.modifiedCount === 1;
   }
 

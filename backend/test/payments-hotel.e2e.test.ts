@@ -131,10 +131,10 @@ describe('PAY-01/02/03 hotel reservation payments', { concurrency: false }, () =
     assert.ok(acceptance?.acceptedAt instanceof Date);
   });
 
-  it('PAY-01 blocks hotel checkout without the real confirmation connection before creating any payment', async () => {
+  it('PAY-01 blocks hotel checkout when the confirmation connection is unavailable before creating any payment', async () => {
     const service = fixture.app.get(HotelBookingsService, { strict: false }) as unknown as Record<string, unknown>;
-    delete service.confirmPaidBooking;
-    delete service.markPaymentFailed;
+    service.confirmPaidBooking = undefined;
+    service.markPaymentFailed = undefined;
     await fixture.http().get(`/api/bookings/hotel/${bookingId}/policies`).set('Cookie', owner.cookie).expect(200);
     await accept().expect(200);
     await pay(stranger).expect(404);
@@ -153,7 +153,7 @@ describe('PAY-01/02/03 hotel reservation payments', { concurrency: false }, () =
     const before = await payments().findOne({ _id: new Types.ObjectId(paymentId) });
     const oldIntent = structuredClone(stripe.intent(intentId));
     const service = fixture.app.get(HotelBookingsService, { strict: false }) as unknown as Record<string, unknown>;
-    delete service.markPaymentFailed;
+    service.markPaymentFailed = undefined;
     await fixture.http().post(`/api/payments/${paymentId}/retry`).set('Cookie', owner.cookie).expect(503);
     assert.equal(stripe.calls.createIntent, 1);
     assert.deepEqual(stripe.intent(intentId), oldIntent);
@@ -164,7 +164,7 @@ describe('PAY-01/02/03 hotel reservation payments', { concurrency: false }, () =
   it('PAY-01 still refunds an existing signed success if the hotel confirmation connection disappears', async () => {
     const { paymentId, intentId } = await startPayment();
     const service = fixture.app.get(HotelBookingsService, { strict: false }) as unknown as Record<string, unknown>;
-    delete service.confirmPaidBooking;
+    service.confirmPaidBooking = undefined;
     const success = stripe.succeed(intentId);
     await webhook('payment_intent.succeeded', success).expect(200);
     await webhook('payment_intent.succeeded', success).expect(200);

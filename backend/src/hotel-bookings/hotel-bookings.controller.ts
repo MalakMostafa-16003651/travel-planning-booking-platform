@@ -49,7 +49,7 @@ export class HotelBookingsController {
 
   @Get(':id')
   @Header('Cache-Control', 'no-store')
-  @ApiOperation({ summary: 'HTL-20: view one of your hotel reservations', description: 'Full details: rooms with guests and prices, dates, total, status and the policy shown before payment.' })
+  @ApiOperation({ summary: 'HTL-20: view one of your hotel reservations', description: 'Full details: rooms with guests and prices, dates, total, status and the policy shown before payment. HTL-17 confirmation and the booking reference appear only after backend-verified payment; clients cannot directly confirm a reservation.' })
   @ApiOkResponse({ type: HotelBookingDto })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'The id is not a valid ID.' })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: 'No such reservation belongs to you.' })
