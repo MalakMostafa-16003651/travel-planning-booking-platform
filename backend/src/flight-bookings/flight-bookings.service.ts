@@ -1,3 +1,4 @@
+import { UsersService } from '../users/users.service';
 import { EmailEligibilityService } from '../auth/email-eligibility.service';
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
@@ -55,6 +56,7 @@ export class FlightBookingsService {
     @Inject(BOOKING_PAYMENTS) private readonly payments: BookingPaymentsPort,
     @Inject(BOOKING_NOTIFICATIONS) private readonly notifications: BookingNotificationsPort,
     private readonly emailEligibility: EmailEligibilityService,
+    private readonly users: UsersService,
   ) {}
 
   /** FLT-19/FLT-21: prices the request without reserving or storing anything. */
@@ -256,12 +258,12 @@ export class FlightBookingsService {
   // Persons 1 and 2 (accounts and administration)
 
   /** ACC-12: blocks deactivation while a trip is still ahead. */
-  async hasUpcomingConfirmedBookings(userId: string): Promise<boolean> {
+  async hasUpcomingConfirmedBookings(userId: string, session?: ClientSession): Promise<boolean> {
     const found = await this.bookings.exists({
       userId: new Types.ObjectId(userId),
       status: BookingStatus.CONFIRMED,
       lastDepartureAt: { $gt: new Date() },
-    }).exec();
+    }).session(session ?? null).exec();
     return found !== null;
   }
 
@@ -421,6 +423,7 @@ export class FlightBookingsService {
     const existing = await this.bookings.findById(_id).session(session).exec();
     if (!existing) throw new NotFoundException('Flight booking not found');
     if (existing.status === BookingStatus.CONFIRMED && existing.paymentId?.toString() === paymentId) return null;
+    await this.users.acquireBookingGate(existing.userId.toString(), session);
     // ACC-02: already-confirmed deliveries stay idempotent; deny a new confirmation before inventory writes.
     if (existing.status === BookingStatus.PENDING && !await this.emailEligibility.canBook(existing.userId.toString(), session)) {
       throw new ConflictException('Verify your email before booking');

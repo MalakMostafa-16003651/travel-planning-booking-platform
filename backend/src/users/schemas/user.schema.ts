@@ -30,6 +30,10 @@ export class User {
   })
   credentialVersion!: number;
 
+  /** ACC-12 transaction coordination only; never a password/session epoch or public field. */
+  @Prop({ type: Number, default: 0, min: 0, max: Number.MAX_SAFE_INTEGER, select: false, validate: Number.isSafeInteger })
+  bookingVersion!: number;
+
   @Prop({ type: String })
   phoneNumber?: string;
 

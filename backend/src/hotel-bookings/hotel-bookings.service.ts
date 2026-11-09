@@ -15,7 +15,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { EmailEligibilityService } from '../auth/email-eligibility.service';
 import { BadRequestException, ConflictException, forwardRef, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
-import { Connection, Model, QueryFilter, Types } from 'mongoose';
+import { ClientSession, Connection, Model, QueryFilter, Types } from 'mongoose';
 import { BookingStatus } from '../common/enums/booking-status.enum';
 // PAY-04: the single platform currency, the same constant flight bookings and payments use.
 import { PLATFORM_CURRENCY } from '../flight-bookings/flight-booking.rules';
@@ -268,6 +268,7 @@ export class HotelBookingsService {
             userId: booking.userId, status: PaymentStatus.SUCCEEDED, currency: booking.currency }).session(session).exec();
           if (!payment || toMinorUnits(payment.amount) !== booking.totalPrice)
             throw new ConflictException('A verified matching payment is required');
+          await this.users.acquireBookingGate(booking.userId.toString(), session);
           const owner = await this.users.findForEmailVerification(booking.userId.toString(), session);
           if (!owner || owner.status !== AccountStatus.ACTIVE || owner.role !== UserRole.USER
             || !await this.emailEligibility.canBook(booking.userId.toString(), session))
@@ -381,13 +382,13 @@ export class HotelBookingsService {
    * ACC-12 (Person 1 connects this): true while the user has a Confirmed stay whose check-out date is
    * still ahead (UTC calendar date), which includes a stay in progress. Such a user cannot deactivate.
    */
-  async hasUpcomingConfirmedBookings(userId: string): Promise<boolean> {
+  async hasUpcomingConfirmedBookings(userId: string, session?: ClientSession): Promise<boolean> {
     if (!/^[0-9a-f]{24}$/i.test(userId)) return false;
     const found = await this.bookings.exists({
       userId: new Types.ObjectId(userId),
       status: BookingStatus.CONFIRMED,
       checkOut: { $gt: this.clock.today() },
-    }).exec();
+    }).session(session ?? null).exec();
     return found !== null;
   }
 
