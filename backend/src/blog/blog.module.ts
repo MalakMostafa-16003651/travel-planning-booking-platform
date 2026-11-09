@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AuthModule } from '../auth/auth.module';
 import { OptionalAuthGuard } from '../itineraries/optional-auth.guard';
+import { Itinerary, ItinerarySchema } from '../itineraries/schemas/itinerary.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { AuthorsController } from './authors.controller';
 import { BlogController } from './blog.controller';
@@ -26,6 +27,8 @@ import { TagsController } from './tags.controller';
       { name: PostImage.name, schema: PostImageSchema },
       // Read-only: author name, status and join date.
       { name: User.name, schema: UserSchema },
+      // Read-only: Person 7's schema, reused unchanged for the author page's public itineraries (BLG-12).
+      { name: Itinerary.name, schema: ItinerarySchema },
     ]),
   ],
   controllers: [BlogController, CommentsController, TagsController, AuthorsController],

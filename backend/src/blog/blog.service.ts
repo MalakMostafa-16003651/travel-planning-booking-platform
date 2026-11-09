@@ -3,6 +3,9 @@ import { InjectModel } from '@nestjs/mongoose';
 import { isValidObjectId, Model, PipelineStage, Types } from 'mongoose';
 import { AccountStatus } from '../common/enums/account-status.enum';
 import { UserRole } from '../common/enums/user-role.enum';
+import { ItinerarySummaryDto } from '../itineraries/dto/itinerary-response.dto';
+import { ItineraryVisibility } from '../itineraries/itinerary.rules';
+import { Itinerary } from '../itineraries/schemas/itinerary.schema';
 import { User } from '../users/schemas/user.schema';
 import { BLOG_PAGE_SIZE, DELETED_USER_NAME, escapeRegex, excerpt, PostStatus } from './blog.rules';
 import { CreateBlogPostDto, ListPostsQueryDto, UpdateBlogPostDto } from './dto/blog-post.dto';
@@ -50,6 +53,8 @@ export class BlogService {
     @InjectModel(PostImage.name) private readonly images: Model<PostImage>,
     // Read-only: author name, status and join date.
     @InjectModel(User.name) private readonly users: Model<User>,
+    // Read-only: Person 7's itineraries, for the author page (BLG-12).
+    @InjectModel(Itinerary.name) private readonly itineraries: Model<Itinerary>,
   ) {}
 
   /** BLG-01: saved as DRAFT unless published. */
@@ -122,12 +127,40 @@ export class BlogService {
     await this.deletePost(post);
   }
 
-  /** BLG-12: public author page. Deactivated or unknown authors are 404 (ACC-12). */
-  async getAuthor(userId: string, pageNumber: number) {
+  /**
+   * BLG-12: public author page with name, join date, published posts and public itineraries.
+   * Deactivated or unknown authors are 404 (ACC-12). Each list has its own page number.
+   */
+  async getAuthor(userId: string, pageNumber: number, itinerariesPage = 1) {
     const user = await this.users.findById(userId, { name: 1, status: 1, createdAt: 1 }).exec();
     if (!user || user.status === AccountStatus.DEACTIVATED) throw new NotFoundException('Author not found');
-    const posts = await this.findPublicPosts({ userId: user._id }, pageNumber);
-    return { userId: user._id.toString(), name: user.name, joinedAt: user.createdAt, posts };
+    const [posts, itineraries] = await Promise.all([
+      this.findPublicPosts({ userId: user._id }, pageNumber),
+      this.findPublicItineraries(user, itinerariesPage),
+    ]);
+    return { userId: user._id.toString(), name: user.name, joinedAt: user.createdAt, posts, itineraries };
+  }
+
+  /**
+   * BLG-12: the author's PUBLIC itineraries (ITN-20), newest published first, in Person 7's list shape.
+   * Read-only query on Person 7's collection: private itineraries never appear. A clone's original
+   * author is shown as "Deleted user" when deactivated or missing (ACC-12), as Person 7 does.
+   */
+  private async findPublicItineraries(author: { _id: Types.ObjectId; name: string }, pageNumber: number) {
+    const filter = { userId: author._id, visibility: ItineraryVisibility.PUBLIC };
+    const projection = { title: 1, description: 1, countries: 1, startDate: 1, visibility: 1, currency: 1, userId: 1,
+      clonedFrom: 1, publishedAt: 1, createdAt: 1, updatedAt: 1, 'days._id': 1, 'days.city': 1, 'days.countryCode': 1 };
+    const [rows, total] = await Promise.all([
+      this.itineraries.find(filter, projection).sort({ publishedAt: -1, _id: -1 })
+        .skip((pageNumber - 1) * BLOG_PAGE_SIZE).limit(BLOG_PAGE_SIZE).lean<Itinerary[]>().exec(),
+      this.itineraries.countDocuments(filter).exec(),
+    ]);
+    const originalAuthorIds = rows.flatMap((row) => (row.clonedFrom ? [row.clonedFrom.userId] : []));
+    const originalAuthors = await this.users.find({ _id: { $in: originalAuthorIds } }, { name: 1, status: 1 }).exec();
+    const names = new Map<string, string>([[author._id.toString(), author.name]]);
+    for (const id of originalAuthorIds) names.set(id.toString(), DELETED_USER_NAME);
+    for (const original of originalAuthors) names.set(original._id.toString(), toAuthor(original).name);
+    return page(rows.map((row) => ItinerarySummaryDto.from(row, names)), pageNumber, total);
   }
 
   // GEN-10: for Person 2's moderation. No HTTP routes here; Person 2 owns /api/admin.

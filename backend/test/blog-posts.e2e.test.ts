@@ -216,6 +216,49 @@ describe('BLG-01/02/03/04/08/09/12 blog posts', { concurrency: false }, () => {
     await fixture.http().get('/api/authors/nope').expect(400);
   });
 
+  it("BLG-12: shows the author's public itineraries only, paginated, with ACC-12 clone attribution", async () => {
+    const itineraries = fixture.connection.collection('itineraries');
+    const base = { countries: ['EG'], startDate: new Date('2027-03-01T00:00:00Z'), currency: 'USD', transportCosts: [] };
+    const day = (city: string) => ({ _id: new Types.ObjectId(), city, countryCode: 'EG', activities: [], budgets: [] });
+    const original = await fixture.login('original@example.com', UserRole.USER, 'Original Planner');
+    // 11 public itineraries (newest published last), one private, and one public itinerary of another user.
+    for (let index = 1; index <= 11; index += 1) {
+      await itineraries.insertOne({ ...base, userId: new Types.ObjectId(author.userId), title: `Trip ${index}`, visibility: 'PUBLIC',
+        publishedAt: new Date(Date.UTC(2026, 10, index)), days: [day('Cairo'), day('Luxor'), day('cairo')] });
+    }
+    await itineraries.insertOne({ ...base, userId: new Types.ObjectId(author.userId), title: 'Secret plan', visibility: 'PRIVATE', publishedAt: null, days: [] });
+    await itineraries.insertOne({ ...base, userId: new Types.ObjectId(reader.userId), title: 'Not by this author', visibility: 'PUBLIC', publishedAt: new Date(), days: [] });
+
+    const first = await fixture.http().get(`/api/authors/${author.userId}`).expect(200);
+    const list = first.body.itineraries;
+    assert.equal(list.total, 11);
+    assert.equal(list.totalPages, 2);
+    assert.equal(list.items.length, 10);
+    assert.equal(list.items[0].title, 'Trip 11');
+    assert.deepEqual(list.items[0].author, { userId: author.userId, name: 'Nour Explorer' });
+    assert.deepEqual(list.items[0].cities, ['Cairo', 'Luxor']);
+    assert.equal(list.items[0].dayCount, 3);
+    assert.equal(list.items[0].startDate, '2027-03-01');
+    assert.equal(JSON.stringify(first.body).includes('Secret plan'), false);
+    assert.equal(JSON.stringify(first.body).includes('Not by this author'), false);
+
+    const second = await fixture.http().get(`/api/authors/${author.userId}?itinerariesPage=2`).expect(200);
+    assert.deepEqual(second.body.itineraries.items.map((item: { title: string }) => item.title), ['Trip 1']);
+    assert.equal(second.body.posts.page, 1);
+    await fixture.http().get(`/api/authors/${author.userId}?itinerariesPage=0`).expect(400);
+
+    // A public clone names its original author, or "Deleted user" once that author is deactivated.
+    await itineraries.deleteMany({ userId: new Types.ObjectId(author.userId) });
+    await itineraries.insertOne({ ...base, userId: new Types.ObjectId(author.userId), title: 'Cloned trip', visibility: 'PUBLIC', publishedAt: new Date(), days: [],
+      clonedFrom: { itineraryId: new Types.ObjectId(), userId: new Types.ObjectId(original.userId), authorName: 'Original Planner', title: 'Source', clonedAt: new Date() } });
+    const cloned = await fixture.http().get(`/api/authors/${author.userId}`).expect(200);
+    assert.equal(cloned.body.itineraries.items[0].clonedFrom.authorName, 'Original Planner');
+    await fixture.deactivate(original.userId);
+    const hidden = await fixture.http().get(`/api/authors/${author.userId}`).expect(200);
+    assert.equal(hidden.body.itineraries.items[0].clonedFrom.authorName, 'Deleted user');
+    assert.equal(JSON.stringify(hidden.body).includes('Original Planner'), false);
+  });
+
   it('GEN-10: gives moderation the hide, delete and exists operations', async () => {
     const blog = fixture.app.get(BlogService);
     const postId = await fixture.post(author);
