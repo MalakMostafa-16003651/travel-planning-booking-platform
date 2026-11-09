@@ -96,11 +96,25 @@ describe('merged production module integration', { concurrency: false }, () => {
     const document = (await request(app.getHttpServer()).get('/api/docs-json').expect(200)).body;
     for (const path of ['/api/auth/login', '/api/auth/forgot-password', '/api/auth/reset-password', '/api/users/me', '/api/admin/audit-logs', '/api/payments',
       '/api/payments/webhook', '/api/refunds/{id}', '/api/posts', '/api/itineraries',
-      '/api/flight-bookings/hold', '/api/flights/search', '/api/hotels/search', '/api/currencies', '/api/countries']) {
+      '/api/favorites', '/api/flight-bookings/hold', '/api/flights/search', '/api/hotels/search', '/api/currencies', '/api/countries']) {
       assert.ok(document.paths[path], `Missing production route ${path}`);
     }
     assert.equal(document.paths['/api/admin/audit-logs'].post, undefined);
     assert.ok(document.paths['/api/payments/webhook'].post);
+  });
+
+  it('connects standalone favorites to real root auth, hotel reads and owner-only removal', async () => {
+    const hotelId = new Types.ObjectId();
+    await connection.collection('hotels').insertOne({ _id: hotelId, name: 'Root favorite hotel', city: 'Cairo', countryCode: 'EG', isActive: true });
+    const server = app.getHttpServer();
+    await request(server).get('/api/favorites').expect(401);
+    const saved = await request(server).post('/api/favorites').set('Cookie', user.cookie).send({ hotelId: hotelId.toString() }).expect(201);
+    assert.equal(saved.body.hotel.name, 'Root favorite hotel');
+    const page = await request(server).get('/api/favorites').set('Cookie', user.cookie).expect(200);
+    assert.equal(page.body.total, 1); assert.equal(page.body.items[0].userId, user.userId);
+    await request(server).delete('/api/favorites/' + saved.body.favoriteId).set('Cookie', admin.cookie).expect(403);
+    await request(server).delete('/api/favorites/' + saved.body.favoriteId).set('Cookie', user.cookie).expect(204);
+    assert.ok(await connection.collection('hotels').findOne({ _id: hotelId }));
   });
 
   it('keeps optional password recovery disabled uniformly in the real module graph', async () => {
