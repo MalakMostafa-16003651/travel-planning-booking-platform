@@ -196,7 +196,7 @@ Shared coordination does not transfer domain models/business logic to the coordi
 
 ## Current team checkpoint - 2026-11-09
 
-Reviewed develop `f9742f7`, including PR59. The current statuses above and the [team PDF](../../output/pdf/2026-11-09-milestone-1-team-handoff.pdf) replace older unfinished-work lists. No teammate implementation module is changed by this audit. Full test evidence and diagnostic scope are recorded in Malak's continuous log.
+Reviewed develop `f9742f7`, including PR59. The current statuses above replace older unfinished-work lists. Malak will distribute the concise two-page teammate handoff separately; no PDF is included in this PR. No teammate implementation module is changed by this audit. Full test evidence and diagnostic scope are recorded in Malak's continuous log.
 
 - **R1 - Kiki/Gamila:** actual itinerary flight HTTP search is503; exported real adapter remains unbound.
 - **R2 - Gamila/Kiki:** controlled real-service probe offers CAI-LHR plus LGW-CAI, then the real booking summary rejects that incompatible reverse route with400.
