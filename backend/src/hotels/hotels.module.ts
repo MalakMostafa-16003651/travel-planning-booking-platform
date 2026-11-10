@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AuthModule } from '../auth/auth.module';
+import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 import { ReferenceDataModule } from '../reference-data/reference-data.module';
 import { HotelBookingsReservationsAdapter } from './adapters/hotel-bookings-reservations.adapter';
 import { HotelBookingsModule } from '../hotel-bookings/hotel-bookings.module';
@@ -17,6 +18,7 @@ import { OptionalAuthGuard } from './optional-auth.guard';
 @Module({
   imports: [
     AuthModule,
+    AuditLogsModule,
     ReferenceDataModule,
     HotelBookingsModule,
     UsersModule,

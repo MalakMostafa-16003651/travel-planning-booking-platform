@@ -95,7 +95,7 @@ describe('Hotels E2E', { concurrency: false }, () => {
     await Promise.all([
       users.deleteMany({}).exec(),
       sessions.deleteMany({}).exec(),
-      ...['hotels', 'rooms', 'roomavailabilities', 'moderatorassignments', 'hotelbookings'].map((name) => connection.collection(name).deleteMany({})),
+      ...['hotels', 'rooms', 'roomavailabilities', 'moderatorassignments', 'hotelbookings', 'auditlogs'].map((name) => connection.collection(name).deleteMany({})),
     ]);
 
     adminCookie = await login('admin@example.com', UserRole.ADMIN);
@@ -134,6 +134,15 @@ describe('Hotels E2E', { concurrency: false }, () => {
       assert.equal(hotel!.isActive, true);
       assert.equal(hotel!.checkInTime, '14:00');
       assert.equal(hotel!.checkOutTime, '11:00');
+    });
+
+    it('records a GEN-07 audit log entry for the admin who created the hotel', async () => {
+      const admin = await users.findOne({ email: 'admin@example.com' }).orFail().exec();
+      const entry = await connection.collection('auditlogs').findOne({ targetId: new Types.ObjectId(hotelId) });
+      assert.ok(entry, 'an audit log entry was written for this hotel');
+      assert.equal(entry!.action, 'HOTEL_CREATED');
+      assert.equal(entry!.targetType, 'HOTEL');
+      assert.equal(entry!.adminId.toString(), admin._id.toString());
     });
 
     it('rejects a city outside the official reference catalog', async () => {

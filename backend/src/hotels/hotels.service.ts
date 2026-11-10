@@ -2,6 +2,8 @@ import { assertSearchStay } from './hotel-search.rules';
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, Types } from 'mongoose';
+import { AuditAction, AuditTargetType } from '../audit-logs/audit-log.enums';
+import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { UserRole } from '../common/enums/user-role.enum';
 import { HotelBookingsService } from '../hotel-bookings/hotel-bookings.service';
 import { ReferenceDataService } from '../reference-data/reference-data.service';
@@ -73,11 +75,12 @@ export class HotelsService {
     private readonly references: ReferenceDataService,
     private readonly hotelBookings: HotelBookingsService,
     @Inject(HOTEL_RESERVATIONS) private readonly reservations: HotelReservationsPort,
+    private readonly auditLogs: AuditLogsService,
   ) {}
 
-  async create(input: CreateHotelDto): Promise<Hotel> {
+  async create(input: CreateHotelDto, adminId: string): Promise<Hotel> {
     const city = await this.references.resolveCity(input.city, input.countryCode);
-    return this.hotels.create({
+    const hotel = await this.hotels.create({
       name: input.name.trim(),
       city: city.name,
       countryCode: city.countryCode,
@@ -89,6 +92,14 @@ export class HotelsService {
       cancellationTiers: [],
       photos: [],
     });
+    // GEN-07: an audit failure is reported rather than hidden, as in Person 2's admin services.
+    await this.auditLogs.log({
+      adminId,
+      action: AuditAction.HOTEL_CREATED,
+      targetType: AuditTargetType.HOTEL,
+      targetId: hotel._id.toString(),
+    });
+    return hotel;
   }
 
   /** HTL-02. 404 hides an inactive hotel from everyone except its assigned moderator and admins. */
