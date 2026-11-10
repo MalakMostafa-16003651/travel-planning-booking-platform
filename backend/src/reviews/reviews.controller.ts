@@ -10,6 +10,7 @@ import { OptionalAuthGuard } from '../itineraries/optional-auth.guard';
 import { CreateReviewDto } from './dto/create-review.dto';
 import { HotelIdParamsDto, ListReviewsQueryDto, ReviewIdParamsDto } from './dto/review-params.dto';
 import { HotelReviewsPageDto, ReviewDto } from './dto/review-response.dto';
+import { ReviewReplyDto } from './dto/review-reply.dto';
 import { UpdateReviewDto } from './dto/update-review.dto';
 import { ReviewsService } from './reviews.service';
 
@@ -34,6 +35,53 @@ export class ReviewsController {
   @ApiConflictResponse({ type: ApiErrorDto, description: 'The stay is not Completed, or it already has a review.' })
   create(@Param() params: HotelBookingIdParamsDto, @Body() input: CreateReviewDto, @Req() request: AuthenticatedRequest): Promise<ReviewDto> {
     return this.reviews.create(params.id, input, request.user!);
+  }
+
+  @Post('reviews/:id/reply')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(UserRole.HOTEL_MODERATOR)
+  @ApiCookieAuth('accessToken')
+  @ApiOperation({
+    summary: 'HTL-26 (bonus): reply to a review of your hotel',
+    description: 'Only a HOTEL_MODERATOR assigned to the review\'s hotel. One reply per review (max 1000 characters), shown publicly with the review. Hidden reviews cannot be replied to.',
+  })
+  @ApiCreatedResponse({ type: ReviewDto })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'Invalid id, or reply text missing, empty or over 1000 characters.' })
+  @ApiUnauthorizedResponse({ type: ApiErrorDto, description: 'Missing, invalid or expired session.' })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'Not a HOTEL_MODERATOR, or not assigned to this review\'s hotel.' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'Review not found.' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'The review is hidden, or already has a reply.' })
+  reply(@Param() params: ReviewIdParamsDto, @Body() input: ReviewReplyDto, @Req() request: AuthenticatedRequest): Promise<ReviewDto> {
+    return this.reviews.reply(params.id, input, request.user!.userId);
+  }
+
+  @Patch('reviews/:id/reply')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(UserRole.HOTEL_MODERATOR)
+  @ApiCookieAuth('accessToken')
+  @ApiOperation({ summary: 'HTL-26 (bonus): edit your reply', description: 'Only the moderator who wrote the reply, while still assigned to the hotel.' })
+  @ApiOkResponse({ type: ReviewDto })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'Invalid id, or reply text missing, empty or over 1000 characters.' })
+  @ApiUnauthorizedResponse({ type: ApiErrorDto, description: 'Missing, invalid or expired session.' })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'Not a HOTEL_MODERATOR of this hotel, or not your reply.' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'Review or reply not found.' })
+  updateReply(@Param() params: ReviewIdParamsDto, @Body() input: ReviewReplyDto, @Req() request: AuthenticatedRequest): Promise<ReviewDto> {
+    return this.reviews.updateReply(params.id, input, request.user!.userId);
+  }
+
+  @Delete('reviews/:id/reply')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(UserRole.HOTEL_MODERATOR)
+  @HttpCode(204)
+  @ApiCookieAuth('accessToken')
+  @ApiOperation({ summary: 'HTL-26 (bonus): delete your reply', description: 'Only the moderator who wrote the reply, while still assigned to the hotel. The hotel may then reply again.' })
+  @ApiNoContentResponse({ description: 'Deleted.' })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'Invalid id.' })
+  @ApiUnauthorizedResponse({ type: ApiErrorDto, description: 'Missing, invalid or expired session.' })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'Not a HOTEL_MODERATOR of this hotel, or not your reply.' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'Review or reply not found.' })
+  async removeReply(@Param() params: ReviewIdParamsDto, @Req() request: AuthenticatedRequest): Promise<void> {
+    await this.reviews.removeReply(params.id, request.user!.userId);
   }
 
   @Patch('reviews/:id')
