@@ -93,3 +93,17 @@ Both apply the same rules as public search and viewing:
 - Invalid ids return an empty page or `null`, never an error.
 - A failed account-status lookup throws (fail closed), so it never grants access.
 
+## Attractions catalog (agreed with Malak, 2026-11-10)
+
+PDF section 5.1 lists **attractions** among the official reference datasets. Agreement:
+
+- **Malak owns** attraction seeding in `ReferenceDataModule`, so there is one shared catalog.
+  She will check the official dataset and confirm its fields and original identifiers before the
+  schema is frozen.
+- She will expose `ReferenceDataService.findAttraction(attractionId)`, returning the record or
+  `null`.
+- **Person 7, after that PR is merged and the catalog is seeded:** validate `Activity.attractionId`
+  on create and update with `findAttraction`, returning 400 for an unknown id.
+- No separate attractions catalog is added in the itinerary module. Until the handoff,
+  `attractionId` stays optional free text (1 to 64 characters) and is not validated.
+
