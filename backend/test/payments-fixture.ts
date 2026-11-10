@@ -13,8 +13,6 @@ import { configureApplication } from '../src/configure-application';
 import { FlightBookingsModule } from '../src/flight-bookings/flight-bookings.module';
 import { FlightBookingsService } from '../src/flight-bookings/flight-bookings.service';
 import { BOOKING_NOTIFICATIONS, BookingNotification } from '../src/flight-bookings/ports/booking-notifications.port';
-import { BOOKING_PAYMENTS, BookingPaymentsPort, RefundRequest } from '../src/flight-bookings/ports/booking-payments.port';
-import { BookingPaymentsAdapter } from '../src/payments/adapters/booking-payments.adapter';
 import { PaymentsModule } from '../src/payments/payments.module';
 import { User, UserDocument } from '../src/users/schemas/user.schema';
 
@@ -46,12 +44,6 @@ export class PaymentsFixture {
   users!: Model<UserDocument>;
   flightBookings!: FlightBookingsService;
   readonly notifications = new FakeNotifications();
-  // Binds Person 4's BOOKING_PAYMENTS to Payments, as FlightBookingsModule will once Person 4 agrees.
-  private bookingPayments?: BookingPaymentsPort;
-  private readonly paymentsBridge: BookingPaymentsPort = {
-    cancelPendingPayment: (request) => this.bookingPayments!.cancelPendingPayment(request),
-    createRefund: (request: RefundRequest) => this.bookingPayments!.createRefund(request),
-  };
   readonly airlineId = new Types.ObjectId();
   private readonly cairo = new Types.ObjectId();
   private readonly dubai = new Types.ObjectId();
@@ -75,8 +67,8 @@ export class PaymentsFixture {
         PaymentsModule,
         ...additionalModules,
       ],
-    }).overrideProvider(BOOKING_NOTIFICATIONS).useValue(this.notifications)
-      .overrideProvider(BOOKING_PAYMENTS).useValue(this.paymentsBridge);
+    // FlightBookingsModule binds BOOKING_PAYMENTS to the real BookingPaymentsAdapter itself.
+    }).overrideProvider(BOOKING_NOTIFICATIONS).useValue(this.notifications);
     const moduleRef = await configure(builder).compile();
     this.app = moduleRef.createNestApplication({ rawBody: true });
     configureApplication(this.app);
@@ -84,7 +76,6 @@ export class PaymentsFixture {
     this.connection = moduleRef.get(getConnectionToken());
     this.users = moduleRef.get(getModelToken(User.name));
     this.flightBookings = moduleRef.get(FlightBookingsService, { strict: false });
-    this.bookingPayments = moduleRef.get(BookingPaymentsAdapter, { strict: false });
     // Build every unique index before the tests rely on it.
     await Promise.all(Object.values(this.connection.models).map((model) => model.init()));
   }

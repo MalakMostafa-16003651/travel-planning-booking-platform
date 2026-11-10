@@ -1,17 +1,22 @@
 import { Body, Controller, Get, Header, HttpCode, Param, Post, Query, Req, StreamableFile, UseGuards } from '@nestjs/common';
 import { ApiBadRequestResponse, ApiConflictResponse, ApiCookieAuth, ApiCreatedResponse, ApiForbiddenResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiProduces, ApiTags, ApiUnauthorizedResponse } from '@nestjs/swagger';
 import { AuthGuard, AuthenticatedRequest } from '../auth/auth.guard';
+import { Roles } from '../auth/roles.decorator';
+import { RolesGuard } from '../auth/roles.guard';
 import { ApiErrorDto } from '../common/dto/api-error.dto';
+import { UserRole } from '../common/enums/user-role.enum';
 import { CreateFlightBookingDto } from './dto/create-flight-booking.dto';
 import { CancellationQuoteDto, FlightBookingDto, FlightBookingPageDto, FlightBookingSummaryDto } from './dto/flight-booking-response.dto';
 import { ListFlightBookingsQueryDto } from './dto/list-flight-bookings-query.dto';
 import { ETicketService } from './e-ticket.service';
-import { assertTraveler, FlightBookingsService } from './flight-bookings.service';
+import { FlightBookingsService } from './flight-bookings.service';
 
 @ApiTags('Flight bookings')
 @ApiCookieAuth('accessToken')
 @ApiUnauthorizedResponse({ type: ApiErrorDto, description: 'Missing, invalid or expired session.' })
-@UseGuards(AuthGuard)
+@ApiForbiddenResponse({ type: ApiErrorDto, description: 'Only registered users (role USER) have flight bookings.' })
+@UseGuards(AuthGuard, RolesGuard)
+@Roles(UserRole.USER)
 @Controller('flight-bookings')
 export class FlightBookingsController {
   constructor(private readonly bookings: FlightBookingsService, private readonly eTickets: ETicketService) {}
@@ -25,11 +30,9 @@ export class FlightBookingsController {
   })
   @ApiOkResponse({ type: FlightBookingSummaryDto })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'Invalid passengers, baggage or round-trip selection.' })
-  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'Only role USER can book.' })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: 'Flight or cabin not found.' })
   @ApiConflictResponse({ type: ApiErrorDto, description: 'Flight not bookable, or not enough seats.' })
   summarize(@Body() input: CreateFlightBookingDto, @Req() request: AuthenticatedRequest): Promise<FlightBookingSummaryDto> {
-    assertTraveler(request.user!.role);
     return this.bookings.summarize(input);
   }
 
@@ -41,11 +44,9 @@ export class FlightBookingsController {
   })
   @ApiCreatedResponse({ type: FlightBookingDto })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'Invalid passengers, baggage or round-trip selection.' })
-  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'Only role USER can book.' })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: 'Flight or cabin not found.' })
   @ApiConflictResponse({ type: ApiErrorDto, description: 'Flight not bookable, or not enough seats.' })
   hold(@Body() input: CreateFlightBookingDto, @Req() request: AuthenticatedRequest): Promise<FlightBookingDto> {
-    assertTraveler(request.user!.role);
     return this.bookings.hold(input, request.user!.userId);
   }
 
@@ -60,11 +61,11 @@ export class FlightBookingsController {
 
   @Get(':id')
   @Header('Cache-Control', 'no-store')
-  @ApiOperation({ summary: 'FLT-25: view one of your flight bookings' })
+  @ApiOperation({ summary: 'FLT-25: view one of your flight bookings', description: 'Includes the refund status from Payments once a refund exists (PAY-03).' })
   @ApiOkResponse({ type: FlightBookingDto })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: 'No such booking belongs to you.' })
-  async get(@Param('id') id: string, @Req() request: AuthenticatedRequest): Promise<FlightBookingDto> {
-    return FlightBookingDto.from(await this.bookings.getMine(id, request.user!.userId));
+  get(@Param('id') id: string, @Req() request: AuthenticatedRequest): Promise<FlightBookingDto> {
+    return this.bookings.getDetails(id, request.user!.userId);
   }
 
   @Get(':id/cancellation-quote')
@@ -80,13 +81,11 @@ export class FlightBookingsController {
   @Post(':id/cancel')
   @Header('Cache-Control', 'no-store')
   @HttpCode(200)
-  @ApiOperation({ summary: 'FLT-26: cancel a Confirmed booking', description: 'Returns the seats to inventory and requests any refund.' })
+  @ApiOperation({ summary: 'FLT-26: cancel a Confirmed booking', description: 'Returns the seats to inventory and requests any refund. The deadline is checked again when the cancellation is written, so it never commits after departure.' })
   @ApiOkResponse({ type: FlightBookingDto })
-  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'Only role USER can cancel.' })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: 'No such booking belongs to you.' })
   @ApiConflictResponse({ type: ApiErrorDto, description: 'Booking is not Confirmed, or has already departed.' })
   cancel(@Param('id') id: string, @Req() request: AuthenticatedRequest): Promise<FlightBookingDto> {
-    assertTraveler(request.user!.role);
     return this.bookings.cancel(id, request.user!.userId);
   }
 

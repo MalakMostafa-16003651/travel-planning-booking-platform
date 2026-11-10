@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { BookingStatus } from '../../common/enums/booking-status.enum';
 import { BOOKINGS_PAGE_SIZE } from '../flight-booking.rules';
+import { RefundState } from '../ports/booking-payments.port';
 import { CancelledBy, FlightBooking, FlightSegment, Passenger, PassengerType } from '../schemas/flight-booking.schema';
 
 export class FlightSegmentDto {
@@ -70,6 +71,14 @@ export class PassengerDetailsDto extends PassengerSummaryDto {
   }
 }
 
+/** PAY-03: the refund as Payments reports it. */
+export class FlightRefundStatusDto {
+  @ApiProperty() refundId!: string;
+  @ApiProperty({ enum: ['PENDING', 'REFUNDED', 'FAILED'] }) status!: RefundState;
+  @ApiProperty({ description: 'Minor units.' }) amount!: number;
+  @ApiProperty({ example: 'USD' }) currency!: string;
+}
+
 export class FlightBookingDto {
   @ApiProperty() flightBookingId!: string;
   @ApiProperty() userId!: string;
@@ -85,6 +94,7 @@ export class FlightBookingDto {
   @ApiPropertyOptional() paymentId?: string;
   @ApiPropertyOptional() refundId?: string;
   @ApiPropertyOptional() refundAmount?: number;
+  @ApiPropertyOptional({ type: FlightRefundStatusDto, description: 'Booking details only; omitted while no refund exists yet.' }) refund?: FlightRefundStatusDto;
   @ApiPropertyOptional() cancelledAt?: Date;
   @ApiPropertyOptional({ enum: CancelledBy }) cancelledBy?: CancelledBy;
   @ApiProperty() createdAt!: Date;
