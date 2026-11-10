@@ -7,10 +7,22 @@ export interface RefundRequest {
   reason: string;
 }
 
-/** Everything flight booking needs from the Payments module (Person 8). */
+/** PAY-03 values from the workbook: Pending, Refunded, Failed. */
+export type RefundState = 'PENDING' | 'REFUNDED' | 'FAILED';
+
+export interface BookingRefundStatus {
+  refundId: string;
+  status: RefundState;
+  amount: number; // Minor units.
+  currency: string;
+}
+
+/** Everything flight booking needs from the Payments module (Person 8), bound to its BookingPaymentsAdapter. */
 export interface BookingPaymentsPort {
-  /** PAY-01: cancels any open PaymentIntent. Must succeed when there is none. */
+  /** PAY-01: cancels any open PaymentIntent. Succeeds when there is none; a payment already taken is refunded. */
   cancelPendingPayment(request: { bookingType: 'FLIGHT'; bookingId: string }): Promise<void>;
-  /** PAY-03: must be idempotent per booking, because failed requests are retried. */
+  /** PAY-03: idempotent per booking and reason, because failed requests are retried. */
   createRefund(request: RefundRequest): Promise<{ refundId: string }>;
+  /** PAY-03: the authoritative status of the booking's latest refund, or null when it has none. */
+  getRefundStatus(request: { bookingType: 'FLIGHT'; bookingId: string }): Promise<BookingRefundStatus | null>;
 }

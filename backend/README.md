@@ -283,25 +283,27 @@ integration; itinerary Flights/Hotels search adapters remain pending.
 
 ## Flight booking and inventory holds
 
-`backend/src/flight-bookings` implements FLT-19, FLT-21, FLT-22, FLT-23, FLT-25, FLT-26, the booking side of FLT-12, and GEN-11. It is built against the [flight booking contract proposal](../docs/requirements/flight-booking-contract-proposal.md), which lists the fields it needs from other modules and the open team decisions.
+`backend/src/flight-bookings` implements FLT-19, FLT-21, FLT-22, FLT-23, FLT-25, FLT-26, the booking side of FLT-12, and GEN-11. The [flight booking contract](../docs/requirements/flight-booking-contract-proposal.md) lists what it reads from and exports to other modules, the adopted team decisions and the stable `getMine` fields for ITN-27.
 
 | Method | Endpoint | Result |
 | --- | --- | --- |
 | POST | `/api/flight-bookings` | Validates and prices a booking. Reserves and stores nothing. |
 | POST | `/api/flight-bookings/hold` | Reserves seats and creates a `PENDING` booking for 10 minutes. |
 | GET | `/api/flight-bookings` | Your bookings; `group=UPCOMING`, `PAST` or `CANCELLED`, page size 10. |
-| GET | `/api/flight-bookings/:id` | One of your bookings. |
+| GET | `/api/flight-bookings/:id` | One of your bookings, with `refund` (`PENDING`, `REFUNDED` or `FAILED`, from Payments) once a refund exists. |
 | GET | `/api/flight-bookings/:id/cancellation-quote` | The refund you would receive. Changes nothing. |
 | POST | `/api/flight-bookings/:id/cancel` | Cancels a Confirmed booking and requests its refund. |
 | GET | `/api/flight-bookings/:id/e-ticket` | PDF e-ticket for a Confirmed booking. |
 
-All routes need a login. Another user's booking returns **404**. Booking and cancelling need role `USER`. Amounts are integer minor units.
+All routes need a login and role `USER` (shared `AuthGuard` and `RolesGuard`). Another user's booking returns **404**. Amounts are integer minor units of USD.
+
+**Cancellation deadline (FLT-26):** the refund is quoted inside the cancellation transaction, and the write only matches while the outbound departure is still in the future by database time (`$$NOW`). A slow airline-policy lookup therefore can never commit a cancellation after departure.
 
 **Overselling** is prevented by one conditional cabin write: `heldSeats` only increases if `totalSeats - bookedSeats - heldSeats` still covers the request. Hold, confirm, cancel and expiry run in MongoDB transactions, so a round trip reserves both cabins or neither. Transactions need a replica set: Atlas always has one, and the tests start one.
 
 **Expiry** runs every minute, as does retrying failed refund requests and completing departed bookings. Payment checks `holdExpiresAt` directly, so a late sweep cannot extend a hold.
 
-**Integration:** `ports/` defines what this module needs from Flights, Payments and Notifications. The inventory adapter already uses the agreed `flights`, `cabininventories`, `airports` and `airlines` collections, so holds return 404 until those contain data. `adapters/pending-integration.adapters.ts` holds temporary Payments and Notifications bindings: until Person 8's module calls `confirmPaidBooking`, a booking can be held but not confirmed outside the automated tests.
+**Integration:** `ports/` defines what this module needs from Flights, Payments and Notifications. The inventory adapter reads Person 3's `flights`, `cabininventories`, `airports` and `airlines` collections. `BOOKING_PAYMENTS` is bound to Person 8's `BookingPaymentsAdapter` (hold-expiry PaymentIntent cancellation, refunds, refund status), and `BOOKING_NOTIFICATIONS` to Person 2's `NotificationsService` (booking confirmed and cancelled). `test/flight-bookings-integration.e2e.test.ts` runs these real services together, with only Stripe's network calls faked.
 
 ## Itineraries, activities and budgeting
 

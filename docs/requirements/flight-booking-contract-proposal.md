@@ -1,10 +1,10 @@
 # Flight Booking and Inventory Holds: shared contract
 
-Status: **proposal, not yet agreed.** Person 4 needs answers from Person 3 (flights
-and cabins), Person 8 (payments and refunds), Person 6 (shared booking status) and
-Person 2 (notifications and admin views). The module in `backend/src/flight-bookings`
-is built against this proposal so work can continue in parallel. Anything the team
-changes here is updated in its `adapters/` folder or `flight-booking.rules.ts`.
+Status (updated 2026-11-10): **in use.** The module in `backend/src/flight-bookings`
+was merged in PR #8 and is now bound to the real Payments (Person 8) and
+Notifications (Person 2) services. Person 3's Flights schemas match section 5
+exactly. Section 7 records which decisions the team adopted. Anything the team
+changes here is updated in the `adapters/` folder or `flight-booking.rules.ts`.
 
 Sources: `Final_ SP1_Reviewed_Requirements.xlsx` (authoritative), the project PDF
 section 8.4, and the team's naming rules. Bonus FLT-27 and FLT-28 are out of scope.
@@ -24,17 +24,18 @@ section 8.4, and the team's naming rules. Bonus FLT-27 and FLT-28 are out of sco
 
 ## 2. API
 
-All routes require `AuthGuard`. Booking and cancelling are limited to role `USER`.
-Every query is scoped to `request.user.userId`; another user's booking returns 404.
+All routes use Person 1's `AuthGuard` and `RolesGuard` with `@Roles(UserRole.USER)`:
+other roles get 403. Every query is scoped to `request.user.userId`; another user's
+booking returns 404. Admins and moderators read bookings through ACC-17 and FLT-29.
 
 | Method | Endpoint | Requirement | Behavior |
 | --- | --- | --- | --- |
 | POST | `/api/flight-bookings` | FLT-19, FLT-21 | Validate passengers and baggage, return the priced summary. Reserves and stores nothing. |
 | POST | `/api/flight-bookings/hold` | FLT-22 | Same body. Recomputes the price, reserves seats, creates a `PENDING` booking, returns it with `holdExpiresAt`. 409 if seats are insufficient. |
 | GET | `/api/flight-bookings` | FLT-25 | Own bookings, `?group=UPCOMING\|PAST\|CANCELLED`, page size 10 (GEN-05). |
-| GET | `/api/flight-bookings/:id` | FLT-25 | Full details, including refund status. |
+| GET | `/api/flight-bookings/:id` | FLT-25, PAY-03 | Full details. Once a refund exists, `refund` holds `{ refundId, status, amount, currency }` from Payments, with status `PENDING`, `REFUNDED` or `FAILED`. |
 | GET | `/api/flight-bookings/:id/cancellation-quote` | FLT-26 | Refund percentage and amount, changes nothing. Added so the user sees the refund before confirming. |
-| POST | `/api/flight-bookings/:id/cancel` | FLT-26 | Cancels and requests the refund. |
+| POST | `/api/flight-bookings/:id/cancel` | FLT-26 | Cancels and requests the refund. The refund is quoted inside the transaction, and the write only matches while the outbound departure is still ahead by database time, so a slow lookup can never commit after departure. |
 | GET | `/api/flight-bookings/:id/e-ticket` | FLT-23 | PDF download, Confirmed bookings only. |
 
 Why `POST /api/flight-bookings` stores nothing: GEN-11 starts the lifecycle at
@@ -104,10 +105,10 @@ cabins.updateOne(
 FLT-05 seat-count edits by Person 3 need the same kind of conditional write, or a
 reduction can race a hold.
 
-Person 4 will export, for Person 3:
+Person 4 exports, for Person 3:
 
 ```ts
-cancelBookingsForFlight(flightId): Promise<void>          // FLT-06: 100% refund, release holds
+cancelBookingsForFlight(flightId): Promise<void>          // FLT-06: 100% refund, release holds, notify; safe to retry
 syncFlightSchedule(flightId, departureAt, arrivalAt): Promise<void> // FLT-05: call on any time change
 findConfirmedUserIdsForFlight(flightId): Promise<string[]> // FLT-05: schedule-change notice
 listBookingsForFlight(flightId, page): Promise<Page>       // FLT-29, without passport numbers
@@ -115,38 +116,38 @@ listBookingsForFlight(flightId, page): Promise<Page>       // FLT-29, without pa
 
 ### Person 8: Payments and Refunds
 
-Person 4 will export:
+Payments reads bookings through `getMine` (section 8) and calls:
 
 ```ts
-getPayableBooking(flightBookingId, userId): Promise<{ amount, currency, holdExpiresAt }>
-confirmPaidBooking(flightBookingId, paymentId): Promise<void> // Idempotent; Stripe webhooks may repeat.
+confirmPaidBooking(flightBookingId, paymentId): Promise<void> // Idempotent for the same paymentId, including after COMPLETED.
 ```
 
-Person 4 needs from `PaymentsService`:
+`BOOKING_PAYMENTS` is bound to Person 8's `BookingPaymentsAdapter`
+(`useExisting`, with `forwardRef(() => PaymentsModule)`):
 
 ```ts
 cancelPendingPayment({ bookingType: 'FLIGHT', bookingId }): Promise<void> // PAY-01, on hold expiry
-createRefund({ bookingType: 'FLIGHT', bookingId, amount, reason }): Promise<{ refundId }> // PAY-03
+createRefund({ bookingType: 'FLIGHT', bookingId, amount, reason }): Promise<{ refundId }> // PAY-03, minor units
+getRefundStatus({ bookingType: 'FLIGHT', bookingId }): Promise<{ refundId, status, amount, currency } | null> // PAY-03
 ```
 
-`createRefund` must be idempotent per booking, because failed requests are retried
-every minute. Person 8 blocks payment until policies are accepted (PAY-02), so booking
-code does not read that record.
-
-If a payment succeeds after its booking expired, `confirmPaidBooking` throws
-`ConflictException` and Person 8 must refund that payment in full.
-
-Until `PaymentsService` exists, nothing calls `confirmPaidBooking`, so bookings can be
-held but not confirmed outside the automated tests.
+`createRefund` is idempotent per booking and reason, because failed requests are
+retried every minute. Keep the two reason strings unchanged ("Booking cancelled by
+the user" and "Flight cancelled by the airline"). Person 8 blocks payment until
+policies are accepted (PAY-02). If a payment succeeds after its booking expired,
+`confirmPaidBooking` throws `ConflictException` and Payments refunds it in full.
 
 ### Persons 1 and 2
 
-- `NotificationsService.create({ userId, type, message })` for GEN-01.
-- Person 4 will export `hasUpcomingConfirmedBookings(userId)` for ACC-12 and a
-  read-only booking list for ACC-17.
-- `validationException` in `configure-application.ts` reads only top-level
-  constraints, so errors inside `passengers[]` come back as an empty list. GEN-02
-  needs nested messages, so Person 1 should agree to that fix.
+- `BOOKING_NOTIFICATIONS` is bound to Person 2's `NotificationsService`, whose
+  `notify({ userId, type, message })` accepts this port's input unchanged (GEN-01).
+- ACC-12: `hasUpcomingConfirmedBookings(userId, session?)`, and Person 1's
+  `UsersService.acquireBookingGate` inside the confirmation transaction, as agreed in
+  the authentication contract.
+- ACC-17: `listForAdmin({ status, from, to, page })`.
+- ACC-15: `listConfirmedUserIdsForAirline(airlineId)`, as Person 2 asked in the admin
+  contract.
+- Nested validation errors such as `passengers.0.fullName` were fixed by Person 1.
 
 ## 6. Consistency approach
 
@@ -158,20 +159,34 @@ held but not confirmed outside the automated tests.
   checks `holdExpiresAt` directly, so a late sweep cannot extend a hold.
 - **Completion** moves `CONFIRMED` to `COMPLETED` after the last segment departs.
 
-## 7. Decisions needed
+## 7. Decisions
 
-| # | Question | Who | Proposal |
-| --- | --- | --- | --- |
-| 1 | Are the section 5 field names acceptable? | Person 3 | Yes, as listed. |
-| 2 | How is money stored, and in which single currency (PAY-04)? | Persons 3, 6, 8 | Integer minor units (cents), matching Stripe and avoiding rounding errors. `USD` is a placeholder in `flight-booking.rules.ts`. |
-| 3 | Add `COMPLETED` and `EXPIRED` as in section 3? | Person 6 | Yes, keeping `PENDING` as Pending Payment. |
-| 4 | Refund status: the sheet (PAY-03) says Pending, Refunded, Failed, but the team enum says `SUCCEEDED`. | Person 8 | Follow the sheet and use `REFUNDED`. |
-| 5 | Where is policy acceptance stored? | Person 8 | On Person 8's side, which also blocks payment until it exists. |
-| 6 | Is round-trip baggage charged per segment? The sheet is silent. | Team | Yes, per passenger per segment. |
-| 7 | Which date decides passenger type? The sheet is silent. | Team | Age on the outbound departure date. |
-| 8 | How are "days remaining" counted for tiers? The sheet is silent. | Persons 6, 8 | Whole 24-hour periods before departure, rounded down. |
-| 9 | May infants add extra baggage? The sheet is silent. | Team | Yes, under the same limit. |
-| 9a | Is there a limit on passengers per booking? The sheet is silent. | Team | 50, only as a safety bound on request size. |
-| 10 | Who owns the role guard? `AuthGuard` exists, but no roles guard does yet. | Person 1 | Person 1 adds it. Person 4 checks `role` inline until then. |
-| 11 | Add a PDF library for e-tickets (for example `pdfkit`)? | Team | Yes. |
-| 12 | `AI_PROMPTS.txt`: the PDF requires this root file, but `develop` removed it in favor of `docs/work-logs/` with TA confirmation pending. | Team leader | Confirm with the TA which file counts. |
+| # | Question | Outcome |
+| --- | --- | --- |
+| 1 | Section 5 field names | **Adopted.** Person 3's schemas match exactly. |
+| 2 | Money and currency (PAY-04) | **Adopted.** Integer minor units in `USD`. `PLATFORM_CURRENCY` in `flight-booking.rules.ts` is imported by Hotel Bookings and Payments, so do not move or rename it. |
+| 3 | `COMPLETED` and `EXPIRED` | **Adopted** in the shared `BookingStatus` (GEN-11). |
+| 4 | Refund status values | **Adopted:** `PENDING`, `REFUNDED`, `FAILED`, as in PAY-03. |
+| 5 | Policy acceptance | **Adopted:** stored and enforced by Payments (PAY-02). |
+| 6 | Round-trip baggage per segment | Proposal in use; no objection recorded. |
+| 7 | Passenger type by outbound departure date | Proposal in use; no objection recorded. |
+| 8 | Whole 24-hour days for tiers | Proposal in use; Payments shows the same tiers. |
+| 9 | Infant extra baggage allowed | Proposal in use; no objection recorded. |
+| 9a | At most 50 passengers per booking | Proposal in use, as a request-size bound only. |
+| 10 | Role guard | **Done:** Person 1's `RolesGuard` replaced the inline check. |
+| 11 | `pdfkit` for e-tickets | Merged in PR #8. |
+| 12 | AI log location | **Team decision:** one log per student in `docs/work-logs/` (Person 4: `16002979.md`). TA confirmation of the PDF's `AI_PROMPTS.txt` name is still pending. |
+
+## 8. Stable interface for ITN-27 (Person 7)
+
+Person 7's ITN-27 bonus reads flight bookings through `getMine(flightBookingId, userId)`,
+which returns the owner's booking or throws 404. These fields are treated as stable:
+Person 4 tells Person 7 before renaming or removing any of them.
+
+- `status`, `totalAmount`, `currency`, `bookingReference`
+- `segments[]`: `flightNumber`, `departureAirportCode`, `arrivalAirportCode`,
+  `departureAt` (UTC), `departureTimeZone` (IANA)
+
+`totalAmount` is an integer in minor units of `USD` (PAY-04), so `totalAmount / 100`
+is the amount in dollars, as the e-ticket and Payments already show it. Local
+departure dates come from `departureAt` with `departureTimeZone`, not the UTC date.

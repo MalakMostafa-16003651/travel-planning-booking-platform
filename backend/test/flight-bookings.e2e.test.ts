@@ -18,7 +18,8 @@ import { FlightBookingsMaintenanceService } from '../src/flight-bookings/flight-
 import { FlightBookingsModule } from '../src/flight-bookings/flight-bookings.module';
 import { FlightBookingsService } from '../src/flight-bookings/flight-bookings.service';
 import { BOOKING_NOTIFICATIONS, BookingNotification } from '../src/flight-bookings/ports/booking-notifications.port';
-import { BOOKING_PAYMENTS, RefundRequest } from '../src/flight-bookings/ports/booking-payments.port';
+import { BOOKING_PAYMENTS, BookingRefundStatus, RefundRequest } from '../src/flight-bookings/ports/booking-payments.port';
+import { FLIGHT_INVENTORY, FlightInventoryPort } from '../src/flight-bookings/ports/flight-inventory.port';
 import { FlightBooking } from '../src/flight-bookings/schemas/flight-booking.schema';
 import { User, UserDocument } from '../src/users/schemas/user.schema';
 
@@ -42,7 +43,15 @@ class FakePayments {
       throw new Error('Stripe unavailable');
     }
     this.refunds.push(refund);
-    return { refundId: new Types.ObjectId().toString() };
+    const refundId = new Types.ObjectId().toString();
+    this.statuses.set(refund.bookingId, { refundId, status: 'PENDING', amount: refund.amount, currency: 'USD' });
+    return { refundId };
+  }
+
+  statuses = new Map<string, BookingRefundStatus>();
+
+  async getRefundStatus({ bookingId }: { bookingId: string }) {
+    return this.statuses.get(bookingId) ?? null;
   }
 }
 
@@ -200,6 +209,7 @@ describe('Flight booking and inventory holds', { concurrency: false }, () => {
     payments.cancelled = [];
     payments.refunds = [];
     payments.failNextRefund = false;
+    payments.statuses.clear();
     notifications.sent = [];
     traveler = await login('traveler@example.com');
   });
@@ -291,6 +301,8 @@ describe('Flight booking and inventory holds', { concurrency: false }, () => {
       await request(app.getHttpServer()).get('/api/flight-bookings').expect(401);
       const moderator = await login('moderator@example.com', UserRole.AIRLINE_MODERATOR);
       await hold([flight], [adult()], moderator).expect(403);
+      // Shared RolesGuard: only role USER has flight bookings.
+      await request(app.getHttpServer()).get('/api/flight-bookings').set('Cookie', moderator).expect(403);
     });
   });
 
@@ -563,6 +575,57 @@ describe('Flight booking and inventory holds', { concurrency: false }, () => {
       await cancel(pending.body.flightBookingId).expect(409);
     });
 
+    it('shows the refund status from Payments on the booking details (PAY-03)', async () => {
+      const id = await confirmedBooking(await seedFlight({ departsInDays: 20 }));
+      const before = await request(app.getHttpServer()).get(`/api/flight-bookings/${id}`).set('Cookie', traveler).expect(200);
+      assert.equal(before.body.refund, undefined);
+
+      const cancelled = await cancel(id).expect(200);
+      assert.equal(cancelled.body.refund.status, 'PENDING');
+      payments.statuses.get(id)!.status = 'REFUNDED';
+      const after = await request(app.getHttpServer()).get(`/api/flight-bookings/${id}`).set('Cookie', traveler).expect(200);
+      assert.deepEqual(after.body.refund, { ...payments.statuses.get(id) });
+    });
+
+    it('still loads the details when Payments cannot report the refund status', async () => {
+      const id = await confirmedBooking(await seedFlight({ departsInDays: 20 }));
+      await cancel(id).expect(200);
+      const original = payments.getRefundStatus;
+      payments.getRefundStatus = async () => { throw new Error('Payments unavailable'); };
+      try {
+        const response = await request(app.getHttpServer()).get(`/api/flight-bookings/${id}`).set('Cookie', traveler).expect(200);
+        assert.equal(response.body.status, BookingStatus.CANCELLED);
+        assert.equal(response.body.refund, undefined);
+      } finally {
+        payments.getRefundStatus = original;
+      }
+    });
+
+    it('never commits a cancellation after departure when the policy lookup is slow (review F8)', async () => {
+      const flight = await seedFlight();
+      const id = await confirmedBooking(flight);
+      const departureAt = new Date(Date.now() + 400);
+      await connection.collection('flights').updateOne({ _id: new Types.ObjectId(flight.flightId) }, { $set: { departureAt } });
+      await bookings.updateOne({ _id: id }, { $set: { 'segments.0.departureAt': departureAt, lastDepartureAt: departureAt } }).exec();
+      const inventory = app.get<FlightInventoryPort>(FLIGHT_INVENTORY, { strict: false });
+      const original = inventory.getAirlinePolicy;
+      // The airline policy arrives only after the flight has departed.
+      inventory.getAirlinePolicy = async (...args) => {
+        await new Promise((resolve) => setTimeout(resolve, 800));
+        return original.apply(inventory, args);
+      };
+      try {
+        await cancel(id).expect(409);
+      } finally {
+        inventory.getAirlinePolicy = original;
+      }
+
+      const booking = await bookings.findById(id).orFail().exec();
+      assert.equal(booking.status, BookingStatus.CONFIRMED);
+      assert.deepEqual(await seats(flight.cabinId), { held: 0, booked: 1 });
+      assert.equal(payments.refunds.length, 0);
+    });
+
     it('keeps the cancellation and retries a failed refund', async () => {
       const id = await confirmedBooking(await seedFlight({ departsInDays: 20 }));
       payments.failNextRefund = true;
@@ -621,6 +684,29 @@ describe('Flight booking and inventory holds', { concurrency: false }, () => {
       assert.equal(result.total, 1);
       assert.deepEqual(result.items[0].passengerNames, ['Alex Traveler']);
       assert.ok(!JSON.stringify(result).includes('A12345678'));
+    });
+
+    it('ACC-15: lists customers with Confirmed bookings on an airline', async () => {
+      const id = await confirmedBooking(await seedFlight());
+      await hold([await seedFlight()]).expect(201);
+      const { userId } = await bookings.findById(id).orFail().exec();
+
+      assert.deepEqual(await service.listConfirmedUserIdsForAirline(airlineId.toString()), [userId.toString()]);
+      assert.deepEqual(await service.listConfirmedUserIdsForAirline(new Types.ObjectId().toString()), []);
+    });
+
+    it('treats a payment replay after completion as already confirmed', async () => {
+      const flight = await seedFlight();
+      const { body } = await hold([flight]).expect(201);
+      const paymentId = new Types.ObjectId().toString();
+      await service.confirmPaidBooking(body.flightBookingId, paymentId);
+      await bookings.updateOne({ _id: body.flightBookingId }, { $set: { lastDepartureAt: new Date(Date.now() - 1000) } }).exec();
+      await service.completeDepartedBookings();
+
+      await service.confirmPaidBooking(body.flightBookingId, paymentId);
+
+      assert.equal((await bookings.findById(body.flightBookingId).orFail().exec()).status, BookingStatus.COMPLETED);
+      assert.equal(notifications.sent.length, 1);
     });
 
     it('ACC-12: reports upcoming Confirmed bookings', async () => {

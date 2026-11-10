@@ -1,10 +1,9 @@
 import { UsersService } from '../users/users.service';
 import { EmailEligibilityService } from '../auth/email-eligibility.service';
-import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { ClientSession, Connection, QueryFilter, Model, Types } from 'mongoose';
 import { BookingStatus } from '../common/enums/booking-status.enum';
-import { UserRole } from '../common/enums/user-role.enum';
 import { CreateFlightBookingDto, PassengerDto } from './dto/create-flight-booking.dto';
 import { CancellationQuoteDto, FlightBookingDto, FlightBookingPageDto, FlightBookingSummaryDto, FlightSegmentDto } from './dto/flight-booking-response.dto';
 import { FlightBookingGroup } from './dto/list-flight-bookings-query.dto';
@@ -27,10 +26,6 @@ interface SelectedSegment {
 type PricedBooking = Pick<FlightBooking, 'segments' | 'seatCount' | 'baggageFee' | 'totalAmount' | 'currency' | 'lastDepartureAt'> & {
   passengers: Omit<Passenger, '_id'>[];
 };
-
-export function assertTraveler(role: UserRole): void {
-  if (role !== UserRole.USER) throw new ForbiddenException('Only registered users can book flights');
-}
 
 function toObjectId(id: string, message: string): Types.ObjectId {
   if (!/^[0-9a-f]{24}$/i.test(id)) throw new NotFoundException(message);
@@ -128,15 +123,22 @@ export class FlightBookingsService {
     return this.quoteCancellation(await this.getMine(flightBookingId, userId));
   }
 
+  /**
+   * FLT-25 details, including the refund status from Payments (PAY-03). ITN-27 relies on getMine and
+   * the fields it reads staying stable; tell Person 7 before renaming any of them.
+   */
+  async getDetails(flightBookingId: string, userId: string): Promise<FlightBookingDto> {
+    return this.withRefundStatus(await this.getMine(flightBookingId, userId));
+  }
+
   /** FLT-26. The status check in the write means concurrent cancels release seats once. */
   async cancel(flightBookingId: string, userId: string): Promise<FlightBookingDto> {
     const booking = await this.getMine(flightBookingId, userId);
-    const quote = await this.quoteCancellation(booking);
-    const cancelled = await this.cancelConfirmed(booking._id, CancelledBy.USER, quote.refundAmount);
-    if (!cancelled) throw new ConflictException('Only Confirmed bookings can be cancelled');
+    const cancelled = await this.cancelConfirmed(booking._id, CancelledBy.USER);
+    if (!cancelled) throw new ConflictException('This booking can no longer be cancelled');
     await this.settleRefund(cancelled);
     await this.notifyCancelled(cancelled);
-    return FlightBookingDto.from(await this.bookings.findById(cancelled._id).orFail().exec());
+    return this.withRefundStatus(await this.bookings.findById(cancelled._id).orFail().exec());
   }
 
   /** E-tickets exist only once payment has been verified (FLT-23). */
@@ -195,7 +197,7 @@ export class FlightBookingsService {
         await this.expire(booking._id, {});
         continue;
       }
-      const cancelled = await this.cancelConfirmed(booking._id, CancelledBy.AIRLINE, booking.totalAmount);
+      const cancelled = await this.cancelConfirmed(booking._id, CancelledBy.AIRLINE);
       if (!cancelled) continue;
       await this.settleRefund(cancelled);
       await this.notifyCancelled(cancelled);
@@ -224,6 +226,15 @@ export class FlightBookingsService {
   async findConfirmedUserIdsForFlight(flightId: string): Promise<string[]> {
     const userIds = await this.bookings.distinct('userId', {
       'segments.flightId': new Types.ObjectId(flightId),
+      status: BookingStatus.CONFIRMED,
+    }).exec();
+    return userIds.map(String);
+  }
+
+  /** ACC-15 (Person 2): customers to notify when an airline is deactivated or reactivated. */
+  async listConfirmedUserIdsForAirline(airlineId: string): Promise<string[]> {
+    const userIds = await this.bookings.distinct('userId', {
+      'segments.airlineId': new Types.ObjectId(airlineId),
       status: BookingStatus.CONFIRMED,
     }).exec();
     return userIds.map(String);
@@ -422,7 +433,8 @@ export class FlightBookingsService {
   private async confirmInSession(_id: Types.ObjectId, paymentId: string, session: ClientSession): Promise<FlightBookingDocument | null> {
     const existing = await this.bookings.findById(_id).session(session).exec();
     if (!existing) throw new NotFoundException('Flight booking not found');
-    if (existing.status === BookingStatus.CONFIRMED && existing.paymentId?.toString() === paymentId) return null;
+    const alreadyConfirmed = existing.status === BookingStatus.CONFIRMED || existing.status === BookingStatus.COMPLETED;
+    if (alreadyConfirmed && existing.paymentId?.toString() === paymentId) return null;
     await this.users.acquireBookingGate(existing.userId.toString(), session);
     // ACC-02: already-confirmed deliveries stay idempotent; deny a new confirmation before inventory writes.
     if (existing.status === BookingStatus.PENDING && !await this.emailEligibility.canBook(existing.userId.toString(), session)) {
@@ -445,14 +457,14 @@ export class FlightBookingsService {
     return confirmed;
   }
 
-  private async quoteCancellation(booking: FlightBookingDocument): Promise<CancellationQuoteDto> {
+  private async quoteCancellation(booking: FlightBookingDocument, session?: ClientSession): Promise<CancellationQuoteDto> {
     if (booking.status !== BookingStatus.CONFIRMED) throw new ConflictException('Only Confirmed bookings can be cancelled');
     const outbound = booking.segments[0];
-    const flight = await this.inventory.getFlight(outbound.flightId.toString());
+    const flight = await this.inventory.getFlight(outbound.flightId.toString(), session);
     const departureAt = flight?.departureAt ?? outbound.departureAt;
     const now = new Date();
     if (departureAt <= now) throw new ConflictException('A booking cannot be cancelled after departure');
-    const airline = await this.inventory.getAirlinePolicy(outbound.airlineId.toString());
+    const airline = await this.inventory.getAirlinePolicy(outbound.airlineId.toString(), session);
     const daysBeforeDeparture = wholeDaysBefore(departureAt, now);
     const refundPercentage = refundPercentageFor(airline?.cancellationTiers ?? [], daysBeforeDeparture);
     return {
@@ -465,10 +477,20 @@ export class FlightBookingsService {
     };
   }
 
-  private cancelConfirmed(_id: Types.ObjectId, cancelledBy: CancelledBy, refundAmount: number): Promise<FlightBookingDocument | null> {
+  /**
+   * FLT-26: a user cancellation quotes the refund inside the transaction, and its write only matches
+   * while the outbound departure is still ahead by database time ($$NOW). A slow policy lookup can
+   * therefore never commit a cancellation after departure. FLT-06 airline cancellations refund 100%.
+   */
+  private cancelConfirmed(_id: Types.ObjectId, cancelledBy: CancelledBy): Promise<FlightBookingDocument | null> {
     return this.connection.transaction(async (session) => {
+      const current = await this.bookings.findById(_id).session(session).exec();
+      if (!current || current.status !== BookingStatus.CONFIRMED) return null;
+      const byUser = cancelledBy === CancelledBy.USER;
+      const refundAmount = byUser ? (await this.quoteCancellation(current, session)).refundAmount : current.totalAmount;
+      const beforeDeparture = byUser ? { $expr: { $gt: [{ $arrayElemAt: ['$segments.departureAt', 0] }, '$$NOW'] } } : {};
       const cancelled = await this.bookings.findOneAndUpdate(
-        { _id, status: BookingStatus.CONFIRMED },
+        { _id, status: BookingStatus.CONFIRMED, ...beforeDeparture },
         { $set: { status: BookingStatus.CANCELLED, cancelledAt: new Date(), cancelledBy, refundAmount, refundDue: refundAmount > 0 } },
         { returnDocument: 'after', session },
       ).exec();
@@ -517,6 +539,22 @@ export class FlightBookingsService {
       // refundDue stays true, so retryDueRefunds tries again.
       this.logger.error(`Refund request failed for booking ${booking._id.toString()}`);
     }
+  }
+
+  /**
+   * PAY-03 "status on the booking details". Payments owns the authoritative status; if it cannot be
+   * reached, the details still load without it and the error is logged.
+   */
+  private async withRefundStatus(booking: FlightBookingDocument): Promise<FlightBookingDto> {
+    const details = FlightBookingDto.from(booking);
+    if (!booking.refundAmount) return details;
+    try {
+      const refund = await this.payments.getRefundStatus({ bookingType: 'FLIGHT', bookingId: booking._id.toString() });
+      if (refund) details.refund = refund;
+    } catch {
+      this.logger.error(`Could not read the refund status for booking ${booking._id.toString()}`);
+    }
+    return details;
   }
 
   private notifyCancelled(booking: FlightBookingDocument): Promise<void> {
