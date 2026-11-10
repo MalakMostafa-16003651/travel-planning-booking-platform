@@ -1,6 +1,6 @@
 # ITN-27 (optional bonus): link booked flights and hotels to itinerary days
 
-Status: **proposal, not implemented.** Owner: Person 7 (Kenzy).
+Status: **implemented for hotel bookings (2026-11-10); flight linking returns 503 until Person 4 confirms.** Owner: Person 7 (Kenzy).
 
 | Owner | Interface | Status |
 | --- | --- | --- |
@@ -104,3 +104,20 @@ Link and unlink by the owner; 404 for another user's booking or itinerary; 400 f
 expired or cancelled bookings and for a day outside the booking dates; 409 duplicate; links hidden
 from non-owners and not cloned; links removed with their day; summary totals with a cancelled
 booking contributing 0; currency conversion of booking amounts.
+
+## 7. Implementation notes (2026-11-10)
+
+- Ports `ITINERARY_HOTEL_BOOKINGS` and `ITINERARY_FLIGHT_BOOKINGS` return a small `LinkableBooking`
+  shape (status, amount in minor units, currency, reference, label, dates). Hotels are bound to
+  `HotelBookingLookupAdapter` (`HotelBookingsService.getMine`). Flights are bound to
+  `PendingFlightBookingLookupAdapter` (503) until Ismail confirms; then only the binding changes,
+  and the flight adapter maps `segments[0].departureAt` in `departureTimeZone` to the local
+  departure date.
+- Decided while implementing section 5: booked flights are added to the day's `transport` figure
+  and to `totals.transport`, rather than a separate `bookedFlights` total. Each link is listed in
+  the owner's summary under `linkedBookings`, with `convertedAmount` (0 when it doesn't count).
+- The owner's itinerary responses include `linkedBookings` with live status, price and a
+  `matchesDay` flag. It becomes false if reordering days or changing the start date moves the day
+  off the booking's dates; the link is kept so the owner can move or remove it.
+- A booking that no longer exists shows `status: null` and counts 0. Any other lookup failure
+  fails the request (500) instead of returning partial totals.
