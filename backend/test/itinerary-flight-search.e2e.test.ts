@@ -20,7 +20,8 @@ import { ReferenceDataService } from '../src/reference-data/reference-data.servi
 /**
  * ITN-26 against the REAL Flights search (FlightsService.searchForItinerary, Person 3), through
  * GET /api/itineraries/:id/flights. No test double for the flight port: this checks the binding,
- * multiple destination airports, matching return legs, local same-day timing and pagination.
+ * multiple destination airports, return legs that reverse an outbound route (R2), local same-day
+ * timing and pagination.
  *
  * Trip: London (GB), days 2027-12-20 to 2027-12-24. Origin: Cairo (CAI, Africa/Cairo, UTC+2).
  * London has two airports here: LHR (seeded) and LGW (added by this test).
@@ -155,28 +156,37 @@ describe('ITN-26 itinerary flight search with the real Flights module', { concur
     assert.deepEqual(numbers((await search({ departureDate: '2027-12-21' }).expect(200)).body.results), ['TA403']);
   });
 
-  it('matches return legs from any city airport, on the return date and after an outbound arrival', async () => {
+  it('keeps return legs that reverse an outbound route, on the return date (ITN-26 R2)', async () => {
     await seedFlight('TA501', 'CAI', 'LHR', utc('2027-12-20T06:00:00Z'), 5); // arrives 11:00Z
     // Default return date is the last itinerary day, 2027-12-24.
-    await seedFlight('TA601', 'LHR', 'CAI', utc('2027-12-24T09:00:00Z'));
-    await seedFlight('TA602', 'LGW', 'CAI', utc('2027-12-24T15:00:00Z'));
+    await seedFlight('TA601', 'LHR', 'CAI', utc('2027-12-24T09:00:00Z')); // reverses TA501
+    await seedFlight('TA602', 'LGW', 'CAI', utc('2027-12-24T15:00:00Z')); // no outbound lands at LGW
     await seedFlight('TA603', 'LHR', 'CAI', utc('2027-12-23T09:00:00Z')); // wrong day
     await seedFlight('TA604', 'CDG', 'CAI', utc('2027-12-24T10:00:00Z')); // not a London airport
 
-    const response = (await search({ roundTrip: 'true' }).expect(200)).body;
+    let response = (await search({ roundTrip: 'true' }).expect(200)).body;
     assert.equal(response.criteria.returnDate, '2027-12-24');
     assert.deepEqual(numbers(response.results.outbound), ['TA501']);
-    assert.deepEqual(numbers(response.results.return), ['TA601', 'TA602']);
+    assert.deepEqual(numbers(response.results.return), ['TA601'], 'a return must leave from where an outbound lands');
     assert.deepEqual(numbers((await search({ roundTrip: 'true', returnDate: '2027-12-23' }).expect(200)).body.results.return), ['TA603']);
+
+    // Once an outbound lands at LGW, the LGW return becomes a valid pair too.
+    await seedFlight('TA502', 'CAI', 'LGW', utc('2027-12-20T07:00:00Z'), 5);
+    response = (await search({ roundTrip: 'true' }).expect(200)).body;
+    assert.deepEqual(numbers(response.results.outbound), ['TA501', 'TA502']);
+    assert.deepEqual(numbers(response.results.return), ['TA601', 'TA602']);
   });
 
-  it('keeps only same-day return legs that leave after an outbound flight lands', async () => {
-    await seedFlight('TA701', 'CAI', 'LHR', utc('2027-12-20T06:00:00Z'), 5); // lands 11:00Z
-    await seedFlight('TA702', 'LHR', 'CAI', utc('2027-12-20T10:00:00Z')); // before landing
-    await seedFlight('TA703', 'LGW', 'CAI', utc('2027-12-20T15:00:00Z')); // after landing
+  it('keeps only same-day return legs that leave after a matching outbound lands', async () => {
+    await seedFlight('TA701', 'CAI', 'LHR', utc('2027-12-20T06:00:00Z'), 5); // lands at LHR 11:00Z
+    await seedFlight('TA705', 'CAI', 'LGW', utc('2027-12-20T13:00:00Z'), 5); // lands at LGW 18:00Z
+    await seedFlight('TA702', 'LHR', 'CAI', utc('2027-12-20T10:00:00Z')); // before TA701 lands
+    await seedFlight('TA703', 'LHR', 'CAI', utc('2027-12-20T15:00:00Z')); // after TA701 lands
+    // After TA701 lands, but at LGW, where the only arrival (TA705) lands later: no bookable pair.
+    await seedFlight('TA704', 'LGW', 'CAI', utc('2027-12-20T16:00:00Z'));
 
     const response = (await search({ roundTrip: 'true', returnDate: '2027-12-20' }).expect(200)).body;
-    assert.deepEqual(numbers(response.results.outbound), ['TA701']);
+    assert.deepEqual(numbers(response.results.outbound), ['TA701', 'TA705']);
     assert.deepEqual(numbers(response.results.return), ['TA703']);
   });
 

@@ -42,8 +42,12 @@ export interface AirlineBookingPolicy {
 /** Everything flight booking needs from the Flights module (Person 3). */
 export interface FlightInventoryPort {
   getFlight(flightId: string, session?: ClientSession): Promise<BookableFlight | null>;
+  /** Real shared Flight write: serializes hold/confirmation/user cancellation with provider edits. */
+  acquireBookingGate(flightId: string, session: ClientSession): Promise<BookableFlight | null>;
   getCabin(cabinId: string, session?: ClientSession): Promise<BookableCabin | null>;
   getAirlinePolicy(airlineId: string, session?: ClientSession): Promise<AirlineBookingPolicy | null>;
+  /** Active airline admission, serialized with admin deactivation; not required for cancelling history. */
+  acquireAirlineBookingGate(airlineId: string, session: ClientSession): Promise<AirlineBookingPolicy | null>;
   /** Returns false, changing nothing, unless enough seats remain. */
   reserveSeats(cabinId: string, seats: number, session: ClientSession): Promise<boolean>;
   convertHeldToBooked(cabinId: string, seats: number, session: ClientSession): Promise<boolean>;

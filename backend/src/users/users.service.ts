@@ -1,3 +1,4 @@
+import { incrementableVersion } from '../common/booking-gate';
 import { BadRequestException, ConflictException, Injectable, OnModuleInit, UnauthorizedException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ClientSession, Model, Types } from 'mongoose';
@@ -22,25 +23,6 @@ function unlockedLoginFilter(userId: string, passwordHash: string) {
     status: AccountStatus.ACTIVE,
     // Evaluate the deadline at the database, not before an asynchronous password check.
     $expr: { $lte: [{ $ifNull: ['$lockedUntil', new Date(0)] }, '$$NOW'] },
-  };
-}
-
-function incrementableVersion(field: 'credentialVersion' | 'bookingVersion') {
-  const version = { $ifNull: ['$' + field, 0] };
-  return {
-    // Pipeline updates bypass schema validation. Reject malformed stored values
-    // and reserve room for one exact integer increment; legacy missing means zero.
-    $cond: [
-      { $isNumber: version },
-      {
-        $and: [
-          { $gte: [version, 0] },
-          { $lt: [version, Number.MAX_SAFE_INTEGER] },
-          { $eq: [version, { $trunc: version }] },
-        ],
-      },
-      false,
-    ],
   };
 }
 

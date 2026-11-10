@@ -1,3 +1,4 @@
+import { assertSearchStay } from './hotel-search.rules';
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, Types } from 'mongoose';
@@ -343,7 +344,7 @@ export class HotelsService {
    * is a booking-time concern (Person 6), not a search-listing one.
    */
   async search(query: SearchHotelsQueryDto): Promise<HotelSearchPage> {
-    if (query.checkIn >= query.checkOut) throw new BadRequestException('checkIn must be before checkOut');
+    assertSearchStay(query.checkIn, query.checkOut);
     if (query.minPrice !== undefined && query.maxPrice !== undefined && query.minPrice > query.maxPrice) {
       throw new BadRequestException('minPrice must not be greater than maxPrice');
     }
@@ -377,7 +378,13 @@ export class HotelsService {
       const totalCapacity = bestFit.reduce((sum, room) => sum + room.capacity, 0);
       if (totalCapacity < query.guests) continue;
 
-      const fromPrice = Math.min(...freeRooms.map((room) => room.pricePerNight));
+      // A displayed room must be able to participate in a selection satisfying the requested guests.
+      const byCapacity = [...freeRooms].sort((a, b) => b.capacity - a.capacity);
+      const qualifying = freeRooms.filter(room => {
+        const others = byCapacity.filter(candidate => !candidate._id.equals(room._id)).slice(0, roomsNeeded - 1);
+        return room.capacity + others.reduce((sum, candidate) => sum + candidate.capacity, 0) >= query.guests;
+      });
+      const fromPrice = Math.min(...qualifying.map(room => room.pricePerNight));
       if (query.minPrice !== undefined && fromPrice < query.minPrice) continue;
       if (query.maxPrice !== undefined && fromPrice > query.maxPrice) continue;
 
@@ -405,7 +412,7 @@ export class HotelsService {
 
   /** HTL-15. Individual rooms (not a hotel-level summary), for picking specific rooms to book. */
   async getAvailableRooms(hotelId: string, query: AvailableRoomsQueryDto): Promise<Room[]> {
-    if (query.checkIn >= query.checkOut) throw new BadRequestException('checkIn must be before checkOut');
+    assertSearchStay(query.checkIn, query.checkOut);
     if (!Types.ObjectId.isValid(hotelId)) throw new NotFoundException('Hotel not found');
     const hotel = await this.hotels.findOne({ _id: hotelId, isActive: true }).exec();
     if (!hotel) throw new NotFoundException('Hotel not found');
