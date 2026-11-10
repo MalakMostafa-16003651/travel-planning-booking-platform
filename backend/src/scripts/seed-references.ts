@@ -14,7 +14,7 @@ async function seedReferences(): Promise<void> {
     app = await NestFactory.createApplicationContext(ReferenceSeedModule, { logger: false, abortOnError: false });
     const counts = await app.get(ReferenceDataService).seedSupported();
     await app.close(); app = undefined;
-    process.stdout.write(`Country/city reference seed completed: ${counts.countries} countries and ${counts.cities} cities available.\n`);
+    process.stdout.write(`Reference seed completed: ${counts.countries} countries, ${counts.cities} cities and ${counts.attractions} attractions available.\n`);
   } finally {
     if (app) await app.close();
     await disconnect();

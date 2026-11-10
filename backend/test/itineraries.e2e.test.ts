@@ -986,7 +986,7 @@ describe('Itineraries, activities and budgeting', { concurrency: false }, () => 
   it('seeds one shared reference catalog idempotently and validates official country/city membership', async () => {
     const references = app.get(ReferenceDataService);
     const before = await connection.collection('cities').findOne({ cityId: 'cairo' });
-    assert.deepEqual(await references.seedSupported(), { countries: 8, cities: 8 });
+    assert.deepEqual(await references.seedSupported(), { countries: 8, cities: 8, attractions: 8 });
     const after = await connection.collection('cities').findOne({ cityId: 'cairo' });
     assert.equal(after!._id.toString(), before!._id.toString());
     assert.equal(after!.updatedAt.getTime(), before!.updatedAt.getTime());

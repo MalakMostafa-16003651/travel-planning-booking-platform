@@ -24,3 +24,15 @@ export class City {
 }
 export const CitySchema = SchemaFactory.createForClass(City);
 CitySchema.index({ cityId: 1 }, { unique: true, name: 'cities_reference_id_unique' });
+
+@Schema({ collection: 'attractions', timestamps: true, versionKey: false })
+export class Attraction {
+  declare _id: Types.ObjectId;
+  @Prop({ required: true, maxlength: 64 }) attractionId!: string;
+  @Prop({ required: true, trim: true }) name!: string;
+  @Prop({ required: true }) cityId!: string;
+  declare createdAt: Date;
+  declare updatedAt: Date;
+}
+export const AttractionSchema = SchemaFactory.createForClass(Attraction);
+AttractionSchema.index({ attractionId: 1 }, { unique: true, name: 'attractions_reference_id_unique' });

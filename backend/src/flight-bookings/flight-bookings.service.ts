@@ -72,6 +72,7 @@ export class FlightBookingsService {
 
   /** FLT-22: seats and booking commit together, so a round trip never half-reserves. */
   async hold(input: CreateFlightBookingDto, userId: string): Promise<FlightBookingDto> {
+    await this.emailEligibility.assertCanBook(userId);
     await this.selectSegments(input); // Preserve ordinary preflight validation before admission gates.
     const booking = await this.connection.transaction(async (session) => {
       await this.emailEligibility.assertCanBook(userId, session);
