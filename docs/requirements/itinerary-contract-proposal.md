@@ -131,7 +131,7 @@ adminDeleteItinerary(itineraryId: string): Promise<void>                 // 404 
 - **Delete:** removes the itinerary and its activity images.
 - **Arwa's side:** call these from `ContentModerationService` and remove the "not supported yet"
   rejection for `ITINERARY`. No reports code was edited.
-- **Blog:** since `develop` `d454898`/`b15585b` the blog uses `listPublicByAuthor` (author page)
+- **Blog:** since commit `c10898b` (Malak, merged with PR #82) the blog uses `listPublicByAuthor` (author page)
   and `getPublicSummary` (validating and showing a post's itinerary) instead of reading the
   `itineraries` collection, so hidden itineraries are hidden there too.
 
