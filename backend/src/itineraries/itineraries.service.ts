@@ -571,8 +571,7 @@ export class ItinerariesService {
     const visibleFilter: QueryFilter<Itinerary> = { ...filter, userId: { $in: visibleAuthors } };
 
     const sort = SORTS[query.sort ?? PublicItinerarySort.NEWEST];
-    const projection = { title: 1, description: 1, countries: 1, startDate: 1, visibility: 1, currency: 1, userId: 1,
-      clonedFrom: 1, publishedAt: 1, createdAt: 1, updatedAt: 1, 'days._id': 1, 'days.city': 1, 'days.countryCode': 1 };
+    const projection = SUMMARY_PROJECTION;
     const [rows, total] = await Promise.all([
       this.itineraries.aggregate<Itinerary>([
         { $match: visibleFilter },
@@ -586,6 +585,44 @@ export class ItinerariesService {
     ]);
     const names = await this.attributionNames(rows, statuses);
     return pageOf(rows.map((row) => ItinerarySummaryDto.from(row, names)), page, total);
+  }
+
+  // ---------------------------------------------------------------- read-only views for other modules (BLG-12, BLG-13)
+
+  /**
+   * BLG-12 (author page): one author's PUBLIC itineraries, newest published first, as summaries.
+   * Applies the same rules as public search: an author who is deactivated or missing (ACC-12)
+   * gets an empty page, and only summary fields are read, so nothing private is ever returned.
+   */
+  async listPublicByAuthor(authorId: string, page = 1): Promise<ItineraryPageDto> {
+    if (!Types.ObjectId.isValid(authorId)) return pageOf([], page, 0);
+    const statuses = await this.accountStatuses.getAccountStatuses([authorId]);
+    if (!isVisibleStatus(statuses.get(authorId))) return pageOf([], page, 0);
+    const filter: QueryFilter<Itinerary> = { userId: new Types.ObjectId(authorId), visibility: ItineraryVisibility.PUBLIC };
+    const [rows, total] = await Promise.all([
+      this.itineraries.find(filter, SUMMARY_PROJECTION).sort({ publishedAt: -1, _id: -1 })
+        .skip((page - 1) * ITINERARY_PAGE_SIZE).limit(ITINERARY_PAGE_SIZE).lean<Itinerary[]>().exec(),
+      this.itineraries.countDocuments(filter).exec(),
+    ]);
+    const names = await this.attributionNames(rows, statuses);
+    return pageOf(rows.map((row) => ItinerarySummaryDto.from(row, names)), page, total);
+  }
+
+  /**
+   * BLG-13 (itinerary attached to a post): the summary of one PUBLIC itinerary, or null when it is
+   * missing, private, or its author is deactivated or missing (ACC-12). With `authorId`, it must
+   * also belong to that user, so a post can only show its own author's itinerary.
+   */
+  async getPublicSummary(itineraryId: string, authorId?: string): Promise<ItinerarySummaryDto | null> {
+    if (!Types.ObjectId.isValid(itineraryId) || (authorId !== undefined && !Types.ObjectId.isValid(authorId))) return null;
+    const filter: QueryFilter<Itinerary> = { _id: new Types.ObjectId(itineraryId), visibility: ItineraryVisibility.PUBLIC };
+    if (authorId !== undefined) filter.userId = new Types.ObjectId(authorId);
+    const row = await this.itineraries.findOne(filter, SUMMARY_PROJECTION).lean<Itinerary>().exec();
+    if (!row) return null;
+    const ownerId = row.userId.toString();
+    const statuses = await this.accountStatuses.getAccountStatuses([ownerId]);
+    if (!isVisibleStatus(statuses.get(ownerId))) return null;
+    return ItinerarySummaryDto.from(row, await this.attributionNames([row], statuses));
   }
 
   /** ITN-21: an independent private copy. Author status is rechecked at clone time. */
@@ -834,6 +871,12 @@ export class ItinerariesService {
     return { cost: input.cost, currency: await this.assertCurrency(input.currency ?? fallback, 'currency') };
   }
 }
+
+/** Fields a summary needs. Activities, budgets and linked bookings are never read for public lists. */
+const SUMMARY_PROJECTION = {
+  title: 1, description: 1, countries: 1, startDate: 1, visibility: 1, currency: 1, userId: 1,
+  clonedFrom: 1, publishedAt: 1, createdAt: 1, updatedAt: 1, 'days._id': 1, 'days.city': 1, 'days.countryCode': 1,
+};
 
 const SORTS: Record<PublicItinerarySort, Record<string, 1 | -1>> = {
   [PublicItinerarySort.NEWEST]: { publishedAt: -1, _id: -1 },
