@@ -1,3 +1,4 @@
+import { ConvertedLinkedBookingDto } from './linked-booking.dto';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { TransportMode } from '../itinerary.rules';
 
@@ -44,7 +45,7 @@ export class OriginalCurrencyTotalDto {
 export class BudgetTotalsDto {
   @ApiProperty({ type: CategoryTotalsDto }) categories!: CategoryTotalsDto;
   @ApiProperty({ description: 'Sum of the four daily categories.' }) daily!: number;
-  @ApiProperty({ description: 'Intercity transport costs.' }) transport!: number;
+  @ApiProperty({ description: 'Intercity transport costs, plus booked flights linked by the owner (ITN-27).' }) transport!: number;
   @ApiProperty() grandTotal!: number;
 }
 
@@ -56,6 +57,11 @@ export class BudgetSummaryDto {
   @ApiProperty({ type: [DayBudgetDto] }) byDay!: DayBudgetDto[];
   @ApiProperty({ type: [CityBudgetDto] }) byCity!: CityBudgetDto[];
   @ApiProperty({ type: [ConvertedTransportCostDto] }) transportCosts!: ConvertedTransportCostDto[];
+  @ApiPropertyOptional({
+    type: [ConvertedLinkedBookingDto],
+    description: "ITN-27 (bonus), owner only. Hotels count as ACCOMMODATION on their day; flights add to that day's transport and totals.transport. Only CONFIRMED/COMPLETED bookings count.",
+  })
+  linkedBookings?: ConvertedLinkedBookingDto[];
   @ApiProperty({ type: [OriginalCurrencyTotalDto], description: 'Unconverted sums per entered currency.' }) originalTotals!: OriginalCurrencyTotalDto[];
   @ApiPropertyOptional({ nullable: true, description: 'Provider date of the rates used; null when no conversion was needed.' }) rateDate!: string | null;
   @ApiProperty({ description: 'True when the provider failed and the last cached snapshot was used.' }) ratesStale!: boolean;

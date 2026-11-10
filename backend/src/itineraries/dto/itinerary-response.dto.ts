@@ -1,3 +1,4 @@
+import { LinkedBookingDto } from './linked-booking.dto';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { BudgetCategory, CityGroup, dateOfDay, formatDateOnly, groupDaysByCity, ItineraryVisibility, TransportMode } from '../itinerary.rules';
 import { Activity, BudgetEntry, Itinerary, ItineraryDay, TransportCost } from '../schemas/itinerary.schema';
@@ -210,6 +211,8 @@ export class ItineraryDto extends ItinerarySummaryDto {
   @ApiProperty({ type: [ItineraryDayDto] }) days!: ItineraryDayDto[];
   @ApiProperty({ type: [CityGroupDto], description: 'Consecutive days in the same city, recomputed after every change.' }) cityGroups!: CityGroupDto[];
   @ApiProperty({ type: [TransportCostDto] }) transportCosts!: TransportCostDto[];
+  @ApiPropertyOptional({ type: [LinkedBookingDto], description: 'ITN-27 (bonus): only in the owner\'s own responses, with live booking status and price.' })
+  linkedBookings?: LinkedBookingDto[];
 
   static fromItinerary(itinerary: Itinerary, names?: AuthorNames): ItineraryDto {
     return {
