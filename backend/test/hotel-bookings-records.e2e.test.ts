@@ -207,6 +207,23 @@ describe('HTL-20 hotel reservation records', { concurrency: false }, () => {
     await assert.rejects(service.listForHotel('not-an-id'), { status: 404 });
   });
 
+  it('HTL-22 (team leader decision): an active hold is listed as PENDING; a hold that has ended is hidden even before the sweep', async () => {
+    const [active, ended, completed] = await bookings.create([
+      booking(bob.userId, { checkIn: '2026-12-10', checkOut: '2026-12-12', nights: 2, status: BookingStatus.PENDING, bookingReference: undefined, paymentId: undefined, holdExpiresAt: new Date(Date.now() + 5 * 60_000) }),
+      // Ended a minute ago, but still PENDING because the expiry sweep has not run yet.
+      booking(alice.userId, { checkIn: '2026-12-11', checkOut: '2026-12-13', nights: 2, status: BookingStatus.PENDING, bookingReference: undefined, paymentId: undefined, holdExpiresAt: new Date(Date.now() - 60_000) }),
+      booking(alice.userId, { checkIn: '2026-11-01', checkOut: '2026-11-03', nights: 2, status: BookingStatus.COMPLETED }),
+      booking(alice.userId, { status: BookingStatus.EXPIRED, bookingReference: undefined, paymentId: undefined }),
+    ]);
+    const page = await service.listForHotel(HOTEL_A.toString());
+    assert.deepEqual(page.items.map((item) => [item.hotelBookingId, item.status]), [
+      [completed._id.toString(), 'COMPLETED'],
+      [active._id.toString(), 'PENDING'],
+    ]);
+    assert.equal(page.total, 2);
+    assert.equal(page.items.some((item) => item.hotelBookingId === ended._id.toString()), false);
+  });
+
   it('ACC-17: lists all reservations for admins, filtered by status and an inclusive check-in range', async () => {
     await bookings.create([
       booking(alice.userId, { checkIn: '2026-12-01', checkOut: '2026-12-02', nights: 1 }),
