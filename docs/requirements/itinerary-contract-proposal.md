@@ -107,3 +107,31 @@ PDF section 5.1 lists **attractions** among the official reference datasets. Agr
 - No separate attractions catalog is added in the itinerary module. Until the handoff,
   `attractionId` stays optional free text (1 to 64 characters) and is not validated.
 
+## Moderation hooks for administrators (GEN-09, GEN-10, with Arwa)
+
+Built 2026-11-10 from the proposal sent to Arwa, before her reply, so it is ready when she
+connects it. If she prefers different behaviour, only these methods change. `ItinerariesService`
+(exported by `ItinerariesModule`) now offers the same three operations her
+`ContentModerationService` uses for posts and reviews:
+
+```ts
+itineraryExists(itineraryId: string): Promise<boolean>
+setItineraryHidden(itineraryId: string, hidden: boolean): Promise<void>  // 404 if unknown
+adminDeleteItinerary(itineraryId: string): Promise<void>                 // 404 if unknown
+```
+
+- **Reportable:** `itineraryExists` is true only for PUBLIC itineraries, including hidden ones
+  (so reviews keep working). Private, unknown and invalid ids return false.
+- **Hidden** (`Itinerary.isHidden`): removed from public search, public and direct viewing,
+  cloning, budget summary, hotel and flight search, activity images, and
+  `listPublicByAuthor` / `getPublicSummary`, all before pagination. The owner still sees it,
+  flagged `isHidden: true`. Changing its visibility does not unhide it; only an administrator
+  can. Admins get 404 like everyone else (ACC-11 keeps admins out of itinerary content); they act
+  on the reported id.
+- **Delete:** removes the itinerary and its activity images.
+- **Arwa's side:** call these from `ContentModerationService` and remove the "not supported yet"
+  rejection for `ITINERARY`. No reports code was edited.
+- **Blog (Omar/Hicham):** the blog still reads the `itineraries` collection directly and does not
+  check `isHidden`. Until it switches to `listPublicByAuthor` / `getPublicSummary`, a hidden
+  itinerary can still appear on author pages and posts.
+
