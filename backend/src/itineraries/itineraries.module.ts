@@ -10,6 +10,9 @@ import { AirportsModule } from '../airports/airports.module';
 import { ReferenceDataModule } from '../reference-data/reference-data.module';
 import { HotelsModule } from '../hotels/hotels.module';
 import { HotelsServiceSearchAdapter } from './adapters/hotel-search.adapter';
+import { HotelBookingsModule } from '../hotel-bookings/hotel-bookings.module';
+import { HotelBookingLookupAdapter, PendingFlightBookingLookupAdapter } from './adapters/booking-lookup.adapters';
+import { ITINERARY_FLIGHT_BOOKINGS, ITINERARY_HOTEL_BOOKINGS } from './ports/itinerary-bookings.port';
 import { ItineraryFlightSearchAdapter } from '../flights/adapters/itinerary-flight-search.adapter';
 import { FlightsModule } from '../flights/flights.module';
 import { ExchangeRatesService } from './currency/exchange-rates.service';
@@ -34,6 +37,7 @@ import { Itinerary, ItinerarySchema } from './schemas/itinerary.schema';
     AirportsModule,
     HotelsModule,
     FlightsModule,
+    HotelBookingsModule,
     MongooseModule.forFeature([
       { name: Itinerary.name, schema: ItinerarySchema },
       { name: ActivityImage.name, schema: ActivityImageSchema },
@@ -54,6 +58,9 @@ import { Itinerary, ItinerarySchema } from './schemas/itinerary.schema';
     { provide: ITINERARY_CURRENCIES, useExisting: CurrenciesService },
     { provide: ITINERARY_FLIGHT_SEARCH, useExisting: ItineraryFlightSearchAdapter }, // FlightsService.searchForItinerary (FLT-11, FLT-12, FLT-15)
     { provide: ITINERARY_HOTEL_SEARCH, useClass: HotelsServiceSearchAdapter }, // HotelsService.search (HTL-11, HTL-12)
+    // ITN-27 (bonus): owner-only booking lookups.
+    { provide: ITINERARY_HOTEL_BOOKINGS, useClass: HotelBookingLookupAdapter }, // HotelBookingsService.getMine (confirmed by Person 6)
+    { provide: ITINERARY_FLIGHT_BOOKINGS, useClass: PendingFlightBookingLookupAdapter }, // -> FlightBookingsService.getMine once Person 4 confirms
   ],
   exports: [ItinerariesService],
 })

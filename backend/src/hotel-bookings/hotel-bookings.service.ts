@@ -363,13 +363,19 @@ export class HotelBookingsService {
   }
 
   /**
-   * HTL-22 (Person 5 connects this): reservations of one hotel, nearest check-in first. Expired holds
-   * were never reservations and are left out. The caller checks the moderator's hotel assignment.
+   * HTL-22 (Person 5 connects this): reservations of one hotel, nearest check-in first. The caller checks
+   * the moderator's hotel assignment. Team leader's decision (Malak, 2026-11-10): CONFIRMED, COMPLETED and
+   * CANCELLED are listed; a PENDING hold is listed only while it is still active (holdExpiresAt > now),
+   * shown with status PENDING (pending payment). EXPIRED reservations, and PENDING ones whose hold has
+   * already ended but the sweep has not reached yet, are hidden.
    */
   async listForHotel(hotelId: string, page = 1): Promise<HotelBookingSummaryPage> {
     const filter: QueryFilter<HotelBooking> = {
       hotelId: toObjectId(hotelId, 'Hotel not found'),
-      status: { $ne: BookingStatus.EXPIRED },
+      $or: [
+        { status: { $in: [BookingStatus.CONFIRMED, BookingStatus.COMPLETED, BookingStatus.CANCELLED] } },
+        { status: BookingStatus.PENDING, holdExpiresAt: { $gt: new Date() } },
+      ],
     };
     return this.page(filter, { checkIn: 1, _id: 1 }, page);
   }

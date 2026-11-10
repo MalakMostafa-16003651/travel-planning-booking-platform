@@ -1,6 +1,6 @@
 # Hotel Bookings and Reviews: shared contract
 
-Status (updated 2026-11-10): **all mandatory Person 6 work is merged; the optional HTL-26 is in review.**
+Status (updated 2026-11-10): **all Person 6 work, including the optional HTL-26, is merged; a small HTL-22 fix is in review.**
 Person 6 (Osama, 16005523) owns `backend/src/hotel-bookings` and `backend/src/reviews`. The plan,
 endpoints and integration approach were approved by the team leader on 2026-11-08 (section 2). The schemas
 and exported methods below are the integration surface for Lama (Person 5), Omar (Person 8), Arwa
@@ -15,7 +15,8 @@ and exported methods below are the integration surface for Lama (Person 5), Omar
 | Merged | [#56](https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/pull/56) | `POST /api/hotel-bookings`: validated multi-room request, one-transaction 10-minute holds with 409 on any overlap, and the expiry sweep (HTL-16, HTL-18). |
 | Merged (done by Malak) | [#66](https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/pull/66) | Planned PR 4 and PR 5, implemented by the team leader (Malak) inside `hotel-bookings` with her explicit authorization, wired to Omar's `BookingPaymentsAdapter`: verified-payment confirmation, reference and notification (HTL-17); PaymentIntent cancellation after expiry, with retries (HTL-18/PAY-01); cancellation quote, quoted cancel, room release, refund with retries and notification (HTL-21/PAY-03). See her dated sections at the end of this document. |
 | Merged | [#70](https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/pull/70) | Deactivation safety (ACC-15, HTL-06): `hold()` re-checks the hotel and every room inside its transaction (404, nothing held). Exports `roomHasActiveReservations(roomId, session?)` for Lama's room deactivation/blocking and `releasePendingHoldsForHotel(hotelId)` for Arwa's hotel deactivation; CONFIRMED stays are never released. Lama and Arwa connect these on their side. |
-| In review | `feature/HTL-26-review-replies` | HTL-26 (bonus): `POST /api/reviews/:id/reply` by a HOTEL_MODERATOR assigned to the review's hotel (Person 5's `getAssignedHotelId`), one reply per review (max 1000 characters), none on hidden reviews; optional `PATCH`/`DELETE` by the moderator who wrote it. The reply text and dates are shown in `GET /api/hotels/:id/reviews`; the moderator's identity is not. |
+| Merged | [#71](https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/pull/71) | HTL-26 (bonus): `POST /api/reviews/:id/reply` by a HOTEL_MODERATOR assigned to the review's hotel (Person 5's `getAssignedHotelId`), one reply per review (max 1000 characters), none on hidden reviews; optional `PATCH`/`DELETE` by the moderator who wrote it. The reply text and dates are shown in `GET /api/hotels/:id/reviews`; the moderator's identity is not. |
+| In review | `fix/HTL-22-active-pending-holds` | HTL-22 moderator list: active PENDING holds are shown (status PENDING = pending payment); EXPIRED and ended-but-unswept holds are hidden (team leader decision below). |
 
 Anything still open is listed in section 7 and is not built until the owner agrees.
 
@@ -56,6 +57,7 @@ endpoints; each owner connects the exported method on their side.
   approach for both modules (section 7, question L2). Person 6 does not pick one alone.
 - The room availability contract is finalised with Lama before holds are built (PR 3).
 - Payment failure, expiry and refund behaviour is agreed with Omar before PRs 4 and 5.
+- **HTL-22 moderator reservations (Malak, 2026-11-10):** keep **active** PENDING holds visible in the moderator reservations list, clearly marked as pending payment (status `PENDING`). `listForHotel` lists CONFIRMED, COMPLETED and CANCELLED; PENDING only while `holdExpiresAt > now`; EXPIRED reservations and PENDING ones whose hold has already ended (not yet swept) are hidden. Lama's module and Malak's adapter are unchanged; the adapter already passes `status` through.
 
 ### Person 6 (student) decisions for `POST /api/hotel-bookings` (2026-11-08)
 

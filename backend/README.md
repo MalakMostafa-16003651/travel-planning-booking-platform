@@ -307,7 +307,7 @@ All routes need a login and role `USER` (shared `AuthGuard` and `RolesGuard`). A
 
 ## Itineraries, activities and budgeting
 
-`backend/src/itineraries` implements ITN-01, ITN-03, ITN-05, ITN-07, ITN-08, ITN-10, ITN-12, ITN-14, ITN-16, ITN-18, ITN-20, ITN-21, ITN-25 and ITN-26, plus the itinerary parts of ACC-11 and ACC-12. The interfaces it needs from other modules and the open questions are in the [itinerary contract proposal](../docs/requirements/itinerary-contract-proposal.md).
+`backend/src/itineraries` implements ITN-01, ITN-03, ITN-05, ITN-07, ITN-08, ITN-10, ITN-12, ITN-14, ITN-16, ITN-18, ITN-20, ITN-21, ITN-25 and ITN-26, the optional ITN-27 bonus (hotel bookings; flights pending), plus the itinerary parts of ACC-11 and ACC-12. The interfaces it needs from other modules and the open questions are in the [itinerary contract proposal](../docs/requirements/itinerary-contract-proposal.md).
 
 | Method | Endpoint | Who | Result |
 | --- | --- | --- | --- |
@@ -348,6 +348,8 @@ All routes need a login and role `USER` (shared `AuthGuard` and `RolesGuard`). A
 
 **Flights and hotels (ITN-25, ITN-26).** The itinerary derives the city and dates and passes them to the Hotels search (HTL-11, HTL-12) and the Flights search (FLT-11, FLT-12, FLT-15). The hotel search is connected to `HotelsService.search`. The flight search is connected to `FlightsService.searchForItinerary`, which searches every airport of the destination city.
 
+**Linked bookings (ITN-27, optional bonus).** `POST /api/itineraries/:id/bookings` with `{ type, bookingId, dayId }` links one of the owner's own CONFIRMED or COMPLETED bookings to a day; `DELETE /api/itineraries/:id/bookings/:linkedBookingId` unlinks it (the booking itself is untouched). A hotel day must be a night of the stay (check-in ≤ day < check-out); a flight day must be its local departure date. Only the reference is stored: price and status are read live through `HotelBookingsService.getMine`, so a later cancellation shows as CANCELLED and counts 0. In the owner's budget summary, hotels count as ACCOMMODATION on their day and flights add to that day's transport. Links are owner-only (hidden from other viewers, admins included, and never cloned), removed with their day, and limited to 20 per itinerary. Linking flights returns 503 until Person 4 confirms `FlightBookingsService.getMine` as the interface. Details: [ITN-27 proposal](../docs/requirements/itn-27-linked-bookings-proposal.md).
+
 For a manual Swagger check: log in, create an itinerary, add days in Cairo, Cairo and London, then reorder them and confirm day numbers, dates and `cityGroups` follow. Add budget entries in EGP and USD and call `budget-summary?currency=EUR`. Make the itinerary PUBLIC, log in as a second user, then search for it and clone it.
 
 ## Hotel profiles
@@ -370,7 +372,7 @@ payment confirmation, cancellation or account-deactivation eligibility.
 | PATCH | `/api/hotels/:id` | assigned HOTEL_MODERATOR | Edit the moderator's own hotel. `:id` must match their `moderatorassignments` record, the same adapter pattern `AirlinesService.getAssignedAirlineId` uses, with `hotelId` in place of `airlineId`. A mismatched or missing assignment returns 404/403 the same way `FlightsService.getOwnedScheduledFlight` hides another airline's flight. |
 | POST | `/api/hotels/:id/rooms` | assigned HOTEL_MODERATOR | Add a room (name, capacity, `pricePerNight` in integer minor units) to the moderator's own hotel. |
 | PATCH | `/api/hotels/:id/rooms/:roomId` | assigned HOTEL_MODERATOR | Edit a room. 404 if the room does not exist or does not belong to the caller's own hotel. |
-| DELETE | `/api/hotels/:id/rooms/:roomId` | assigned HOTEL_MODERATOR | Soft-deactivates the room (`isActive: false`, 204 No Content) rather than removing the document, so a room referenced by a past/eventual booking keeps a valid id. |
+| DELETE | `/api/hotels/:id/rooms/:roomId` | assigned HOTEL_MODERATOR | Soft-deactivates the room (`isActive: false`, 204 No Content) rather than removing the document, so a room referenced by a past/eventual booking keeps a valid id. 409 if the room has an active reservation (Osama's `HotelBookingsService.roomHasActiveReservations`: an unexpired hold or a confirmed stay not yet checked out) — the check and the write share one transaction, so a hold cannot be created in between. |
 | POST | `/api/hotels/:id/rooms/:roomId/availability` | assigned HOTEL_MODERATOR | Block a `startDate`/`endDate` range (half-open: `endDate` is checkout) for one room. 409 if it overlaps an existing blocked or booked range. |
 | PATCH | `/api/hotels/:id/rooms/:roomId/availability` | assigned HOTEL_MODERATOR | Edit a blocked range's dates (`blockedRangeId` + new `startDate`/`endDate`), or unblock it (`blockedRangeId` + `remove: true`). |
 | GET | `/api/hotels/:id/availability` | assigned HOTEL_MODERATOR | Every active room's blocked/booked ranges, optionally windowed by `from`/`to`. |
