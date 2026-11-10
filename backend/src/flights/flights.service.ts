@@ -1,5 +1,3 @@
-
-
 import {BadRequestException,ConflictException,ForbiddenException,Injectable,Logger,NotFoundException,OnModuleInit,ServiceUnavailableException,} from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, QueryFilter, Types } from 'mongoose';
@@ -677,7 +675,12 @@ async onModuleInit(): Promise<void> {
       departureAirportCode: from, arrivalAirportCode: criteria.departureAirportCode, departureDate: criteria.returnDate!, roundTrip: false,
       adults, children, infants, cabinClass,
     } as FlightSearchDto)))).flat().sort(byDeparture);
-    const validReturn = returning.filter((ret) => outbound.some((out) => Date.parse(ret.departureAtUtc) > Date.parse(out.arrivalAtUtc)));
+    // ITN-26 R2: keep a return leg only if some outbound lands where it departs, departs where it lands,
+    // and arrives before the return leaves. Every suggested pair then satisfies the booking rule.
+    const validReturn = returning.filter((ret) => outbound.some((out) =>
+      out.arrivalAirport.code === ret.departureAirport.code
+      && out.departureAirport.code === ret.arrivalAirport.code
+      && Date.parse(ret.departureAtUtc) > Date.parse(out.arrivalAtUtc)));
     return { outbound: this.paginate(outbound, criteria.page), return: this.paginate(validReturn, criteria.page) };
   }
 
