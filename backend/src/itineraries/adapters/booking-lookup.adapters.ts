@@ -1,4 +1,5 @@
-import { Injectable, ServiceUnavailableException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { FlightBookingsService } from '../../flight-bookings/flight-bookings.service';
 import { HotelBookingsService } from '../../hotel-bookings/hotel-bookings.service';
 import { ItineraryBookingsPort, LinkableBooking } from '../ports/itinerary-bookings.port';
 
@@ -27,13 +28,33 @@ export class HotelBookingLookupAdapter implements ItineraryBookingsPort {
 }
 
 /**
- * Temporary binding until Person 4 (Ismail) confirms FlightBookingsService.getMine as the
- * interface (see docs/requirements/itn-27-linked-bookings-proposal.md). Replace this binding
- * in ItinerariesModule; nothing else changes.
+ * ITN-27: reads one of the user's flight bookings through FlightBookingsService.getMine
+ * (Person 4). Read-only; getMine returns 404 for another user's booking. totalAmount is USD
+ * minor units (PAY-04). The link day is the local departure date of the first segment, in
+ * that airport's IANA time zone.
  */
 @Injectable()
-export class PendingFlightBookingLookupAdapter implements ItineraryBookingsPort {
-  async getOwnBooking(): Promise<LinkableBooking> {
-    throw new ServiceUnavailableException('Linking flight bookings is not available yet');
+export class FlightBookingLookupAdapter implements ItineraryBookingsPort {
+  constructor(private readonly flightBookings: FlightBookingsService) {}
+
+  async getOwnBooking(bookingId: string, userId: string): Promise<LinkableBooking> {
+    const booking = await this.flightBookings.getMine(bookingId, userId);
+    const segments = [...booking.segments].sort((a, b) => a.departureAt.getTime() - b.departureAt.getTime());
+    const first = segments[0];
+    return {
+      status: booking.status,
+      amountMinor: booking.totalAmount,
+      currency: booking.currency,
+      ...(booking.bookingReference ? { bookingReference: booking.bookingReference } : {}),
+      label: segments.map((segment) => `${segment.flightNumber} ${segment.departureAirportCode}-${segment.arrivalAirportCode}`).join(', '),
+      startDate: localDate(first.departureAt, first.departureTimeZone),
+    };
   }
+}
+
+/** YYYY-MM-DD of an instant in an IANA time zone (e.g. 2026-12-20T23:30Z in Africa/Cairo is 2026-12-21). */
+export function localDate(instant: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(instant);
+  const part = (type: string) => parts.find((candidate) => candidate.type === type)!.value;
+  return `${part('year')}-${part('month')}-${part('day')}`;
 }
