@@ -80,26 +80,27 @@ export class HotelsService {
 
   async create(input: CreateHotelDto, adminId: string): Promise<Hotel> {
     const city = await this.references.resolveCity(input.city, input.countryCode);
-    const hotel = await this.hotels.create({
-      name: input.name.trim(),
-      city: city.name,
-      countryCode: city.countryCode,
-      address: input.address.trim(),
-      description: input.description ?? null,
-      isActive: true,
-      checkInTime: '14:00',
-      checkOutTime: '11:00',
-      cancellationTiers: [],
-      photos: [],
+    return this.connection.transaction(async (session) => {
+      const [hotel] = await this.hotels.create([{
+        name: input.name.trim(),
+        city: city.name,
+        countryCode: city.countryCode,
+        address: input.address.trim(),
+        description: input.description ?? null,
+        isActive: true,
+        checkInTime: '14:00',
+        checkOutTime: '11:00',
+        cancellationTiers: [],
+        photos: [],
+      }], { session });
+      await this.auditLogs.log({
+        adminId,
+        action: AuditAction.HOTEL_CREATED,
+        targetType: AuditTargetType.HOTEL,
+        targetId: hotel._id.toString(),
+      }, session);
+      return hotel;
     });
-    // GEN-07: an audit failure is reported rather than hidden, as in Person 2's admin services.
-    await this.auditLogs.log({
-      adminId,
-      action: AuditAction.HOTEL_CREATED,
-      targetType: AuditTargetType.HOTEL,
-      targetId: hotel._id.toString(),
-    });
-    return hotel;
   }
 
   /** HTL-02. 404 hides an inactive hotel from everyone except its assigned moderator and admins. */
