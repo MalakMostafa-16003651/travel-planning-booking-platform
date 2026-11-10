@@ -7,6 +7,8 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import {Airline,AirlineSchema,} from '../airlines/schemas/airline.schema';
 import { Airport, AirportSchema,} from '../airports/schemas/airport.schema';
 import { ItineraryFlightSearchAdapter } from './adapters/itinerary-flight-search.adapter';
+import { FlightPassengerExportController } from './flight-passenger-export.controller';
+import { FlightPassengerExportService } from './flight-passenger-export.service';
 import { FlightsController } from './flights.controller';
 import { FlightsService } from './flights.service';
 import { FlightsMaintenanceService } from './flights-maintenance.service';
@@ -30,12 +32,14 @@ import {Flight,FlightSchema,} from './schemas/flight.schema';
 
   controllers: [
     FlightsController,
+    FlightPassengerExportController,
   ],
 
   providers: [
     FlightsService,
     FlightsMaintenanceService,
     ItineraryFlightSearchAdapter,
+    FlightPassengerExportService,
   ],
 
   exports: [
