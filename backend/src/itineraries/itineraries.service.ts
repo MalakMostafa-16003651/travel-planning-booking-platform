@@ -596,6 +596,7 @@ export class ItinerariesService {
    */
   async listPublicByAuthor(authorId: string, page = 1): Promise<ItineraryPageDto> {
     if (!Types.ObjectId.isValid(authorId)) return pageOf([], page, 0);
+    authorId = new Types.ObjectId(authorId).toString();
     const statuses = await this.accountStatuses.getAccountStatuses([authorId]);
     if (!isVisibleStatus(statuses.get(authorId))) return pageOf([], page, 0);
     const filter: QueryFilter<Itinerary> = { userId: new Types.ObjectId(authorId), visibility: ItineraryVisibility.PUBLIC, isHidden: { $ne: true } };
