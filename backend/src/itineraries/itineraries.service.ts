@@ -206,6 +206,7 @@ export class ItinerariesService {
     assertTimes(input.startTime, input.endTime);
     const itinerary = await this.findOwned(itineraryId, userId);
     const day = findDay(itinerary, dayId);
+    if (input.attractionId) await this.assertAttraction(input.attractionId);
     const cost = await this.activityCost(input, itinerary.currency);
     if (day.activities.length >= MAX_ACTIVITIES_PER_DAY) {
       throw new ConflictException(`A day can have at most ${MAX_ACTIVITIES_PER_DAY} activities`);
@@ -216,6 +217,7 @@ export class ItinerariesService {
 
   async updateActivity(activityId: string, userId: string, input: UpdateActivityDto): Promise<ItineraryDto> {
     const { itinerary, activity } = await this.findOwnedActivity(activityId, userId);
+    if (input.attractionId) await this.assertAttraction(input.attractionId);
     const cost = await this.activityCost({ cost: input.cost ?? activity.cost, currency: input.currency ?? activity.currency }, itinerary.currency);
     const next = { startTime: activity.startTime, endTime: activity.endTime, ...definedOnly(input) };
     assertTimes(next.startTime, next.endTime);
@@ -879,6 +881,13 @@ export class ItinerariesService {
     const visible = ids.filter((id) => id === ownerId || isVisibleStatus(statuses.get(id)));
     const names = visible.length > 0 ? await this.authorNames.getDisplayNames(visible) : new Map<string, string>();
     return new Map(ids.map((id) => [id, names.get(id) ?? DELETED_USER_NAME]));
+  }
+
+  /** PDF 5.1: an activity may reference only an attraction from the shared seeded catalog (Malak, PR #97). */
+  private async assertAttraction(attractionId: string): Promise<void> {
+    if (!(await this.references.findAttraction(attractionId))) {
+      throw fieldError('attractionId', `Unknown attraction ${attractionId}. Choose one from GET /api/attractions`);
+    }
   }
 
   private async assertCurrency(code: string, field: string): Promise<string> {

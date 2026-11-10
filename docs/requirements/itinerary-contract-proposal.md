@@ -104,8 +104,12 @@ PDF section 5.1 lists **attractions** among the official reference datasets. Agr
   `null`.
 - **Person 7, after that PR is merged and the catalog is seeded:** validate `Activity.attractionId`
   on create and update with `findAttraction`, returning 400 for an unknown id.
-- No separate attractions catalog is added in the itinerary module. Until the handoff,
-  `attractionId` stays optional free text (1 to 64 characters) and is not validated.
+- No separate attractions catalog is added in the itinerary module.
+- **Done (2026-11-10):** Malak's catalog is merged (PR #97) and seeded on Atlas, with official ids
+  `att-1` to `att-8`. `addActivity` and `updateActivity` now check `attractionId` with
+  `ReferenceDataService.findAttraction` (the `references` instance the module already injects)
+  and return 400 for an unknown id. `attractionId` stays optional. Existing activity records are
+  not rewritten.
 
 ## Moderation hooks for administrators (GEN-09, GEN-10, with Arwa)
 

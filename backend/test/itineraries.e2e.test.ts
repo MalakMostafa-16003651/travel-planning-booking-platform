@@ -317,6 +317,34 @@ describe('Itineraries, activities and budgeting', { concurrency: false }, () => 
   });
 
   describe('ITN-10/ITN-12 activities and images', () => {
+    it('accepts only attractions from the shared catalog on create and update', async () => {
+      const id = await createItinerary();
+      const dayId = (await addDay(id, 'Cairo')).days[0].dayId;
+      const activities = `/api/itineraries/${id}/days/${dayId}/activities`;
+
+      const created = (await http().post(activities).set('Cookie', alice)
+        .send({ title: 'Pyramids', attractionId: 'att-1' }).expect(201)).body.days[0].activities[0];
+      assert.equal(created.attractionId, 'att-1');
+      await http().post(activities).set('Cookie', alice).send({ title: 'Activity without an attraction' }).expect(201);
+
+      const unknown = await http().post(activities).set('Cookie', alice).send({ title: 'Somewhere', attractionId: 'att-999' }).expect(400);
+      assert.match(unknown.body.errors.attractionId[0], /Unknown attraction att-999/);
+      // A MongoDB _id is not an attraction id.
+      await http().post(activities).set('Cookie', alice).send({ title: 'Somewhere', attractionId: new Types.ObjectId().toString() }).expect(400);
+      assert.equal((await http().get(`/api/itineraries/${id}`).set('Cookie', alice).expect(200)).body.days[0].activities.length, 2, 'nothing saved');
+
+      const activityPath = `/api/activities/${created.activityId}`;
+      const updated = (await http().patch(activityPath).set('Cookie', alice).send({ attractionId: 'att-3' }).expect(200)).body;
+      assert.equal(updated.days[0].activities[0].attractionId, 'att-3');
+      await http().patch(activityPath).set('Cookie', alice).send({ attractionId: 'nope' }).expect(400);
+      const after = (await http().get(`/api/itineraries/${id}`).set('Cookie', alice).expect(200)).body;
+      assert.equal(after.days[0].activities[0].attractionId, 'att-3', 'a rejected update changes nothing');
+      // Updating other fields of an activity keeps working.
+      await http().patch(activityPath).set('Cookie', alice).send({ title: 'British Museum visit' }).expect(200);
+      // Another user's activity is still "not found", before the attraction is checked.
+      await http().patch(activityPath).set('Cookie', bob).send({ attractionId: 'nope' }).expect(404);
+    });
+
     it('adds, updates and deletes activities with time validation', async () => {
       const id = await createItinerary();
       const dayId = (await addDay(id, 'Cairo')).days[0].dayId;
