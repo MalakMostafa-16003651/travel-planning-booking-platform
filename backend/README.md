@@ -352,6 +352,8 @@ All routes need a login and role `USER` (shared `AuthGuard` and `RolesGuard`). A
 
 **Read-only views for the blog (BLG-12, BLG-13).** `ItinerariesService.listPublicByAuthor(authorId, page)` and `getPublicSummary(itineraryId, authorId?)` return public itinerary summaries with the same visibility rules as public search (PUBLIC only, deactivated or missing authors hidden, summary fields only). See the [itinerary contract](../docs/requirements/itinerary-contract-proposal.md).
 
+**Moderation hooks (GEN-09, GEN-10).** `ItinerariesService.itineraryExists`, `setItineraryHidden` and `adminDeleteItinerary` are for the reports module. Only PUBLIC itineraries can be reported. A hidden itinerary is shown only to its owner (flagged `isHidden`), and only an administrator can unhide it.
+
 For a manual Swagger check: log in, create an itinerary, add days in Cairo, Cairo and London, then reorder them and confirm day numbers, dates and `cityGroups` follow. Add budget entries in EGP and USD and call `budget-summary?currency=EUR`. Make the itinerary PUBLIC, log in as a second user, then search for it and clone it.
 
 ## Hotel profiles
