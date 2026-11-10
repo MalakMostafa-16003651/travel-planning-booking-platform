@@ -1,6 +1,6 @@
-import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, QueryFilter, Types } from 'mongoose';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { InjectConnection, InjectModel } from '@nestjs/mongoose';
+import { Connection, Model, QueryFilter, Types } from 'mongoose';
 import { AuditAction, AuditTargetType } from '../audit-logs/audit-log.enums';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { AccountStatus } from '../common/enums/account-status.enum';
@@ -21,10 +21,9 @@ function escapeRegex(text: string): string {
 
 @Injectable()
 export class AdminAccountsService {
-  private readonly logger = new Logger(AdminAccountsService.name);
-
   constructor(
     @InjectModel(User.name) private readonly users: Model<UserDocument>,
+    @InjectConnection() private readonly connection: Connection,
     private readonly auditLogs: AuditLogsService,
     private readonly notifications: NotificationsService,
   ) {}
@@ -60,43 +59,37 @@ export class AdminAccountsService {
 
   private async changeStatus(adminId: string, accountId: string, from: AccountStatus, to: AccountStatus, reason?: string): Promise<AccountDto> {
     const _id = new Types.ObjectId(accountId);
-    // One atomic update: only a non-admin account in the expected status changes, so two
-    // admins acting at once cannot both succeed and an ADMIN can never be suspended.
-    const updated = await this.users.findOneAndUpdate(
-      { _id, role: { $ne: UserRole.ADMIN }, status: from },
-      { $set: { status: to } },
-      { returnDocument: 'after', projection: { name: 1, email: 1, role: 1, status: 1, createdAt: 1 } },
-    ).lean().exec();
-
-    if (!updated) {
-      const current = await this.users.findById(_id, { role: 1, status: 1 }).lean().exec();
-      if (!current) throw new NotFoundException('Account not found');
-      if (current.role === UserRole.ADMIN) throw new BadRequestException('Administrator accounts cannot be suspended or reactivated');
-      throw new ConflictException(`Account is ${current.status}, not ${from}`);
-    }
-
-    const suspended = to === AccountStatus.SUSPENDED;
-    // GEN-07: the action is recorded; an audit failure is reported rather than hidden.
-    await this.auditLogs.log({
-      adminId,
-      action: suspended ? AuditAction.ACCOUNT_SUSPENDED : AuditAction.ACCOUNT_REACTIVATED,
-      targetType: AuditTargetType.USER,
-      targetId: accountId,
-      details: reason,
-    });
-    // GEN-01: a failed notification must not undo a status change that has already happened.
-    try {
+    return this.connection.transaction(async (session) => {
+      // A concurrent winner forces a transaction retry before the expected-state check.
+      const updated = await this.users.findOneAndUpdate(
+        { _id, role: { $ne: UserRole.ADMIN }, status: from },
+        { $set: { status: to } },
+        { returnDocument: 'after', projection: { name: 1, email: 1, role: 1, status: 1, createdAt: 1 }, session },
+      ).lean().exec();
+      if (!updated) {
+        const current = await this.users.findById(_id, { role: 1, status: 1 }).session(session).lean().exec();
+        if (!current) throw new NotFoundException('Account not found');
+        if (current.role === UserRole.ADMIN) throw new BadRequestException('Administrator accounts cannot be suspended or reactivated');
+        throw new ConflictException(`Account is ${current.status}, not ${from}`);
+      }
+      const suspended = to === AccountStatus.SUSPENDED;
+      await this.auditLogs.log({
+        adminId,
+        action: suspended ? AuditAction.ACCOUNT_SUSPENDED : AuditAction.ACCOUNT_REACTIVATED,
+        targetType: AuditTargetType.USER,
+        targetId: accountId,
+        details: reason,
+      }, session);
+      // This persisted inbox entry joins the same database commit; no external delivery is involved.
       await this.notifications.notify({
         userId: accountId,
         type: suspended ? NotificationType.ACCOUNT_SUSPENDED : NotificationType.ACCOUNT_REACTIVATED,
         message: suspended
           ? 'Your account has been suspended by an administrator. Your existing bookings remain valid.'
           : 'Your account has been reactivated. You can log in again.',
-      });
-    } catch {
-      this.logger.error(`Could not notify account ${accountId} about its status change`);
-    }
-    return toDto(updated);
+      }, session);
+      return toDto(updated);
+    });
   }
 }
 

@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Header, Param, Patch, Query, Req, UseGuards } from '@nestjs/common';
-import { ApiBadRequestResponse, ApiConflictResponse, ApiCookieAuth, ApiForbiddenResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags, ApiUnauthorizedResponse } from '@nestjs/swagger';
+import { ApiBadRequestResponse, ApiConflictResponse, ApiCookieAuth, ApiForbiddenResponse, ApiInternalServerErrorResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags, ApiUnauthorizedResponse } from '@nestjs/swagger';
 import { AuthenticatedRequest, AuthGuard } from '../auth/auth.guard';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
@@ -34,9 +34,10 @@ export class AdminAccountsController {
   }
 
   @Patch(':id/suspend')
+  @ApiInternalServerErrorResponse({ type: ApiErrorDto, description: 'Status, audit or notification persistence failed; all changes are rolled back.' })
   @ApiOperation({
     summary: 'ACC-15/ACC-16: suspend a user or moderator',
-    description: 'ADMIN only. ACTIVE → SUSPENDED. The account cannot log in and its sessions stop working; bookings stay valid and content stays visible (ACC-16). Administrators cannot be suspended. Audited (GEN-07) and notified (GEN-01).',
+    description: 'ADMIN only. ACTIVE → SUSPENDED. The account cannot log in and its sessions stop working; bookings stay valid and content stays visible (ACC-16). Administrators cannot be suspended. Status, audit (GEN-07) and inbox notification (GEN-01) commit together; a failed write rolls back all three.',
   })
   @ApiOkResponse({ type: AccountDto })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'Invalid ID or reason, or the target is an administrator.' })
@@ -47,9 +48,10 @@ export class AdminAccountsController {
   }
 
   @Patch(':id/reactivate')
+  @ApiInternalServerErrorResponse({ type: ApiErrorDto, description: 'Status, audit or notification persistence failed; all changes are rolled back.' })
   @ApiOperation({
     summary: 'ACC-15/ACC-16: reactivate a suspended user or moderator',
-    description: 'ADMIN only. SUSPENDED → ACTIVE. Self-deactivated accounts (ACC-12) are not reactivated here. Audited (GEN-07) and notified (GEN-01).',
+    description: 'ADMIN only. SUSPENDED → ACTIVE. Self-deactivated accounts (ACC-12) are not reactivated here. Status, audit (GEN-07) and inbox notification (GEN-01) commit together; a failed write rolls back all three.',
   })
   @ApiOkResponse({ type: AccountDto })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'Invalid ID or reason, or the target is an administrator.' })

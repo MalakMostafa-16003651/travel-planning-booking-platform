@@ -1,20 +1,12 @@
 import { Module } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
 import { AuthModule } from '../auth/auth.module';
-import { UsersModule } from '../users/users.module';
 import { AuditLogsController } from './audit-logs.controller';
-import { AuditLogsService } from './audit-logs.service';
-import { AuditLog, AuditLogSchema } from './schemas/audit-log.schema';
+import { AuditLogsPersistenceModule } from './audit-logs-persistence.module';
 
 @Module({
-  imports: [
-    AuthModule,
-    UsersModule,
-    MongooseModule.forFeature([{ name: AuditLog.name, schema: AuditLogSchema }]),
-  ],
+  imports: [AuthModule, AuditLogsPersistenceModule],
   controllers: [AuditLogsController],
-  providers: [AuditLogsService],
-  // GEN-07: the admin modules (and any later admin action) record through AuditLogsService.log().
-  exports: [AuditLogsService],
+  // Keep existing consumers importing AuditLogsModule; the shared writer has one provider instance.
+  exports: [AuditLogsPersistenceModule],
 })
 export class AuditLogsModule {}

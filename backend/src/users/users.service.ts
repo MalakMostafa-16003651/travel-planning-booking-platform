@@ -279,7 +279,7 @@ export class UsersService implements OnModuleInit {
     return result.matchedCount === 1;
   }
 
-  async setTemporaryPassword(userId: string, newHash: string): Promise<boolean> {
+  async setTemporaryPassword(userId: string, newHash: string, session?: ClientSession): Promise<boolean> {
     const result = await this.users.updateOne(
       {
         _id: userId,
@@ -296,7 +296,7 @@ export class UsersService implements OnModuleInit {
           updatedAt: '$$NOW',
         },
       }],
-      { updatePipeline: true, timestamps: false, upsert: false },
+      { updatePipeline: true, timestamps: false, upsert: false, session },
     ).exec();
     return result.matchedCount === 1;
   }
