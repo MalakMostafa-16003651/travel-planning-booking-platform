@@ -1,6 +1,6 @@
 # Hotel Bookings and Reviews: shared contract
 
-Status (updated 2026-11-08): **partly implemented; the remaining parts wait on other owners.**
+Status (updated 2026-11-10): **the mandatory booking lifecycle is implemented; one safety item and the optional HTL-26 remain.**
 Person 6 (Osama, 16005523) owns `backend/src/hotel-bookings` and `backend/src/reviews`. The plan,
 endpoints and integration approach were approved by the team leader on 2026-11-08 (section 2). The schemas
 and exported methods below are the integration surface for Lama (Person 5), Omar (Person 8), Arwa
@@ -12,8 +12,9 @@ and exported methods below are the integration surface for Lama (Person 5), Omar
 | Merged | [#51](https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/pull/51) | `HotelBooking` schema, `GET /api/hotel-bookings` and `GET /api/hotel-bookings/:id` (owner only), `listForHotel` (HTL-22, mapped by Malak's adapter from #55) and `listForAdmin` (ACC-17, connected by Arwa in #53). |
 | Merged | [#52](https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/pull/52) | `Review` schema, `POST /api/hotel-bookings/:id/review`, `PATCH`/`DELETE /api/reviews/:id`, `GET /api/hotels/:id/reviews` with average and count on read, the GEN-09/10 hooks and `getRatingStats`. |
 | Merged | [#54](https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/pull/54) | UTC "today" (L2) through `HotelBookingsClock`, UPCOMING/PAST groups, the CONFIRMED → COMPLETED sweep (GEN-11) and `hasUpcomingConfirmedBookings` (ACC-12). |
-| In review | [#56](https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/pull/56) | `POST /api/hotel-bookings`: validated multi-room request, one-transaction 10-minute holds with 409 on any overlap, and the expiry sweep (HTL-16, HTL-18). |
-| Waiting for Omar | PR 4, PR 5 | Payment confirmation, notification and PaymentIntent cancellation on expiry (HTL-17); cancellation quote, cancel and refund (HTL-21). See questions O1-O6. |
+| Merged | [#56](https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/pull/56) | `POST /api/hotel-bookings`: validated multi-room request, one-transaction 10-minute holds with 409 on any overlap, and the expiry sweep (HTL-16, HTL-18). |
+| Merged (done by Malak) | [#66](https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/pull/66) | Planned PR 4 and PR 5, implemented by the team leader (Malak) inside `hotel-bookings` with her explicit authorization, wired to Omar's `BookingPaymentsAdapter`: verified-payment confirmation, reference and notification (HTL-17); PaymentIntent cancellation after expiry, with retries (HTL-18/PAY-01); cancellation quote, quoted cancel, room release, refund with retries and notification (HTL-21/PAY-03). See her dated sections at the end of this document. |
+| Open | — | Deactivation safety: hotel deactivation can race hold creation, and room deactivation does not yet protect pending/confirmed rooms. A fix is proposed and waits for the student's approval. |
 | Optional, last | PR 6 | HTL-26 review replies (bonus). |
 
 Anything still open is listed in section 7 and is not built until the owner agrees.
