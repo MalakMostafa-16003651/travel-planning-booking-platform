@@ -139,3 +139,13 @@ adminDeleteItinerary(itineraryId: string): Promise<void>                 // 404 
 ### Session consumer adoption - 2026-11-10
 
 The current GEN-13/BON-01 session branch imports ItinerariesModule into BlogModule and uses listPublicByAuthor/getPublicSummary for author pages, attachment validation and attachment responses. After synchronizing PR81, those calls automatically respect isHidden. A real HTTP integration regression covers hide/unhide through Kiki's service and checks public, owner and admin blog reads plus rejection of a new hidden attachment. This closes the blog-reader follow-up on this feature branch; Arwa's report-routing/atomic audit integration remains separate. No changes to Kiki's moderation methods or private-image rules were made.
+
+## ITN-26 R2: return legs must reverse an outbound route (2026-11-10)
+
+Gamila implemented option A in `FlightsService.searchForItinerary` (branch
+`fix/ITN-26-return-leg-matching-airports`): a return leg is kept only if some outbound flight
+lands at its departure airport, departed from its arrival airport, and lands before the return
+leaves. Every suggested round-trip pair therefore satisfies Ismail's booking rule ("the return
+flight must reverse the outbound route"), which is unchanged. Person 7 updated the two ITN-26 e2e
+tests that assumed returns from any city airport (`itinerary-flight-search.e2e.test.ts`).
+
