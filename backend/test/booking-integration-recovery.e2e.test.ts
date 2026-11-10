@@ -1,3 +1,5 @@
+import { FavoritesModule } from '../src/favorites/favorites.module';
+import { ItineraryExportsModule } from '../src/itinerary-exports/itinerary-exports.module';
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import { getModelToken } from '@nestjs/mongoose';
@@ -72,7 +74,7 @@ describe('GEN-13 approved booking gates and payment recovery', { concurrency: fa
   const providerCancel = (flightId: Types.ObjectId, m: Session) => fixture.http().post('/api/flights/' + flightId + '/cancel').set('Cookie', m.cookie);
 
   before(async () => {
-    await fixture.start('booking-integration-recovery', undefined, TEST_STRIPE_CONFIG, [AdminModule, ItinerariesModule, BlogModule]);
+    await fixture.start('booking-integration-recovery', undefined, TEST_STRIPE_CONFIG, [AdminModule, ItinerariesModule, BlogModule, FavoritesModule, ItineraryExportsModule]);
     hotels = fixture.app.get(getModelToken(Hotel.name)); rooms = fixture.app.get(getModelToken(Room.name)); inventory = fixture.app.get(RoomInventoryAdapter);
   }, { timeout: 120_000 });
   after(() => fixture.stop());
@@ -254,7 +256,13 @@ describe('GEN-13 approved booking gates and payment recovery', { concurrency: fa
     for (const key of ['linkedBookings', 'transportCosts', 'activities', 'budgets']) assert.equal(summary[key], undefined);
     const attached = await fixture.http().post('/api/posts').set('Cookie', owner.cookie).send({ title: 'Shared moderation', content: 'Public itinerary attachment.', status: 'PUBLISHED', itineraryId: created.body.itineraryId }).expect(201);
     assert.equal(attached.body.itinerary.itineraryId, created.body.itineraryId);
+    await fixture.http().post('/api/favorites').set('Cookie', owner.cookie).send({ itineraryId: created.body.itineraryId }).expect(201);
     await service.setItineraryHidden(created.body.itineraryId, true);
+    const favorite = (await fixture.http().get('/api/favorites').set('Cookie', owner.cookie).expect(200)).body.items[0];
+    assert.equal(favorite.available, false); assert.equal(favorite.itinerary, undefined);
+    const pdf = await fixture.http().get('/api/itineraries/' + created.body.itineraryId + '/pdf').set('Cookie', owner.cookie).expect(200);
+    assert.match(pdf.headers['content-type'], /application\/pdf/);
+    await fixture.http().get('/api/itineraries/' + created.body.itineraryId + '/pdf').set('Cookie', admin.cookie).expect(404);
     assert.equal((await fixture.http().get('/api/authors/' + owner.userId).expect(200)).body.itineraries.total, 0);
     for (const cookie of [undefined, owner.cookie, admin.cookie]) {
       const request = fixture.http().get('/api/posts/' + attached.body.postId);
