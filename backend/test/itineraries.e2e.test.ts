@@ -755,6 +755,22 @@ describe('Itineraries, activities and budgeting', { concurrency: false }, () => 
       assert.equal((await itinerariesService.listPublicByAuthor('not-an-id')).total, 0);
     });
 
+    it('treats an uppercase author or itinerary id like its lowercase form (R8)', async () => {
+      const aliceId = await userIdOf('alice@example.com');
+      const id = await createItinerary(alice, { title: 'Nile cruise', visibility: 'PUBLIC' });
+
+      const lower = await itinerariesService.listPublicByAuthor(aliceId);
+      const upper = await itinerariesService.listPublicByAuthor(aliceId.toUpperCase());
+      assert.equal(lower.total, 1);
+      assert.deepEqual(upper, lower);
+      assert.equal((await itinerariesService.getPublicSummary(id, aliceId.toUpperCase()))?.itineraryId, id);
+      assert.equal((await itinerariesService.getPublicSummary(id.toUpperCase(), aliceId))?.itineraryId, id);
+
+      // Deactivation still hides them whatever the case of the id.
+      await setStatus('alice@example.com', AccountStatus.DEACTIVATED);
+      assert.equal((await itinerariesService.listPublicByAuthor(aliceId.toUpperCase())).total, 0);
+    });
+
     it("shows a clone's deactivated original author as Deleted user", async () => {
       const sourceId = await createItinerary(bob, { title: 'Nile cruise', visibility: 'PUBLIC' });
       const clone = (await http().post(`/api/itineraries/${sourceId}/clone`).set('Cookie', alice).expect(201)).body;
