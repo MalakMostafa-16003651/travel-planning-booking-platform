@@ -4,7 +4,7 @@ import { IsEnum, IsMongoId, IsString, MaxLength, MinLength } from 'class-validat
 import { ReportTargetType } from '../report.enums';
 
 export class CreateReportDto {
-  @ApiProperty({ enum: ReportTargetType, description: 'ITINERARY becomes available once Person 7 adds hiding support.' })
+  @ApiProperty({ enum: ReportTargetType, description: 'Itineraries can be reported only while PUBLIC.' })
   @IsEnum(ReportTargetType, { message: 'Target type must be POST, COMMENT, REVIEW or ITINERARY' })
   targetType!: ReportTargetType;
 

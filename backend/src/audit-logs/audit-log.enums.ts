@@ -1,6 +1,10 @@
 /** GEN-07: admin actions that must be auditable. Agreed in docs/requirements/admin-contract-proposal.md. */
 export enum AuditAction {
   MODERATOR_CREATED = 'MODERATOR_CREATED',
+  /** For Person 3: an admin creates an airline (FLT-01). */
+  AIRLINE_CREATED = 'AIRLINE_CREATED',
+  /** For Person 5: an admin creates a hotel (HTL-01). */
+  HOTEL_CREATED = 'HOTEL_CREATED',
   PASSWORD_RESET = 'PASSWORD_RESET',
   ACCOUNT_SUSPENDED = 'ACCOUNT_SUSPENDED',
   ACCOUNT_REACTIVATED = 'ACCOUNT_REACTIVATED',
