@@ -67,3 +67,29 @@ GET /api/itineraries/:id/flights takes departureAirportCode, roundTrip, optional
 **Decision: option B (2026-11-09).** Gamila added `FlightsService.searchForItinerary(criteria)`, which takes the port's criteria unchanged. It runs the FLT-11 one-way search for each destination airport (and each return leg), merges and sorts by departure time, then paginates once (10 per page). One-way returns `{ items, page, pageSize, total }`; round trip returns `{ outbound, return }`, each paginated, keeping only returns that leave after an outbound arrival. FlightsModule exports `ItineraryFlightSearchAdapter`, and ItinerariesModule binds it with `{ provide: ITINERARY_FLIGHT_SEARCH, useExisting: ItineraryFlightSearchAdapter }`. The itinerary keeps its own validation (airports exist, departure differs from every destination, return date, passenger counts).
 
 Optional ITN-27/28 remain outside this work. Account deactivation itself and its booking-confirmation safeguards remain Person 1's separate ACC-12 task.
+
+## Read-only views exported to other modules (BLG-12, BLG-13)
+
+Added 2026-11-10 at Omar's offer, so the blog follows the itinerary visibility rules
+automatically instead of querying the `itineraries` collection directly. Import
+`ItinerariesModule` (it exports `ItinerariesService`); there is no circular import.
+
+```ts
+// BLG-12 author page: the author's PUBLIC itineraries, newest published first, page size 10.
+listPublicByAuthor(authorId: string, page?: number): Promise<ItineraryPageDto>
+
+// BLG-13 post attachment: one PUBLIC itinerary summary, or null. With authorId, it must belong
+// to that user (use it both to validate an attachment and to render it).
+getPublicSummary(itineraryId: string, authorId?: string): Promise<ItinerarySummaryDto | null>
+```
+
+Both apply the same rules as public search and viewing:
+
+- Only `PUBLIC` itineraries. Private ones return nothing, even for their owner.
+- An author who is `DEACTIVATED` or missing (ACC-12) gets an empty page, and their itinerary
+  summary is `null`. `SUSPENDED` authors stay visible.
+- Only summary fields are read. Activities, budgets and linked bookings never leave the module.
+- Clone attribution shows "Deleted user" for a deactivated or missing original author.
+- Invalid ids return an empty page or `null`, never an error.
+- A failed account-status lookup throws (fail closed), so it never grants access.
+
