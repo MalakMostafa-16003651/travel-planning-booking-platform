@@ -15,7 +15,7 @@ export class HotelReservationSummaryDto {
   @ApiProperty() checkIn!: string;
   @ApiProperty() checkOut!: string;
   @ApiProperty() guestCount!: number;
-  @ApiProperty({ enum: BookingStatus }) status!: BookingStatus;
+  @ApiProperty({ enum: BookingStatus, description: 'PENDING means pending payment: an unexpired hold not yet paid for.' }) status!: BookingStatus;
   @ApiProperty({ description: 'Frozen reservation total in integer minor units.' }) totalAmount!: number;
   @ApiProperty() currency!: string;
 }

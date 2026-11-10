@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Inject, Inj
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, Types } from 'mongoose';
 import { UserRole } from '../common/enums/user-role.enum';
+import { HotelBookingsService } from '../hotel-bookings/hotel-bookings.service';
 import { ReferenceDataService } from '../reference-data/reference-data.service';
 import { AvailableRoomsQueryDto } from './dto/available-rooms-query.dto';
 import { BlockRoomDatesDto } from './dto/block-room-dates.dto';
@@ -60,6 +61,7 @@ export class HotelsService {
     @InjectModel(RoomAvailability.name) private readonly roomAvailabilities: Model<RoomAvailability>,
     @InjectConnection() private readonly connection: Connection,
     private readonly references: ReferenceDataService,
+    private readonly hotelBookings: HotelBookingsService,
     @Inject(HOTEL_RESERVATIONS) private readonly reservations: HotelReservationsPort,
   ) {}
 
@@ -203,10 +205,20 @@ export class HotelsService {
     return updated;
   }
 
-  /** HTL-06. A soft deactivation, so a room referenced by a past/eventual booking keeps a valid id. */
+  /**
+   * HTL-06. A soft deactivation, so a room referenced by a past/eventual booking keeps a valid id.
+   * Refuses with 409 while the room has an active reservation (Osama's roomHasActiveReservations,
+   * PR #70): an unexpired PENDING hold, or a CONFIRMED stay that has not checked out yet. The check
+   * and the write run in one transaction so a hold cannot slip in between them.
+   */
   async deactivateRoom(moderatorId: string, hotelId: string, roomId: string): Promise<void> {
     const room = await this.getOwnRoom(moderatorId, hotelId, roomId);
-    await this.rooms.updateOne({ _id: room._id }, { $set: { isActive: false } }).exec();
+    await this.connection.transaction(async (session) => {
+      if (await this.hotelBookings.roomHasActiveReservations(room._id.toString(), session)) {
+        throw new ConflictException('This room has an active reservation and cannot be deactivated');
+      }
+      await this.rooms.updateOne({ _id: room._id }, { $set: { isActive: false } }, { session }).exec();
+    });
   }
 
   private static overlapFilter(startDate: string, endDate: string): Record<string, unknown> {

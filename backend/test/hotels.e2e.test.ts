@@ -92,7 +92,7 @@ describe('Hotels E2E', { concurrency: false }, () => {
     await Promise.all([
       users.deleteMany({}).exec(),
       sessions.deleteMany({}).exec(),
-      ...['hotels', 'rooms', 'roomavailabilities', 'moderatorassignments'].map((name) => connection.collection(name).deleteMany({})),
+      ...['hotels', 'rooms', 'roomavailabilities', 'moderatorassignments', 'hotelbookings'].map((name) => connection.collection(name).deleteMany({})),
     ]);
 
     adminCookie = await login('admin@example.com', UserRole.ADMIN);
@@ -308,6 +308,21 @@ describe('Hotels E2E', { concurrency: false }, () => {
       const stored = await connection.collection('rooms').findOne({ _id: new Types.ObjectId(room._id) });
       assert.ok(stored, 'the room document is kept, not removed');
       assert.equal(stored!.isActive, false);
+    });
+
+    it('refuses to deactivate a room with an active reservation (HTL-06, Osama\'s roomHasActiveReservations)', async () => {
+      const room = await createRoom();
+      const guest = await login('guest@example.com');
+      await http()
+        .post('/api/hotel-bookings')
+        .set('Cookie', guest)
+        .send({ hotelId, checkIn: '2030-06-01', checkOut: '2030-06-05', rooms: [{ roomId: room._id, adults: 1, childrenAges: [] }] })
+        .expect(201);
+
+      await http().delete(`/api/hotels/${hotelId}/rooms/${room._id}`).set('Cookie', moderatorCookie).expect(409);
+
+      const stored = await connection.collection('rooms').findOne({ _id: new Types.ObjectId(room._id) });
+      assert.equal(stored!.isActive, true, 'the room is not deactivated while the hold is active');
     });
 
     it('returns 404 for a room id that does not exist', async () => {
