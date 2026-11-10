@@ -8,6 +8,7 @@ import { HotelBookingsService } from '../hotel-bookings/hotel-bookings.service';
 import { HotelsService } from '../hotels/hotels.service';
 import { UsersService } from '../users/users.service';
 import { CreateReviewDto } from './dto/create-review.dto';
+import { ReviewReplyDto } from './dto/review-reply.dto';
 import { HotelReviewsPageDto, ReviewDto } from './dto/review-response.dto';
 import { UpdateReviewDto } from './dto/update-review.dto';
 import { Review, ReviewDocument } from './schemas/review.schema';
@@ -107,6 +108,52 @@ export class ReviewsService {
     };
   }
 
+  // HTL-26 (bonus): one reply per review by a HOTEL_MODERATOR assigned to the review's hotel.
+
+  /**
+   * 404 unknown review; 403 if the moderator is not assigned to that hotel (Person 5's
+   * HotelsService.getAssignedHotelId, reused); 409 if the review is hidden or already has a reply.
+   * The write is conditional on "visible and no reply yet", so concurrent replies store exactly one.
+   */
+  async reply(reviewId: string, input: ReviewReplyDto, moderatorId: string): Promise<ReviewDto> {
+    const review = await this.getForHotelModerator(reviewId, moderatorId);
+    if (review.isHidden) throw new ConflictException('A hidden review cannot be replied to');
+    if (review.reply) throw new ConflictException('This review already has a reply');
+    const replied = await this.reviews.findOneAndUpdate(
+      { _id: review._id, isHidden: false, reply: null },
+      { $set: { reply: { text: input.text, moderatorId: new Types.ObjectId(moderatorId), repliedAt: new Date() } } },
+      { returnDocument: 'after', runValidators: true },
+    ).exec();
+    if (!replied) {
+      const latest = await this.reviews.findById(review._id).exec();
+      if (!latest) throw new NotFoundException('Review not found');
+      throw new ConflictException(latest.isHidden ? 'A hidden review cannot be replied to' : 'This review already has a reply');
+    }
+    return this.toResponse(replied);
+  }
+
+  /** Optional HTL-26 extra: the moderator who wrote the reply edits it (still assigned to the hotel). */
+  async updateReply(reviewId: string, input: ReviewReplyDto, moderatorId: string): Promise<ReviewDto> {
+    await this.getOwnReply(reviewId, moderatorId);
+    const updated = await this.reviews.findOneAndUpdate(
+      { _id: reviewId, 'reply.moderatorId': new Types.ObjectId(moderatorId) },
+      { $set: { 'reply.text': input.text, 'reply.editedAt': new Date() } },
+      { returnDocument: 'after', runValidators: true },
+    ).exec();
+    if (!updated) throw new NotFoundException('Reply not found');
+    return this.toResponse(updated);
+  }
+
+  /** Optional HTL-26 extra: the moderator who wrote the reply removes it; the hotel may reply again. */
+  async removeReply(reviewId: string, moderatorId: string): Promise<void> {
+    await this.getOwnReply(reviewId, moderatorId);
+    const removed = await this.reviews.updateOne(
+      { _id: reviewId, 'reply.moderatorId': new Types.ObjectId(moderatorId) },
+      { $set: { reply: null } },
+    ).exec();
+    if (removed.modifiedCount === 0) throw new NotFoundException('Reply not found');
+  }
+
   // HTL-02/HTL-12 (Person 5 connects this): calculated on read, never stored on Hotel.
 
   /** Visible reviews only. Hotels without visible ratings are absent from the map. */
@@ -150,6 +197,23 @@ export class ReviewsService {
     return review;
   }
 
+  /** HTL-26: 404 unknown review; 403 unless the moderator's single assigned hotel is the review's hotel. */
+  private async getForHotelModerator(reviewId: string, moderatorId: string): Promise<ReviewDocument> {
+    const review = await this.reviews.findById(reviewId).exec();
+    if (!review) throw new NotFoundException('Review not found');
+    const assignedHotelId = await this.hotels.getAssignedHotelId(moderatorId);
+    if (!assignedHotelId.equals(review.hotelId)) throw new ForbiddenException('You can only reply to reviews of your own hotel');
+    return review;
+  }
+
+  /** HTL-26: the reply must exist (404) and belong to this moderator (403). */
+  private async getOwnReply(reviewId: string, moderatorId: string): Promise<ReviewDocument> {
+    const review = await this.getForHotelModerator(reviewId, moderatorId);
+    if (!review.reply) throw new NotFoundException('Reply not found');
+    if (review.reply.moderatorId.toString() !== moderatorId) throw new ForbiddenException('You can only change your own reply');
+    return review;
+  }
+
   private async toResponse(review: ReviewDocument): Promise<ReviewDto> {
     return this.shape(review, await this.users.getDisplayNames([review.userId.toString()]));
   }
@@ -164,6 +228,8 @@ export class ReviewsService {
       comment: review.comment ?? null,
       isHidden: review.isHidden,
       author: name === undefined ? { userId: null, name: DELETED_USER_NAME } : { userId: review.userId.toString(), name },
+      // HTL-26: the hotel's reply, without the moderator's identity.
+      reply: review.reply ? { text: review.reply.text, repliedAt: review.reply.repliedAt, editedAt: review.reply.editedAt } : null,
       createdAt: review.createdAt,
       updatedAt: review.updatedAt,
     };
