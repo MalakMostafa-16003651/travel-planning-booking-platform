@@ -1,3 +1,5 @@
+import { detectImageExtension } from '../common/files/image-type';
+
 /** Team agreement: blog post statuses. */
 export enum PostStatus {
   DRAFT = 'DRAFT',
@@ -26,10 +28,10 @@ export function escapeRegex(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/** GEN-08: JPG or PNG, decided by the file's first bytes, never by the client's filename or mimetype. */
+/** GEN-08: JPG or PNG, decided by the file's first bytes with the team's shared check (common/files/image-type). */
 export function detectImageType(buffer: Buffer): 'image/jpeg' | 'image/png' | null {
-  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'image/jpeg';
-  const png = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
-  if (buffer.length >= png.length && png.every((byte, index) => buffer[index] === byte)) return 'image/png';
+  const extension = detectImageExtension(buffer);
+  if (extension === 'jpg') return 'image/jpeg';
+  if (extension === 'png') return 'image/png';
   return null;
 }
