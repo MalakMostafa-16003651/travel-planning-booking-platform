@@ -280,7 +280,12 @@ export class HotelBookingsService {
           if (!owner || owner.status !== AccountStatus.ACTIVE || owner.role !== UserRole.USER
             || !await this.emailEligibility.canBook(booking.userId.toString(), session))
             throw new ConflictException('The booking account is no longer eligible');
-          await this.inventory.acquireBookingGate(booking.hotelId.toString(), booking.rooms.map(room => room.roomId.toString()), session);
+          try { await this.inventory.acquireBookingGate(booking.hotelId.toString(), booking.rooms.map(room => room.roomId.toString()), session); }
+          catch (error) {
+            // New holds use 404; an existing paid reservation losing eligibility is a conflict.
+            if (error instanceof NotFoundException) throw new ConflictException('The reserved hotel or rooms are no longer available');
+            throw error;
+          }
           const hotel = await this.inventory.getHotel(booking.hotelId.toString(), session);
           const rooms = await this.inventory.getRooms(booking.rooms.map(room => room.roomId.toString()), session);
           if (!hotel?.isActive || booking.checkIn < this.clock.today() || rooms.length !== booking.rooms.length
