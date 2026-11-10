@@ -129,8 +129,9 @@ adminDeleteItinerary(itineraryId: string): Promise<void>                 // 404 
   can. Admins get 404 like everyone else (ACC-11 keeps admins out of itinerary content); they act
   on the reported id.
 - **Delete:** removes the itinerary and its activity images.
-- **Arwa's side:** call these from `ContentModerationService` and remove the "not supported yet"
-  rejection for `ITINERARY`. No reports code was edited.
+- **Arwa's side: done (PR #90, merged).** `ContentModerationService` calls these three methods for
+  reports and direct moderation, and the "not supported yet" rejection for `ITINERARY` is gone.
+  Direct moderation first checks `itineraryExists`, so admins only act on public itineraries.
 - **Blog:** since commit `c10898b` (Malak, merged with PR #82) the blog uses `listPublicByAuthor` (author page)
   and `getPublicSummary` (validating and showing a post's itinerary) instead of reading the
   `itineraries` collection, so hidden itineraries are hidden there too.
