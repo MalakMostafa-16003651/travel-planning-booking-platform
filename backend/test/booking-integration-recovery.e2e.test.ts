@@ -261,7 +261,7 @@ describe('GEN-13 approved booking gates and payment recovery', { concurrency: fa
     const favorite = (await fixture.http().get('/api/favorites').set('Cookie', owner.cookie).expect(200)).body.items[0];
     assert.equal(favorite.available, false); assert.equal(favorite.itinerary, undefined);
     const pdf = await fixture.http().get('/api/itineraries/' + created.body.itineraryId + '/pdf').set('Cookie', owner.cookie).expect(200);
-    assert.match(pdf.headers['content-type'], /application\/pdf/);
+    assert.equal(pdf.headers['content-type'].split(';')[0], 'application/pdf');
     await fixture.http().get('/api/itineraries/' + created.body.itineraryId + '/pdf').set('Cookie', admin.cookie).expect(404);
     assert.equal((await fixture.http().get('/api/authors/' + owner.userId).expect(200)).body.itineraries.total, 0);
     for (const cookie of [undefined, owner.cookie, admin.cookie]) {
