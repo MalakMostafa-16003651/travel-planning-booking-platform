@@ -117,17 +117,8 @@ export class HotelBookingsService {
     });
     if (Object.keys(errors).length > 0) throw new BadRequestException({ message: 'Validation failed', errors });
 
-    // 404, like flight bookings ("Flight or cabin not found") and the hotel detail: an unknown or
-    // deactivated hotel (ACC-15), and an unknown or inactive room or a room of another hotel, do not exist
-    // for booking. Real input errors (dates, guests, capacity, repeated rooms) stay 400.
-    const hotel = await this.inventory.getHotel(input.hotelId);
-    if (!hotel || !hotel.isActive) throw new NotFoundException('Hotel not found');
-    const found = new Map((await this.inventory.getRooms(roomIds)).map((room) => [room._id.toString(), room]));
-    const missing = input.rooms.some((request) => {
-      const room = found.get(request.roomId.toLowerCase());
-      return !room || !room.hotelId.equals(hotel._id) || !room.isActive;
-    });
-    if (missing) throw new NotFoundException('Room not found in this hotel');
+    // 404 for what cannot be booked (see loadBookable); real input errors above and below stay 400.
+    const { hotel, found } = await this.loadBookable(input.hotelId, roomIds);
     const selected = input.rooms.map((request, index) => {
       const room = found.get(request.roomId.toLowerCase())!;
       const guests = request.adults + request.childrenAges.length;
@@ -156,6 +147,11 @@ export class HotelBookingsService {
     const holdExpiresAt = new Date(now.getTime() + HOTEL_BOOKING_HOLD_MS);
     const booking = await this.connection.transaction(async (session) => {
       await this.emailEligibility.assertCanBook(userId, session);
+      // Deactivation safety (ACC-15, HTL-06): re-read the hotel and every room with this transaction's
+      // session, so a hotel or room deactivated after the check above aborts the whole hold with 404 and
+      // nothing stays held. Lama's and Arwa's deactivations connect roomHasActiveReservations and
+      // releasePendingHoldsForHotel for the opposite order.
+      await this.loadBookable(input.hotelId, roomIds, session);
       for (const { room } of selected) {
         const held = await this.inventory.holdRoom(room._id, input, { hotelBookingId, holdExpiresAt, now }, session);
         if (!held) throw new ConflictException(`${room.name} is not available for these dates`);
@@ -182,6 +178,23 @@ export class HotelBookingsService {
       return created;
     });
     return HotelBookingDto.from(booking);
+  }
+
+  /**
+   * 404, like flight bookings ("Flight or cabin not found") and the hotel detail: an unknown or deactivated
+   * hotel (ACC-15), or a room that is unknown, inactive or of another hotel, cannot be booked. With a session
+   * it reads inside the hold transaction.
+   */
+  private async loadBookable(hotelId: string, roomIds: string[], session?: ClientSession) {
+    const hotel = await this.inventory.getHotel(hotelId, session);
+    if (!hotel || !hotel.isActive) throw new NotFoundException('Hotel not found');
+    const found = new Map((await this.inventory.getRooms(roomIds, session)).map((room) => [room._id.toString(), room]));
+    const missing = roomIds.some((roomId) => {
+      const room = found.get(roomId);
+      return !room || !room.hotelId.equals(hotel._id) || !room.isActive;
+    });
+    if (missing) throw new NotFoundException('Room not found in this hotel');
+    return { hotel, found };
   }
 
   /** HTL-21: preview is owner-only and does not change reservation, inventory or money. */
@@ -390,6 +403,53 @@ export class HotelBookingsService {
       checkOut: { $gt: this.clock.today() },
     }).session(session ?? null).exec();
     return found !== null;
+  }
+
+  /**
+   * HTL-06 (Person 5 connects this before deactivating a room): true while the room belongs to a reservation
+   * that still needs it, i.e. a PENDING hold that has not expired, or a CONFIRMED stay whose check-out date
+   * (UTC) is still ahead. Completed, cancelled and expired reservations do not count. Pass the caller's
+   * session to read inside its transaction. An invalid id has no reservations.
+   */
+  async roomHasActiveReservations(roomId: string, session?: ClientSession): Promise<boolean> {
+    if (!/^[0-9a-f]{24}$/i.test(roomId)) return false;
+    const found = await this.bookings.exists({
+      'rooms.roomId': new Types.ObjectId(roomId),
+      $or: [
+        { status: BookingStatus.PENDING, holdExpiresAt: { $gt: new Date() } },
+        { status: BookingStatus.CONFIRMED, checkOut: { $gt: this.clock.today() } },
+      ],
+    }).session(session ?? null).exec();
+    return found !== null;
+  }
+
+  /**
+   * ACC-15 (Person 2 connects this right after deactivating a hotel): every PENDING hold of that hotel becomes
+   * EXPIRED (the only GEN-11 exit from PENDING) and its HELD ranges are removed, one transaction per
+   * reservation. The filter is PENDING only, so CONFIRMED, COMPLETED and CANCELLED reservations are never
+   * touched, and a deactivated hotel's confirmed stays remain valid. Any open PaymentIntent of a released
+   * hold is cancelled by the existing maintenance sweep (it already handles every EXPIRED reservation), and
+   * a late payment cannot confirm because confirmation requires PENDING. Returns how many holds were released.
+   */
+  async releasePendingHoldsForHotel(hotelId: string): Promise<number> {
+    if (!/^[0-9a-f]{24}$/i.test(hotelId)) return 0;
+    const pending = await this.bookings.find({ hotelId: new Types.ObjectId(hotelId), status: BookingStatus.PENDING })
+      .select('_id').exec();
+    let released = 0;
+    for (const { _id } of pending) {
+      const done = await this.connection.transaction(async (session) => {
+        const booking = await this.bookings.findOneAndUpdate(
+          { _id, status: BookingStatus.PENDING },
+          { $set: { status: BookingStatus.EXPIRED }, $unset: { holdExpiresAt: 1 } },
+          { returnDocument: 'after', session },
+        ).exec();
+        if (!booking) return false;
+        await this.inventory.releaseHolds(booking._id, booking.rooms.map((room) => room.roomId), session);
+        return true;
+      });
+      if (done) released += 1;
+    }
+    return released;
   }
 
   // Scheduled work (HotelBookingsMaintenanceService)

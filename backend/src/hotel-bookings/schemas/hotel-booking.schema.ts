@@ -139,4 +139,5 @@ HotelBookingSchema.index({ userId: 1, status: 1, checkIn: 1 });
 HotelBookingSchema.index({ hotelId: 1, status: 1, checkIn: 1 });
 HotelBookingSchema.index({ status: 1, holdExpiresAt: 1 });
 HotelBookingSchema.index({ status: 1, checkIn: 1 });
+HotelBookingSchema.index({ 'rooms.roomId': 1, status: 1 });
 HotelBookingSchema.index({ bookingReference: 1 }, { unique: true, sparse: true, name: 'hotel_bookings_reference_unique' });
