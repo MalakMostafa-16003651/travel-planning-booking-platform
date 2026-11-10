@@ -1,7 +1,8 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { ClientSession, Model, QueryFilter, Types } from 'mongoose';
+import { InjectConnection, InjectModel } from '@nestjs/mongoose';
+import { ClientSession, Connection, Model, QueryFilter, Types } from 'mongoose';
 import { MarkAllReadDto, NotificationDto, NotificationPageDto } from './dto/notification-response.dto';
+import { NotificationEmailOutboxService } from './notification-email-outbox.service';
 import { NotificationType } from './notification-type.enum';
 import { Notification, NotificationDocument } from './schemas/notification.schema';
 
@@ -22,7 +23,9 @@ export interface NotificationInput {
 
 @Injectable()
 export class NotificationsService {
-  constructor(@InjectModel(Notification.name) private readonly notifications: Model<NotificationDocument>) {}
+  constructor(@InjectModel(Notification.name) private readonly notifications: Model<NotificationDocument>,
+    @InjectConnection() private readonly connection: Connection,
+    private readonly emailOutbox: NotificationEmailOutboxService) {}
 
   /** GEN-01: optional session joins an atomic action; other callers retain their failure policy. */
   async notify(input: NotificationInput, session?: ClientSession): Promise<void> {
@@ -39,11 +42,14 @@ export class NotificationsService {
     }
     const unique = [...new Set(userIds.map((userId) => userId.toLowerCase()))];
     if (unique.length === 0) return;
-    await this.notifications.insertMany(unique.map((userId) => ({
-      userId: new Types.ObjectId(userId),
-      type,
-      message,
-    })), { session, ordered: true });
+    const write = async (activeSession: ClientSession): Promise<void> => {
+      const created = await this.notifications.insertMany(unique.map((userId) => ({
+        userId: new Types.ObjectId(userId), type, message,
+      })), { session: activeSession, ordered: true });
+      await this.emailOutbox.enqueueNotifications(created, activeSession);
+    };
+    if (session) await write(session);
+    else await this.connection.transaction(write);
   }
 
   /** GEN-01: the user's own notifications, newest first, page size 10, with the inbox's unread count. */
