@@ -21,8 +21,7 @@ export class AirlinesController {
   @ApiCookieAuth('accessToken')
   @ApiOperation({ summary: 'Create an airline profile (Admin, FLT-01)' })
   @ApiCreatedResponse({ description: 'Airline created', type: Object })
-  create(@Body() body: CreateAirlineDto): Promise<Airline> { return this.airlines.create(body); }
-
+  create(@Req() req: AuthenticatedRequest, @Body() body: CreateAirlineDto): Promise<Airline> { return this.airlines.create(body, req.user!.userId); }
   @Get('me')
   @UseGuards(AuthGuard, RolesGuard)
   @Roles(UserRole.AIRLINE_MODERATOR)

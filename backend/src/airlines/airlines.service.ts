@@ -5,24 +5,36 @@ import { CreateAirlineDto } from './dto/create-airline.dto';
 import { UpdateAirlineDto } from './dto/update-airline.dto';
 import { UpdateAirlinePoliciesDto } from './dto/update-airline-policies.dto';
 import { Airline } from './schemas/airline.schema';
+import { AuditAction, AuditTargetType } from '../audit-logs/audit-log.enums';
+import { AuditLogsService } from '../audit-logs/audit-logs.service';
 
 @Injectable()
 export class AirlinesService {
   constructor(
     @InjectModel(Airline.name) private readonly airlines: Model<Airline>,
     @InjectConnection() private readonly connection: Connection,
+    private readonly auditLogs: AuditLogsService,
   ) {}
 
-  async create(input: CreateAirlineDto): Promise<Airline> {
+  async create(input: CreateAirlineDto, adminId: string): Promise<Airline> {
+    let airline: Airline;
     try {
-      return await this.airlines.create({
-        name: input.name.trim(), code: input.code, logo: null,
+      airline = await this.airlines.create({
+        name: input.name.trim(), code: input.code, logo:null,
         isActive: true, baggagePolicy: { pricePerExtraBag: 1, maxExtraBagsPerPassenger: 0 }, cancellationTiers: [],
       });
     } catch (error) {
       if ((error as { code?: number }).code === 11000) throw new ConflictException('An airline with this code already exists');
       throw error;
     }
+    // GEN-07: an audit failure is reported rather than hidden, as in Person 2's admin services.
+    await this.auditLogs.log({
+      adminId,
+      action: AuditAction.AIRLINE_CREATED,
+      targetType: AuditTargetType.AIRLINE,
+      targetId: airline._id.toString(),
+    });
+    return airline;
   }
 
   async getById(id: string): Promise<Airline> {
