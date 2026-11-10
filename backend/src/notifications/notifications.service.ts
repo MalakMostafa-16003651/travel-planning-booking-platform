@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, QueryFilter, Types } from 'mongoose';
+import { ClientSession, Model, QueryFilter, Types } from 'mongoose';
 import { MarkAllReadDto, NotificationDto, NotificationPageDto } from './dto/notification-response.dto';
 import { NotificationType } from './notification-type.enum';
 import { Notification, NotificationDocument } from './schemas/notification.schema';
@@ -24,13 +24,13 @@ export interface NotificationInput {
 export class NotificationsService {
   constructor(@InjectModel(Notification.name) private readonly notifications: Model<NotificationDocument>) {}
 
-  /** GEN-01: creates one notification. Callers should treat a failure as non-fatal. */
-  async notify(input: NotificationInput): Promise<void> {
-    await this.notifyMany([input.userId], input.type, input.message);
+  /** GEN-01: optional session joins an atomic action; other callers retain their failure policy. */
+  async notify(input: NotificationInput, session?: ClientSession): Promise<void> {
+    await this.notifyMany([input.userId], input.type, input.message, session);
   }
 
   /** GEN-01: the same notification for several users, e.g. everyone affected by a provider deactivation (ACC-15). */
-  async notifyMany(userIds: string[], type: NotificationInput['type'], message: string): Promise<void> {
+  async notifyMany(userIds: string[], type: NotificationInput['type'], message: string, session?: ClientSession): Promise<void> {
     if (!Object.values(NotificationType).includes(type as NotificationType)) {
       throw new Error(`Unknown notification type: ${String(type)}`);
     }
@@ -43,7 +43,7 @@ export class NotificationsService {
       userId: new Types.ObjectId(userId),
       type,
       message,
-    })));
+    })), { session, ordered: true });
   }
 
   /** GEN-01: the user's own notifications, newest first, page size 10, with the inbox's unread count. */

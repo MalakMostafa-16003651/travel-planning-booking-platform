@@ -11,7 +11,7 @@ import { ConfigModule } from '@nestjs/config';
 import { JwtService, JwtSignOptions } from '@nestjs/jwt';
 import { getModelToken, MongooseModule } from '@nestjs/mongoose';
 import { Test } from '@nestjs/testing';
-import { MongoMemoryServer } from 'mongodb-memory-server';
+import { MongoMemoryReplSet } from 'mongodb-memory-server';
 import { Model, Types } from 'mongoose';
 import request, { Response } from 'supertest';
 import { AuthModule } from '../src/auth/auth.module';
@@ -287,7 +287,7 @@ async function independentlyVerifyHash(password: string, encodedHash: string) {
 }
 
 describe('ACC-01 registration and ACC-04/05/06 authentication', { concurrency: false }, () => {
-  let memoryMongo: MongoMemoryServer;
+  let memoryMongo: MongoMemoryReplSet;
   let app: INestApplication;
   let users: Model<UserDocument>;
   let sessions: Model<AuthSession>;
@@ -449,10 +449,11 @@ describe('ACC-01 registration and ACC-04/05/06 authentication', { concurrency: f
   }
 
   before(async () => {
-    memoryMongo = await MongoMemoryServer.create({
+    memoryMongo = await MongoMemoryReplSet.create({
       // MMS always starts its own process with a fresh temporary database and port.
       binary: mongoBinaryOptions(),
-      instance: { launchTimeout: 60_000 },
+      replSet: { count: 1, storageEngine: 'wiredTiger' },
+      instanceOpts: [{ launchTimeout: 60_000 }],
     });
 
     const moduleRef = await Test.createTestingModule({

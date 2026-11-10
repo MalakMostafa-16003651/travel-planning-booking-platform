@@ -1,5 +1,5 @@
 import { Controller, HttpCode, Param, Patch, Req, UseGuards } from '@nestjs/common';
-import { ApiBadRequestResponse, ApiConflictResponse, ApiCookieAuth, ApiForbiddenResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags, ApiUnauthorizedResponse } from '@nestjs/swagger';
+import { ApiBadRequestResponse, ApiConflictResponse, ApiCookieAuth, ApiForbiddenResponse, ApiInternalServerErrorResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags, ApiUnauthorizedResponse } from '@nestjs/swagger';
 import { AuthenticatedRequest, AuthGuard } from '../auth/auth.guard';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
@@ -17,6 +17,7 @@ import { ProviderStatusDto } from './dto/provider-status-response.dto';
 @ApiForbiddenResponse({ type: ApiErrorDto, description: 'Not an administrator.' })
 @ApiBadRequestResponse({ type: ApiErrorDto, description: 'Type is not airline or hotel, or the ID is invalid.' })
 @ApiNotFoundResponse({ type: ApiErrorDto, description: 'No such airline or hotel.' })
+@ApiInternalServerErrorResponse({ type: ApiErrorDto, description: 'Provider status, audit and notification writes roll back together on failure.' })
 @Controller('admin/providers')
 export class AdminProvidersController {
   constructor(private readonly providers: AdminProvidersService) {}
@@ -25,7 +26,7 @@ export class AdminProvidersController {
   @HttpCode(200)
   @ApiOperation({
     summary: 'ACC-15: deactivate an airline or hotel',
-    description: 'ADMIN only. :type is airline or hotel. The provider is hidden from search and cannot be booked; existing Confirmed bookings remain valid. Separate from suspending its moderator. Its moderators and customers with Confirmed bookings are notified (GEN-01); audited (GEN-07).',
+    description: 'ADMIN only. :type is airline or hotel. The provider is hidden from search and cannot be booked; existing Confirmed bookings remain valid. Separate from suspending its moderator. Its moderators and customers with Confirmed bookings are notified (GEN-01); audited (GEN-07). Status, audit and inbox entries commit together. Hotel pending holds are released after commit; confirmed stays remain valid.',
   })
   @ApiOkResponse({ type: ProviderStatusDto })
   @ApiConflictResponse({ type: ApiErrorDto, description: 'Already deactivated.' })

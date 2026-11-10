@@ -1,6 +1,7 @@
 /** GEN-07: admin actions that must be auditable. Agreed in docs/requirements/admin-contract-proposal.md. */
 export enum AuditAction {
   MODERATOR_CREATED = 'MODERATOR_CREATED',
+  PASSWORD_RESET = 'PASSWORD_RESET',
   ACCOUNT_SUSPENDED = 'ACCOUNT_SUSPENDED',
   ACCOUNT_REACTIVATED = 'ACCOUNT_REACTIVATED',
   PROVIDER_DEACTIVATED = 'PROVIDER_DEACTIVATED',

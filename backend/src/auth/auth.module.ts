@@ -1,3 +1,4 @@
+import { AuditLogsPersistenceModule } from '../audit-logs/audit-logs-persistence.module';
 import { AuthActionLimitsService } from './auth-action-limits.service';
 import { AuthMailQueueService } from './auth-mail-queue.service';
 import { EmailEligibilityService } from './email-eligibility.service';
@@ -29,6 +30,7 @@ import { AuthSession, AuthSessionSchema } from './schemas/auth-session.schema';
 @Module({
   imports: [
     UsersModule,
+    AuditLogsPersistenceModule,
     MailModule,
     ConfigModule,
     MongooseModule.forFeature([{ name: AuthSession.name, schema: AuthSessionSchema }, { name: PasswordReset.name, schema: PasswordResetSchema }, { name: PasswordRecoveryLimit.name, schema: PasswordRecoveryLimitSchema }, { name: EmailVerification.name, schema: EmailVerificationSchema }]),

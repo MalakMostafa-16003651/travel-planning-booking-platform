@@ -143,7 +143,8 @@ describe('ACC-07 emailed forgotten-password recovery', { concurrency: false }, (
   });
   it('rejects reset links after an administrator changes the password and clears restricted sessions on recovery', async () => {
     const owner = await account(), first = (await issue()).token!;
-    await app.get(PasswordManagementService).setTemporaryPassword(owner.userId, { temporaryPassword: 'Temporary123' });
+    const admin = await account('admin@example.com', UserRole.ADMIN);
+    await app.get(PasswordManagementService).setTemporaryPassword(owner.userId, { temporaryPassword: 'Temporary123' }, admin.userId);
     await redeem(first).expect(400);
     const restricted = await http().post('/api/auth/login').send({ email: owner.email, password: 'Temporary123' }).expect(200);
     assert.equal(restricted.body.passwordChangeRequired, true);
@@ -153,10 +154,11 @@ describe('ACC-07 emailed forgotten-password recovery', { concurrency: false }, (
   });
   it('does not overwrite an administrator reset that races password hashing', async () => {
     const owner = await account(), { token } = await issue(), started = deferred(), gate = deferred();
+    const admin = await account('admin@example.com', UserRole.ADMIN);
     const hasher = app.get(PasswordService), original = hasher.hash.bind(hasher);
     const hash = mock.method(hasher, 'hash', async (password: string) => { if (password === NEW_PASSWORD) { started.resolve(); await gate.promise; } return original(password); });
     const pending = redeem(token!).then((response) => response);
-    try { await started.promise; await app.get(PasswordManagementService).setTemporaryPassword(owner.userId, { temporaryPassword: 'Temporary123' }); }
+    try { await started.promise; await app.get(PasswordManagementService).setTemporaryPassword(owner.userId, { temporaryPassword: 'Temporary123' }, admin.userId); }
     finally { gate.resolve(); }
     try { assert.equal((await pending).status, 400); } finally { hash.mock.restore(); }
     await http().post('/api/auth/login').send({ email: owner.email, password: 'Temporary123' }).expect(200);

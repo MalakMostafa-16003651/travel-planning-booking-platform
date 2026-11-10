@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { isValidObjectId, Model, QueryFilter, Types } from 'mongoose';
+import { ClientSession, isValidObjectId, Model, QueryFilter, Types } from 'mongoose';
 import { UsersService } from '../users/users.service';
 import { AuditAction, AuditTargetType } from './audit-log.enums';
 import { ListAuditLogsQueryDto } from './dto/list-audit-logs-query.dto';
@@ -26,20 +26,20 @@ export class AuditLogsService {
   ) {}
 
   /**
-   * GEN-07: records one admin action. Called by the admin services after the action
-   * succeeds. Errors propagate so a caller never reports success without its audit record.
+   * GEN-07: records one admin action. Pass the caller's session to commit the action
+   * and audit together. Legacy callers without a session retain their existing behavior.
    */
-  async log(input: AuditLogInput): Promise<void> {
+  async log(input: AuditLogInput, session?: ClientSession): Promise<void> {
     if (!isValidObjectId(input.adminId) || !isValidObjectId(input.targetId)) {
       throw new Error('Audit log entries need valid admin and target IDs');
     }
-    await this.auditLogs.create({
+    await this.auditLogs.create([{
       adminId: new Types.ObjectId(input.adminId),
       action: input.action,
       targetType: input.targetType,
       targetId: new Types.ObjectId(input.targetId),
       details: input.details,
-    });
+    }], { session });
   }
 
   /** GEN-07: newest first, page size 10, optional filters. */

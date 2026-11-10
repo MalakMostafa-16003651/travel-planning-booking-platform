@@ -1,3 +1,7 @@
+import { InjectConnection } from '@nestjs/mongoose';
+import { Connection } from 'mongoose';
+import { AuditAction, AuditTargetType } from '../audit-logs/audit-log.enums';
+import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { BadRequestException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { AccountStatus } from '../common/enums/account-status.enum';
 import { UsersService } from '../users/users.service';
@@ -8,15 +12,27 @@ import { PasswordService } from './password.service';
 
 @Injectable()
 export class PasswordManagementService {
-  constructor(private readonly users: UsersService, private readonly passwords: PasswordService) {}
+  constructor(
+    private readonly users: UsersService,
+    private readonly passwords: PasswordService,
+    @InjectConnection() private readonly connection: Connection,
+    private readonly auditLogs: AuditLogsService,
+  ) {}
 
-  async setTemporaryPassword(userId: string, input: AdminResetPasswordDto): Promise<void> {
+  async setTemporaryPassword(userId: string, input: AdminResetPasswordDto, adminId: string): Promise<void> {
     const passwordHash = await this.passwords.hash(input.temporaryPassword);
-    if (!await this.users.setTemporaryPassword(userId, passwordHash)) {
-      throw new NotFoundException('User or moderator not found');
-    }
-    // The single User write increments the epoch. Old normal/restricted sessions
-    // are invalid even if their TTL records have not yet been physically removed.
+    await this.connection.transaction(async (session) => {
+      if (!await this.users.setTemporaryPassword(userId, passwordHash, session)) {
+        throw new NotFoundException('User or moderator not found');
+      }
+      await this.auditLogs.log({
+        adminId,
+        action: AuditAction.PASSWORD_RESET,
+        targetType: AuditTargetType.USER,
+        targetId: userId,
+      }, session);
+    });
+    // Only a committed reset increments the epoch. Never put credentials in audit details.
   }
 
   async changePassword(identity: PasswordChangeIdentity, input: ChangePasswordDto): Promise<void> {

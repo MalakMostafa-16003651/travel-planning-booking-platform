@@ -96,7 +96,7 @@ Append-only. No update or delete endpoint.
 | Field | Meaning |
 | --- | --- |
 | `adminId` | ObjectId of the admin who acted. |
-| `action` | `MODERATOR_CREATED`, `ACCOUNT_SUSPENDED`, `ACCOUNT_REACTIVATED`, `PROVIDER_DEACTIVATED`, `PROVIDER_REACTIVATED`, `CONTENT_HIDDEN`, `CONTENT_UNHIDDEN`, `CONTENT_DELETED`, `REPORT_DISMISSED`. |
+| `action` | `MODERATOR_CREATED`, `PASSWORD_RESET`, `ACCOUNT_SUSPENDED`, `ACCOUNT_REACTIVATED`, `PROVIDER_DEACTIVATED`, `PROVIDER_REACTIVATED`, `CONTENT_HIDDEN`, `CONTENT_UNHIDDEN`, `CONTENT_DELETED`, `REPORT_DISMISSED`. |
 | `targetType` | `USER`, `AIRLINE`, `HOTEL`, `POST`, `COMMENT`, `REVIEW`, `ITINERARY`, `REPORT`. |
 | `targetId` | ObjectId of the affected record. |
 | `details` | Optional short text, for example the report reason. |
@@ -203,3 +203,15 @@ the deactivation.
 3. Person 6: collection and field names for hotel bookings; `isHidden` on
    reviews.
 4. Person 7: `isHidden` on itineraries and the three exported methods.
+
+
+## Approved transaction integration - 2026-11-10 (pending PR review)
+
+Malak authorized Person1 plus related Person2 repairs and explicitly approved AuditAction.PASSWORD_RESET and optional ClientSession arguments on AuditLogsService.log, NotificationsService.notify/notifyMany and UsersService.setTemporaryPassword. Existing callers may omit the session. Auth imports AuditLogsPersistenceModule (writer/schema plus UsersModule only); the guarded AuditLogsModule imports/re-exports it, preserving one shared AuditLogsService without an Auth-to-audit-controller cycle. No new collection, User field, environment name or request input.
+
+- POST /api/admin/users/:userId/reset-password obtains adminId only from the authenticated guard. Password/credential epoch and the PASSWORD_RESET audit share one transaction. Audit fields are adminId, action, targetType USER and targetId; no password, hash, token or request-body details. Failure rolls back the reset and leaves prior sessions/credentials usable. Successful reset retains all existing restrictions/invalidation.
+- Account suspension/reactivation and provider activation/deactivation commit their state, audit and stored inbox notifications together. Required database failure returns the existing generic500 and rolls all those writes back; retry can succeed. This intentionally replaces their earlier best-effort notification boundary. Other booking/payment callers retain their existing policy. Use sequential operations with one MongoDB session, not Promise.all inside the transaction.
+- Moderator creation includes MODERATOR_CREATED in its existing account/assignment transaction; audit failure no longer leaves an unrepeatable account collision.
+- Hotel deactivation calls HotelBookingsService.releasePendingHoldsForHotel after commit, preserving confirmed stays and reusing existing expiry/payment reconciliation. Cleanup failure is logged and natural hold expiry remains fallback; it does not cause a false failed-provider response after commit. Arwa and Osama still need provider/hold ordering to prevent a later hold escaping the one cleanup query. Lama still needs roomHasActiveReservations with conflict-producing writes.
+
+The report/content moderation owner methods remain outside the caller's transaction and are not certified atomic by this integration. Do not claim this patch fixes every GEN-07 producer. Handoff: Arwa should reuse these exports and pass the existing transaction session rather than invent another audit writer or duplicate enum. Personal AI log updates remain each student's responsibility; this work is credited in Malak16003651 only.

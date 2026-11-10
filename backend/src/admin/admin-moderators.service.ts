@@ -69,6 +69,13 @@ export class AdminModeratorsService {
           moderatorId: created._id,
           ...(airline ? { airlineId: providerId } : { hotelId: providerId }),
         }], { session });
+        await this.auditLogs.log({
+          adminId,
+          action: AuditAction.MODERATOR_CREATED,
+          targetType: AuditTargetType.USER,
+          targetId: created._id.toString(),
+          details: `${input.role} for ${airline ? 'airline' : 'hotel'} ${provider.name} (${input.providerId})`,
+        }, session);
         return created;
       });
     } catch (error: unknown) {
@@ -79,14 +86,6 @@ export class AdminModeratorsService {
     } finally {
       await session.endSession();
     }
-
-    await this.auditLogs.log({
-      adminId,
-      action: AuditAction.MODERATOR_CREATED,
-      targetType: AuditTargetType.USER,
-      targetId: moderator._id.toString(),
-      details: `${input.role} for ${airline ? 'airline' : 'hotel'} ${provider.name} (${input.providerId})`,
-    });
 
     return {
       userId: moderator._id.toString(),
