@@ -1,3 +1,5 @@
+import { ConflictException, NotFoundException } from '@nestjs/common';
+import { advanceBookingVersion, incrementableVersion } from '../../common/booking-gate';
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ClientSession, Model, Types } from 'mongoose';
@@ -9,7 +11,7 @@ const DUPLICATE_KEY = 11000;
 
 /**
  * Person 6's own adapter over Person 5's hotel collections (contract section 3 and L1/L3/L4).
- * Reads `hotels` and `rooms`; writes ONLY `roomavailabilities.bookedRanges`. Lama's module is not edited.
+ * Reads hotel/room data and uses their approved private bookingVersion gates; inventory remains in roomavailabilities.
  */
 @Injectable()
 export class RoomInventoryAdapter {
@@ -18,6 +20,24 @@ export class RoomInventoryAdapter {
     @InjectModel(Room.name) private readonly rooms: Model<RoomDocument>,
     @InjectModel(RoomAvailability.name) private readonly availabilities: Model<RoomAvailabilityDocument>,
   ) {}
+
+  /** Lock hotel first, then sorted room IDs. Provider/room status writes serialize with these gates. */
+  async acquireBookingGate(hotelId: string, roomIds: string[], session: ClientSession): Promise<void> {
+    const hotel = await this.hotels.updateOne({ _id: hotelId, isActive: true, $expr: incrementableVersion('bookingVersion') },
+      advanceBookingVersion(), { session, updatePipeline: true, timestamps: false }).exec();
+    if (hotel.modifiedCount !== 1) {
+      if (!await this.hotels.exists({ _id: hotelId, isActive: true }).session(session).exec()) throw new NotFoundException('Hotel not found');
+      throw new ConflictException('Hotel booking gate is unavailable');
+    }
+    for (const roomId of [...new Set(roomIds.map(id => id.toLowerCase()))].sort()) {
+      const room = await this.rooms.updateOne({ _id: roomId, hotelId, isActive: true, $expr: incrementableVersion('bookingVersion') },
+        advanceBookingVersion(), { session, updatePipeline: true, timestamps: false }).exec();
+      if (room.modifiedCount !== 1) {
+        if (!await this.rooms.exists({ _id: roomId, hotelId, isActive: true }).session(session).exec()) throw new NotFoundException('Room not found in this hotel');
+        throw new ConflictException('Room booking gate is unavailable');
+      }
+    }
+  }
 
   getHotel(hotelId: string, session?: ClientSession): Promise<HotelDocument | null> {
     return this.hotels.findById(hotelId).session(session ?? null).exec();

@@ -1,3 +1,4 @@
+import { hideBookingVersion } from '../../common/booking-gate';
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Types } from 'mongoose';
 import { MAX_HOTEL_PHOTOS } from '../hotels.rules';
@@ -73,8 +74,14 @@ export class Hotel {
   })
   photos!: HotelPhotoRef[];
 
+  /** Private concurrency gate shared with booking transactions. Never part of an API DTO. */
+  @Prop({ type: Number, default: 0, select: false, min: 0, max: Number.MAX_SAFE_INTEGER, validate: Number.isSafeInteger })
+  bookingVersion!: number;
+
   declare createdAt: Date;
   declare updatedAt: Date;
 }
 
 export const HotelSchema = SchemaFactory.createForClass(Hotel);
+HotelSchema.set('toJSON', { transform: hideBookingVersion });
+HotelSchema.set('toObject', { transform: hideBookingVersion });

@@ -1,6 +1,6 @@
 import { ApiPropertyOptional, ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, IsString, Matches, Max, Min, MinLength } from 'class-validator';
+import { IsISO8601, IsEnum, IsInt, IsOptional, IsString, Matches, Max, Min, MinLength } from 'class-validator';
 import { DATE_ONLY } from './transforms';
 
 export enum HotelSearchSort {
@@ -21,10 +21,12 @@ export class SearchHotelsQueryDto {
 
   @ApiProperty({ example: '2026-12-20' })
   @Matches(DATE_ONLY, { message: 'checkIn must be YYYY-MM-DD' })
+  @IsISO8601({ strict: true }, { message: 'checkIn must be a real calendar date' })
   checkIn!: string;
 
   @ApiProperty({ example: '2026-12-27' })
   @Matches(DATE_ONLY, { message: 'checkOut must be YYYY-MM-DD' })
+  @IsISO8601({ strict: true }, { message: 'checkOut must be a real calendar date' })
   checkOut!: string;
 
   @ApiProperty({ example: 2, minimum: 1 })

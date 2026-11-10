@@ -135,3 +135,7 @@ adminDeleteItinerary(itineraryId: string): Promise<void>                 // 404 
   check `isHidden`. Until it switches to `listPublicByAuthor` / `getPublicSummary`, a hidden
   itinerary can still appear on author pages and posts.
 
+
+### Session consumer adoption - 2026-11-10
+
+The current GEN-13/BON-01 session branch imports ItinerariesModule into BlogModule and uses listPublicByAuthor/getPublicSummary for author pages, attachment validation and attachment responses. After synchronizing PR81, those calls automatically respect isHidden. A real HTTP integration regression covers hide/unhide through Kiki's service and checks public, owner and admin blog reads plus rejection of a new hidden attachment. This closes the blog-reader follow-up on this feature branch; Arwa's report-routing/atomic audit integration remains separate. No changes to Kiki's moderation methods or private-image rules were made.
