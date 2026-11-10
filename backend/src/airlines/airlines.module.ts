@@ -6,9 +6,10 @@ import { AirlineAssetsController } from './airline-assets.controller';
 import { AirlineLogoService } from './airline-logo.service';
 import { AirlinesController } from './airlines.controller';
 import { AirlinesService } from './airlines.service';
+import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 
 @Module({
-  imports: [AuthModule, MongooseModule.forFeature([{ name: Airline.name, schema: AirlineSchema }])],
+  imports: [AuthModule,AuditLogsModule, MongooseModule.forFeature([{ name: Airline.name, schema: AirlineSchema }])],
   controllers: [AirlinesController, AirlineAssetsController],
   providers: [AirlinesService, AirlineLogoService],
   exports: [AirlinesService],
