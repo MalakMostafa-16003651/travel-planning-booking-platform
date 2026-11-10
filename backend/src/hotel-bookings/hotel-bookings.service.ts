@@ -423,6 +423,35 @@ export class HotelBookingsService {
     return found !== null;
   }
 
+  /**
+   * ACC-15 (Person 2 connects this right after deactivating a hotel): every PENDING hold of that hotel becomes
+   * EXPIRED (the only GEN-11 exit from PENDING) and its HELD ranges are removed, one transaction per
+   * reservation. The filter is PENDING only, so CONFIRMED, COMPLETED and CANCELLED reservations are never
+   * touched, and a deactivated hotel's confirmed stays remain valid. Any open PaymentIntent of a released
+   * hold is cancelled by the existing maintenance sweep (it already handles every EXPIRED reservation), and
+   * a late payment cannot confirm because confirmation requires PENDING. Returns how many holds were released.
+   */
+  async releasePendingHoldsForHotel(hotelId: string): Promise<number> {
+    if (!/^[0-9a-f]{24}$/i.test(hotelId)) return 0;
+    const pending = await this.bookings.find({ hotelId: new Types.ObjectId(hotelId), status: BookingStatus.PENDING })
+      .select('_id').exec();
+    let released = 0;
+    for (const { _id } of pending) {
+      const done = await this.connection.transaction(async (session) => {
+        const booking = await this.bookings.findOneAndUpdate(
+          { _id, status: BookingStatus.PENDING },
+          { $set: { status: BookingStatus.EXPIRED }, $unset: { holdExpiresAt: 1 } },
+          { returnDocument: 'after', session },
+        ).exec();
+        if (!booking) return false;
+        await this.inventory.releaseHolds(booking._id, booking.rooms.map((room) => room.roomId), session);
+        return true;
+      });
+      if (done) released += 1;
+    }
+    return released;
+  }
+
   // Scheduled work (HotelBookingsMaintenanceService)
 
   /**
