@@ -1,7 +1,26 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Types } from 'mongoose';
+import { MAX_HOTEL_PHOTOS } from '../hotels.rules';
 
 export type HotelDocument = HydratedDocument<Hotel>;
+
+/** HTL-01/GEN-08: what the hotel lists about each photo. Its _id is the photoId of the HotelPhoto holding the bytes. */
+@Schema({ _id: false, versionKey: false })
+export class HotelPhotoRef {
+  @Prop({ type: Types.ObjectId, required: true })
+  _id!: Types.ObjectId;
+
+  @Prop({ type: String, required: true })
+  contentType!: string;
+
+  @Prop({ type: Number, required: true })
+  size!: number;
+
+  @Prop({ type: Date, required: true })
+  uploadedAt!: Date;
+}
+
+const HotelPhotoRefSchema = SchemaFactory.createForClass(HotelPhotoRef);
 
 @Schema({ _id: false })
 export class CancellationTier {
@@ -46,6 +65,13 @@ export class Hotel {
 
   @Prop({ type: [CancellationTierSchema], default: [] })
   cancellationTiers!: CancellationTier[];
+
+  @Prop({
+    type: [HotelPhotoRefSchema],
+    default: [],
+    validate: { validator: (photos: HotelPhotoRef[]) => photos.length <= MAX_HOTEL_PHOTOS, message: `A hotel can have at most ${MAX_HOTEL_PHOTOS} photos` },
+  })
+  photos!: HotelPhotoRef[];
 
   declare createdAt: Date;
   declare updatedAt: Date;
