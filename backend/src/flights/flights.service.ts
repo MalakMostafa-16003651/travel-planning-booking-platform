@@ -15,6 +15,8 @@ import { UpdateFlightDto } from './dto/update-flight.dto';
 import { UpdateCabinDto } from './dto/update-cabin.dto';
 import { CabinInventory } from './schemas/cabin-inventory.schema';
 import { Flight } from './schemas/flight.schema';
+import { NotificationType } from '../notifications/notification-type.enum';
+import { NotificationsService } from '../notifications/notifications.service';
 import { FlightSearchDto, FlightSort, RoundTripSearchDto } from './dto/flight-search.dto';
 import { localDateBounds, localDateTimeToUtc, utcToLocalDateTime } from './flight-time.util';
 import { ItineraryFlightSearch } from '../itineraries/ports/travel-search.port';
@@ -43,6 +45,7 @@ export class FlightsService implements OnModuleInit {
     private readonly airlines: AirlinesService,
 
     private readonly bookings: FlightBookingsService,
+    private readonly notifications: NotificationsService,
   ) {}
 
 async onModuleInit(): Promise<void> {
@@ -401,10 +404,17 @@ async onModuleInit(): Promise<void> {
         flight._id.toString(),
       );
 
+     // GEN-01: tell every passenger with a Confirmed booking. A notification failure must not undo the saved change.
     if (confirmedUserIds.length) {
-      this.logger.warn(
-        `Schedule-change notifications pending Person 2 GEN-01 integration for ${confirmedUserIds.length} users on flight ${flight._id.toString()}`,
-      );
+      try {
+        await this.notifications.notifyMany(
+          confirmedUserIds,
+          NotificationType.FLIGHT_SCHEDULE_CHANGED,
+          `Flight ${updatedFlight.flightNumber} has a new schedule: departs ${departureAt.toISOString()} and arrives ${arrivalAt.toISOString()} (UTC).`,
+        );
+      } catch {
+        this.logger.error(`Could not create schedule-change notifications for flight ${flight._id.toString()}`);
+      }
     }
 
     return updatedFlight;
@@ -568,9 +578,7 @@ async onModuleInit(): Promise<void> {
       );
     }
 
-    this.logger.warn(
-      'Passenger cancellation notifications depend on Person 2 GEN-01 integration.',
-    );
+    // Passengers are notified by FlightBookingsService.cancelBookingsForFlight through Person 4's BOOKING_NOTIFICATIONS port.
 
     return {
       message:

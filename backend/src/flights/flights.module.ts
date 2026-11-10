@@ -3,6 +3,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { AirlinesModule } from '../airlines/airlines.module';
 import { AuthModule } from '../auth/auth.module';
 import { FlightBookingsModule } from '../flight-bookings/flight-bookings.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import {Airline,AirlineSchema,} from '../airlines/schemas/airline.schema';
 import { Airport, AirportSchema,} from '../airports/schemas/airport.schema';
 import { ItineraryFlightSearchAdapter } from './adapters/itinerary-flight-search.adapter';
@@ -17,6 +18,7 @@ import {Flight,FlightSchema,} from './schemas/flight.schema';
     AuthModule,
     AirlinesModule,
     FlightBookingsModule,
+    NotificationsModule,
 
     MongooseModule.forFeature([
       { name: Airline.name, schema: AirlineSchema },
