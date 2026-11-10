@@ -164,6 +164,8 @@ export class ReviewsService {
       comment: review.comment ?? null,
       isHidden: review.isHidden,
       author: name === undefined ? { userId: null, name: DELETED_USER_NAME } : { userId: review.userId.toString(), name },
+      // HTL-26: the hotel's reply, without the moderator's identity.
+      reply: review.reply ? { text: review.reply.text, repliedAt: review.reply.repliedAt, editedAt: review.reply.editedAt } : null,
       createdAt: review.createdAt,
       updatedAt: review.updatedAt,
     };
