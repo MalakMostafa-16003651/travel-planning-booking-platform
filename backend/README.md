@@ -371,7 +371,7 @@ payment confirmation, cancellation or account-deactivation eligibility.
 
 | Method | Endpoint | Who | Result |
 | --- | --- | --- | --- |
-| POST | `/api/hotels` | ADMIN | Create a hotel profile. `city`/`countryCode` are resolved through the shared `ReferenceDataService`, the same catalog Itineraries uses. Records a GEN-07 `HOTEL_CREATED` audit log entry (Arwa's `AuditLogsService`), the same pattern as `AirlinesService.create`'s `AIRLINE_CREATED` entry. |
+| POST | `/api/hotels` | ADMIN | Create a hotel profile. `city`/`countryCode` are resolved through the shared `ReferenceDataService`, the same catalog Itineraries uses. Commits the hotel and GEN-07 `HOTEL_CREATED` audit entry in the same transaction, using Arwa's existing audit service. |
 | GET | `/api/hotels/:id` | anyone | View a hotel. A deactivated hotel (`isActive: false`) returns 404 for everyone except its assigned moderator and admins, so ACC-15 deactivation hides it without revealing its existence. |
 | PATCH | `/api/hotels/:id` | assigned HOTEL_MODERATOR | Edit the moderator's own hotel. `:id` must match their `moderatorassignments` record, the same adapter pattern `AirlinesService.getAssignedAirlineId` uses, with `hotelId` in place of `airlineId`. A mismatched or missing assignment returns 404/403 the same way `FlightsService.getOwnedScheduledFlight` hides another airline's flight. |
 | POST | `/api/hotels/:id/rooms` | assigned HOTEL_MODERATOR | Add a room (name, capacity, `pricePerNight` in integer minor units) to the moderator's own hotel. |
@@ -511,7 +511,7 @@ Public posts/itineraries hide their deactivated author; comments/reviews retain 
 
 ### Administrator action/audit consistency
 
-Admin temporary-password resets record PASSWORD_RESET with the authenticated admin and target IDs. Credentials and audit commit together; failed persistence returns the generic500 without changing the target password or invalidating old sessions. Passwords/hashes are never copied into audit details. Account/provider status changes commit their audit and stored inbox entries in the same MongoDB transaction; moderator creation also commits its audit with the account/assignment. A failed required write rolls back the action so retry is safe. These transactions require a replica set (Atlas or the isolated test replica set).
+Admin temporary-password resets record PASSWORD_RESET with the authenticated admin and target IDs. Credentials and audit commit together; failed persistence returns the generic500 without changing the target password or invalidating old sessions. Passwords/hashes are never copied into audit details. Account/provider status changes commit their audit and stored inbox entries in the same MongoDB transaction; moderator creation also commits its audit with the account/assignment. A failed required write rolls back the action so retry is safe. Hotel and airline creation also commit the provider and its HOTEL_CREATED/AIRLINE_CREATED audit together. A failure before or after the audit insert rolls back both records, so retry does not leave a provider from the failed request. Duplicate airline codes still return409. These transactions require a replica set (Atlas or the isolated test replica set).
 
 Hotel deactivation invokes the existing pending-hold cleanup after commit and preserves confirmed stays. If cleanup fails, the provider remains deactivated and normal hold expiry provides fallback. Full concurrent provider/room deactivation ordering remains a separate integration task.
 

@@ -17,24 +17,25 @@ export class AirlinesService {
   ) {}
 
   async create(input: CreateAirlineDto, adminId: string): Promise<Airline> {
-    let airline: Airline;
-    try {
-      airline = await this.airlines.create({
-        name: input.name.trim(), code: input.code, logo:null,
-        isActive: true, baggagePolicy: { pricePerExtraBag: 1, maxExtraBagsPerPassenger: 0 }, cancellationTiers: [],
-      });
-    } catch (error) {
-      if ((error as { code?: number }).code === 11000) throw new ConflictException('An airline with this code already exists');
-      throw error;
-    }
-    // GEN-07: an audit failure is reported rather than hidden, as in Person 2's admin services.
-    await this.auditLogs.log({
-      adminId,
-      action: AuditAction.AIRLINE_CREATED,
-      targetType: AuditTargetType.AIRLINE,
-      targetId: airline._id.toString(),
+    return this.connection.transaction(async (session) => {
+      let airline: Airline;
+      try {
+        [airline] = await this.airlines.create([{
+          name: input.name.trim(), code: input.code, logo:null,
+          isActive: true, baggagePolicy: { pricePerExtraBag: 1, maxExtraBagsPerPassenger: 0 }, cancellationTiers: [],
+        }], { session });
+      } catch (error) {
+        if ((error as { code?: number }).code === 11000) throw new ConflictException('An airline with this code already exists');
+        throw error;
+      }
+      await this.auditLogs.log({
+        adminId,
+        action: AuditAction.AIRLINE_CREATED,
+        targetType: AuditTargetType.AIRLINE,
+        targetId: airline._id.toString(),
+      }, session);
+      return airline;
     });
-    return airline;
   }
 
   async getById(id: string): Promise<Airline> {
