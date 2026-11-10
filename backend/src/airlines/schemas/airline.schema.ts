@@ -1,3 +1,4 @@
+import { hideBookingVersion } from '../../common/booking-gate';
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Types } from 'mongoose';
 
@@ -46,9 +47,15 @@ export class Airline {
   @Prop({ type: [CancellationTierSchema], default: [] })
   cancellationTiers!: CancellationTier[];
 
+  /** Private shared admission gate; confirmed history remains valid after deactivation. */
+  @Prop({ type: Number, default: 0, select: false, min: 0, max: Number.MAX_SAFE_INTEGER, validate: Number.isSafeInteger })
+  bookingVersion!: number;
+
   declare createdAt: Date;
   declare updatedAt: Date;
 }
 
 export const AirlineSchema = SchemaFactory.createForClass(Airline);
+AirlineSchema.set('toJSON', { transform: hideBookingVersion });
+AirlineSchema.set('toObject', { transform: hideBookingVersion });
 AirlineSchema.index({ code: 1 }, { unique: true, name: 'airlines_code_unique' });

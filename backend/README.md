@@ -358,10 +358,10 @@ For a manual Swagger check: log in, create an itinerary, add days in Cairo, Cair
 
 ## Hotel profiles
 
-`backend/src/hotels` implements HTL-01/HTL-02 (hotel profiles), HTL-03/
-HTL-05/HTL-06 (rooms), HTL-04/HTL-05/HTL-06/HTL-08 (room availability),
-HTL-09/HTL-10 (policies), HTL-11/HTL-12/HTL-15 (search), and HTL-22
-(moderator reservations connected through ACC-11), per the
+`backend/src/hotels` implements HTL-01/HTL-02 (hotel profiles and photos,
+GEN-08), HTL-03/HTL-05/HTL-06 (rooms), HTL-04/HTL-05/HTL-06/HTL-08 (room
+availability), HTL-09/HTL-10 (policies), HTL-11/HTL-12/HTL-15 (search), and
+HTL-22 (moderator reservations connected through ACC-11), per the
 [hotel contract proposal](../docs/requirements/hotel-contract-proposal.md).
 The reservations endpoint reuses Person 6's HotelBookingsService through
 HotelBookingsReservationsAdapter. Assignment checks run before the read query;
@@ -384,8 +384,13 @@ payment confirmation, cancellation or account-deactivation eligibility.
 | GET | `/api/hotels/search` | anyone | `city` (resolved through `ReferenceDataService`), optional `countryCode`, `checkIn`/`checkOut`, `guests`, optional `rooms`/`minPrice`/`maxPrice`/`sort`/`page`. Field names match `ItineraryHotelSearch` in `itineraries/ports/travel-search.port.ts` exactly, so Person 7's eventual adapter is a direct pass-through. Only active hotels with at least `rooms` unblocked rooms whose combined capacity (best `rooms` by capacity) covers `guests` are returned, page size 10. Exact room assignment stays a booking-time concern. |
 | GET | `/api/hotels/:id/rooms/available` | anyone | `checkIn`/`checkOut`, optional `guests`. Individual rooms (not a hotel-level summary) with no blocked/booked overlap for the stay and (if `guests` given) enough capacity, cheapest first. |
 | GET | `/api/hotels/:id/reservations` | assigned HOTEL_MODERATOR | Ownership is checked before the real HotelBookingsService query (404/403 for another/missing assignment). Returns guest name when available, rooms[], guestCount, bookingReference, dates, status and frozen totalAmount in minor units; ten per page. Payment/policy/private profile details are excluded. |
+| POST | `/api/hotels/:id/photos` | assigned HOTEL_MODERATOR | Add a photo (multipart field `photo`): JPG or PNG decided by the file's own bytes via the shared `detectImageExtension` (`common/files/image-type.ts`, the same sniffer airlines' logo upload uses), at most 5 MB, at most 5 per hotel. Returns the hotel with its photo URLs. |
+| GET | `/api/hotels/:id/photos/:photoId` | anyone | Photo bytes. Same visibility as the hotel itself: 404 if the hotel is deactivated, except to its own moderator or an admin. |
+| DELETE | `/api/hotels/:id/photos/:photoId` | assigned HOTEL_MODERATOR | Removes one photo from the moderator's own hotel. |
 
 Both search endpoints use the same half-open overlap check as `RoomAvailability`: a block/booking ending on a date does not conflict with a stay starting that same date.
+
+Photos are stored as binary documents in their own `hotelphotos` collection (kept out of the hotel document, same pattern as blog post images and itinerary activity images), not on disk — unlike the airline logo upload, which is one file per airline on the filesystem. A hotel needed up to 5 photos, so the multi-document Mongo pattern fit better; only the byte-sniffing helper is shared with airlines.
 
 New hotels default to `isActive: true`, `checkInTime: '14:00'`, `checkOutTime: '11:00'` and no cancellation tiers. Changing `city` re-resolves the country from the reference catalog from scratch; changing only `countryCode` re-resolves against the existing city. Rooms carry no inventory count of their own (HTL-03 "individually bookable rooms"); each room's `RoomAvailability` document instead holds `blockedRanges` (written here) and `bookedRanges` (reserved for the not-yet-built hotel-bookings module — see the contract's section 3 for the overlap-array design and why a hold is a single conditional write).
 
@@ -420,7 +425,7 @@ ITN-25 hotel criteria now include guests and rooms. ITN-26 takes departureAirpor
 
 GET `/api/flights/:flightId/bookings` reuses FlightBookingsService.listBookingsForFlight after checking the authenticated AIRLINE_MODERATOR's assigned airline. Returns safe booking references, passenger names, cabin, seat count and status, ten per page. Reads are available for past/cancelled flights without changing flight status. Passport/document numbers, birth dates and payment details are excluded. Remaining seats per category and CSV export are still separate FLT-29 work.
 
-Both provider routes use the shared cookie AuthGuard and RolesGuard, authoritative ModeratorAssignment records, validated pagination and Cache-Control: no-store. Ordinary users keep their own /api/flight-bookings and /api/hotel-bookings views. Admins inspect bookings through /api/admin/bookings?type=FLIGHT or type=HOTEL. Private itineraries remain owner-only, including against admins/moderators. Cross-module regressions are in test/acc11-booking-access.e2e.test.ts.
+Both provider routes use the shared cookie AuthGuard and RolesGuard, authoritative ModeratorAssignment records, validated pagination and Cache-Control: no-store. Ordinary users keep their own /api/flight-bookings and /api/hotel-bookings views. Admins inspect bookings through /api/admin/bookings?type=FLIGHT or type=hotel. Private itineraries remain owner-only, including against admins/moderators. Cross-module regressions are in test/acc11-booking-access.e2e.test.ts.
 
 
 ## ACC-07 bonus: forgotten-password recovery
@@ -507,3 +512,11 @@ Public posts/itineraries hide their deactivated author; comments/reviews retain 
 Admin temporary-password resets record PASSWORD_RESET with the authenticated admin and target IDs. Credentials and audit commit together; failed persistence returns the generic500 without changing the target password or invalidating old sessions. Passwords/hashes are never copied into audit details. Account/provider status changes commit their audit and stored inbox entries in the same MongoDB transaction; moderator creation also commits its audit with the account/assignment. A failed required write rolls back the action so retry is safe. These transactions require a replica set (Atlas or the isolated test replica set).
 
 Hotel deactivation invokes the existing pending-hold cleanup after commit and preserves confirmed stays. If cleanup fails, the provider remains deactivated and normal hold expiry provides fallback. Full concurrent provider/room deactivation ordering remains a separate integration task.
+
+### BON-01 admin analytics backend
+
+`GET /api/admin/analytics?from=2026-11-01&to=2026-11-20&type=hotel&page=1` requires an active ADMIN session. `type` is optional (`airline`/`hotel`); dates are inclusive UTC dates with a maximum 366-day span. Results contain ten providers per page, sorted by net receipts, with `bookings`, `grossRevenueMinor`, `refundedMinor`, `netRevenueMinor`, `currency`, provider ID/name and an explicit report basis. All money is USD cents.
+
+The period selects successful booking confirmations (`Payment.bookingConfirmedAt`), including later-cancelled/completed history. Unpaid holds, failed payments and late-success compensation without a confirmed booking are excluded. Completed refunds against each original receipt are included through report generation, even if they occurred after the selected confirmation period; failed/pending and extra-payment-compensation refunds are excluded. This is a confirmation-cohort receipts report, not cash movement by refund date or a provider payout ledger. A booking involving multiple airlines counts once per participating airline, so counts across airlines are not additive. Gross flight receipts are allocated by stored segment fare weights; refunds use those allocated gross weights. Largest-remainder cent allocation preserves totals and keeps gross attribution stable; all-zero fares use equal provider weights.
+
+The module reads existing schemas in one MongoDB snapshot and never mutates bookings, inventory, payments, refunds or provider records, and never calls Stripe. Missing/inconsistent financial references fail instead of returning partial totals. Passenger details, user IDs, payment-intent IDs and secrets are not included. The M2 visual dashboard is not implemented by this API. No new environment setting or collection is required.
