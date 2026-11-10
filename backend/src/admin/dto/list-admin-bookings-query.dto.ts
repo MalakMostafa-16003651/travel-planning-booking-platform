@@ -14,7 +14,7 @@ export class ListAdminBookingsQueryDto {
   @Min(1, { message: 'Page must be at least 1' })
   page?: number;
 
-  @ApiPropertyOptional({ enum: BOOKING_TYPES, default: 'FLIGHT', description: 'FLIGHT (default) or HOTEL. The date range applies to departure (flights) or check-in date (hotels).' })
+  @ApiPropertyOptional({ enum: BOOKING_TYPES, description: 'FLIGHT or HOTEL. When omitted, both are listed together, newest first. The date range applies to departure (flights) or check-in date (hotels).' })
   @IsOptional()
   @IsIn(BOOKING_TYPES, { message: 'Type must be FLIGHT or HOTEL' })
   type?: BookingType;
