@@ -252,5 +252,17 @@ describe('GEN-13 approved booking gates and payment recovery', { concurrency: fa
     const author = await fixture.http().get('/api/authors/' + owner.userId).expect(200); assert.equal(author.body.itineraries.total, 1); assert.ok(probe.mock.callCount() >= 2);
     const summary = author.body.itineraries.items[0]; assert.equal(summary.itineraryId, created.body.itineraryId);
     for (const key of ['linkedBookings', 'transportCosts', 'activities', 'budgets']) assert.equal(summary[key], undefined);
+    const attached = await fixture.http().post('/api/posts').set('Cookie', owner.cookie).send({ title: 'Shared moderation', content: 'Public itinerary attachment.', status: 'PUBLISHED', itineraryId: created.body.itineraryId }).expect(201);
+    assert.equal(attached.body.itinerary.itineraryId, created.body.itineraryId);
+    await service.setItineraryHidden(created.body.itineraryId, true);
+    assert.equal((await fixture.http().get('/api/authors/' + owner.userId).expect(200)).body.itineraries.total, 0);
+    for (const cookie of [undefined, owner.cookie, admin.cookie]) {
+      const request = fixture.http().get('/api/posts/' + attached.body.postId);
+      if (cookie) request.set('Cookie', cookie);
+      assert.equal((await request.expect(200)).body.itinerary, null);
+    }
+    await fixture.http().post('/api/posts').set('Cookie', owner.cookie).send({ title: 'Hidden target', content: 'Refused attachment.', itineraryId: created.body.itineraryId }).expect(400);
+    await service.setItineraryHidden(created.body.itineraryId, false);
+    assert.equal((await fixture.http().get('/api/posts/' + attached.body.postId).expect(200)).body.itinerary.itineraryId, created.body.itineraryId);
   });
 });
