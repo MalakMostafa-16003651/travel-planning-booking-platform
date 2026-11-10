@@ -552,7 +552,7 @@ export class ItinerariesService {
       throw fieldError('maxDays', 'maxDays must not be less than minDays');
     }
     const page = query.page ?? 1;
-    const filter: QueryFilter<Itinerary> = { visibility: ItineraryVisibility.PUBLIC };
+    const filter: QueryFilter<Itinerary> = { visibility: ItineraryVisibility.PUBLIC, isHidden: { $ne: true } };
     if (query.q) {
       const pattern = new RegExp(escapeRegex(query.q), 'i');
       const countryCodes = await this.references.matchingCountryCodes(query.q);
@@ -598,7 +598,7 @@ export class ItinerariesService {
     if (!Types.ObjectId.isValid(authorId)) return pageOf([], page, 0);
     const statuses = await this.accountStatuses.getAccountStatuses([authorId]);
     if (!isVisibleStatus(statuses.get(authorId))) return pageOf([], page, 0);
-    const filter: QueryFilter<Itinerary> = { userId: new Types.ObjectId(authorId), visibility: ItineraryVisibility.PUBLIC };
+    const filter: QueryFilter<Itinerary> = { userId: new Types.ObjectId(authorId), visibility: ItineraryVisibility.PUBLIC, isHidden: { $ne: true } };
     const [rows, total] = await Promise.all([
       this.itineraries.find(filter, SUMMARY_PROJECTION).sort({ publishedAt: -1, _id: -1 })
         .skip((page - 1) * ITINERARY_PAGE_SIZE).limit(ITINERARY_PAGE_SIZE).lean<Itinerary[]>().exec(),
@@ -615,7 +615,7 @@ export class ItinerariesService {
    */
   async getPublicSummary(itineraryId: string, authorId?: string): Promise<ItinerarySummaryDto | null> {
     if (!Types.ObjectId.isValid(itineraryId) || (authorId !== undefined && !Types.ObjectId.isValid(authorId))) return null;
-    const filter: QueryFilter<Itinerary> = { _id: new Types.ObjectId(itineraryId), visibility: ItineraryVisibility.PUBLIC };
+    const filter: QueryFilter<Itinerary> = { _id: new Types.ObjectId(itineraryId), visibility: ItineraryVisibility.PUBLIC, isHidden: { $ne: true } };
     if (authorId !== undefined) filter.userId = new Types.ObjectId(authorId);
     const row = await this.itineraries.findOne(filter, SUMMARY_PROJECTION).lean<Itinerary>().exec();
     if (!row) return null;
@@ -623,6 +623,38 @@ export class ItinerariesService {
     const statuses = await this.accountStatuses.getAccountStatuses([ownerId]);
     if (!isVisibleStatus(statuses.get(ownerId))) return null;
     return ItinerarySummaryDto.from(row, await this.attributionNames([row], statuses));
+  }
+
+  // ---------------------------------------------------------------- moderation for administrators (GEN-09, GEN-10)
+
+  /**
+   * GEN-09: whether an itinerary can be reported. Only PUBLIC itineraries are reportable, since
+   * nobody but the owner can see a private one. Hidden ones still count, so duplicate reports
+   * and later reviews keep working. Invalid or unknown ids return false.
+   */
+  async itineraryExists(itineraryId: string): Promise<boolean> {
+    if (!isObjectIdString(itineraryId)) return false;
+    return (await this.itineraries.exists({ _id: new Types.ObjectId(itineraryId), visibility: ItineraryVisibility.PUBLIC }).exec()) !== null;
+  }
+
+  /**
+   * GEN-10: hides or unhides an itinerary after a report. A hidden itinerary disappears from
+   * public search, public and direct viewing, cloning, budget summaries, hotel/flight search,
+   * images and the blog views; its owner still sees it, flagged `isHidden`. 404 if unknown.
+   * Writes only the flag, so a concurrent owner edit is not lost.
+   */
+  async setItineraryHidden(itineraryId: string, hidden: boolean): Promise<void> {
+    const id = toObjectId(itineraryId, NOT_FOUND);
+    const result = await this.itineraries.updateOne({ _id: id }, { $set: { isHidden: hidden } }).exec();
+    if (result.matchedCount === 0) throw new NotFoundException(NOT_FOUND);
+  }
+
+  /** GEN-10: deletes an itinerary and its activity images. 404 if unknown. */
+  async adminDeleteItinerary(itineraryId: string): Promise<void> {
+    const id = toObjectId(itineraryId, NOT_FOUND);
+    const deleted = await this.itineraries.findOneAndDelete({ _id: id }).exec();
+    if (!deleted) throw new NotFoundException(NOT_FOUND);
+    await this.images.deleteMany({ itineraryId: id }).exec();
   }
 
   /** ITN-21: an independent private copy. Author status is rechecked at clone time. */
@@ -780,7 +812,7 @@ export class ItinerariesService {
 
   private async canRead(itinerary: ItineraryDocument, viewer: Viewer): Promise<boolean> {
     if (viewer && itinerary.userId.toString() === viewer.userId) return true;
-    if (itinerary.visibility !== ItineraryVisibility.PUBLIC) return false;
+    if (itinerary.visibility !== ItineraryVisibility.PUBLIC || itinerary.isHidden) return false;
     const authorId = itinerary.userId.toString();
     return isVisibleStatus((await this.accountStatuses.getAccountStatuses([authorId])).get(authorId));
   }
@@ -888,6 +920,10 @@ const SORTS: Record<PublicItinerarySort, Record<string, 1 | -1>> = {
 
 function pageOf(items: ItinerarySummaryDto[], page: number, total: number): ItineraryPageDto {
   return { items, page, pageSize: ITINERARY_PAGE_SIZE, total, totalPages: Math.ceil(total / ITINERARY_PAGE_SIZE) };
+}
+
+function isObjectIdString(id: string): boolean {
+  return typeof id === 'string' && Types.ObjectId.isValid(id) && String(new Types.ObjectId(id)) === id.toLowerCase();
 }
 
 function toObjectId(id: string, notFoundMessage: string): Types.ObjectId {

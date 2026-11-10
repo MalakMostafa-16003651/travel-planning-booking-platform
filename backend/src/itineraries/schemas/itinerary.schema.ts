@@ -231,6 +231,13 @@ export class Itinerary {
   @Prop({ type: Date, default: null })
   publishedAt!: Date | null;
 
+  /**
+   * GEN-10: hidden by an administrator after a report. Independent of `visibility`: a hidden
+   * itinerary is shown only to its owner, and only an administrator can unhide it.
+   */
+  @Prop({ type: Boolean, default: false })
+  isHidden!: boolean;
+
   declare createdAt: Date;
   declare updatedAt: Date;
 }

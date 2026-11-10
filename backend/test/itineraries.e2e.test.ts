@@ -623,6 +623,83 @@ describe('Itineraries, activities and budgeting', { concurrency: false }, () => 
     });
   });
 
+  describe('moderation hooks for administrators (GEN-09, GEN-10)', () => {
+    const userIdOf = async (email: string) => (await users.findOne({ email }).lean().exec())!._id.toString();
+
+    it('only lets PUBLIC itineraries be reported', async () => {
+      const publicId = await createItinerary(alice, { visibility: 'PUBLIC' });
+      const privateId = await createItinerary(alice);
+      assert.equal(await itinerariesService.itineraryExists(publicId), true);
+      assert.equal(await itinerariesService.itineraryExists(privateId), false);
+      assert.equal(await itinerariesService.itineraryExists(new Types.ObjectId().toString()), false);
+      assert.equal(await itinerariesService.itineraryExists('not-an-id'), false);
+      await itinerariesService.setItineraryHidden(publicId, true);
+      assert.equal(await itinerariesService.itineraryExists(publicId), true, 'hidden ones can still be reviewed');
+    });
+
+    it('hides an itinerary from everyone but its owner, until an administrator unhides it', async () => {
+      const id = await createItinerary(alice, { title: 'Nile cruise', visibility: 'PUBLIC' });
+      await addDay(id, 'Cairo');
+      const aliceId = await userIdOf('alice@example.com');
+      await itinerariesService.setItineraryHidden(id, true);
+
+      assert.equal((await http().get('/api/itineraries/public/search').expect(200)).body.total, 0);
+      await http().get(`/api/itineraries/public/${id}`).expect(404);
+      await http().get(`/api/itineraries/${id}`).set('Cookie', bob).expect(404);
+      const admin = await login('admin@example.com', { role: UserRole.ADMIN });
+      await http().get(`/api/itineraries/${id}`).set('Cookie', admin).expect(404);
+      await http().get(`/api/itineraries/${id}/budget-summary`).set('Cookie', bob).expect(404);
+      await http().post(`/api/itineraries/${id}/clone`).set('Cookie', bob).expect(404);
+      assert.equal((await itinerariesService.listPublicByAuthor(aliceId)).total, 0);
+      assert.equal(await itinerariesService.getPublicSummary(id), null);
+
+      const owner = (await http().get(`/api/itineraries/${id}`).set('Cookie', alice).expect(200)).body;
+      assert.equal(owner.isHidden, true);
+      const mine = (await http().get('/api/itineraries').set('Cookie', alice).expect(200)).body;
+      assert.equal(mine.items[0].isHidden, true);
+      // Changing visibility does not unhide it.
+      await http().patch(`/api/itineraries/${id}`).set('Cookie', alice).send({ visibility: 'PRIVATE' }).expect(200);
+      await http().patch(`/api/itineraries/${id}`).set('Cookie', alice).send({ visibility: 'PUBLIC' }).expect(200);
+      await http().get(`/api/itineraries/public/${id}`).expect(404);
+
+      await itinerariesService.setItineraryHidden(id, false);
+      const visible = (await http().get(`/api/itineraries/public/${id}`).expect(200)).body;
+      assert.equal('isHidden' in visible, false);
+      assert.equal((await http().get('/api/itineraries/public/search').expect(200)).body.total, 1);
+      await assert.rejects(itinerariesService.setItineraryHidden(new Types.ObjectId().toString(), true), NotFoundException);
+      await assert.rejects(itinerariesService.setItineraryHidden('not-an-id', true), NotFoundException);
+    });
+
+    it('hides activity images of a hidden itinerary from other viewers', async () => {
+      const id = await createItinerary(alice, { visibility: 'PUBLIC' });
+      const day = (await addDay(id, 'Cairo')).days[0].dayId;
+      const activityId = (await http().post(`/api/itineraries/${id}/days/${day}/activities`).set('Cookie', alice)
+        .send({ title: 'Karnak' }).expect(201)).body.days[0].activities[0].activityId;
+      const url = (await http().post(`/api/activities/${activityId}/images`).set('Cookie', alice).attach('image', PNG, 'k.png').expect(201))
+        .body.days[0].activities[0].images[0].url;
+      await http().get(url).expect(200);
+      await itinerariesService.setItineraryHidden(id, true);
+      await http().get(url).expect(404);
+      await http().get(url).set('Cookie', alice).expect(200);
+    });
+
+    it('deletes an itinerary and its images for an administrator', async () => {
+      const id = await createItinerary(alice, { visibility: 'PUBLIC' });
+      const day = (await addDay(id, 'Cairo')).days[0].dayId;
+      const activityId = (await http().post(`/api/itineraries/${id}/days/${day}/activities`).set('Cookie', alice)
+        .send({ title: 'Karnak' }).expect(201)).body.days[0].activities[0].activityId;
+      await http().post(`/api/activities/${activityId}/images`).set('Cookie', alice).attach('image', PNG, 'k.png').expect(201);
+      assert.equal(await connection.collection('activityimages').countDocuments(), 1);
+
+      await itinerariesService.adminDeleteItinerary(id);
+      assert.equal(await connection.collection('itineraries').countDocuments(), 0);
+      assert.equal(await connection.collection('activityimages').countDocuments(), 0);
+      await http().get(`/api/itineraries/${id}`).set('Cookie', alice).expect(404);
+      await assert.rejects(itinerariesService.adminDeleteItinerary(id), NotFoundException);
+      await assert.rejects(itinerariesService.adminDeleteItinerary('not-an-id'), NotFoundException);
+    });
+  });
+
   describe('read-only views for the blog (BLG-12, BLG-13)', () => {
     const userIdOf = async (email: string) => (await users.findOne({ email }).lean().exec())!._id.toString();
 
