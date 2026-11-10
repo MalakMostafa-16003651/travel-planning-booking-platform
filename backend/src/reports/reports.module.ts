@@ -3,6 +3,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 import { AuthModule } from '../auth/auth.module';
 import { BlogModule } from '../blog/blog.module';
+import { ItinerariesModule } from '../itineraries/itineraries.module';
 import { ReviewsModule } from '../reviews/reviews.module';
 import { UsersModule } from '../users/users.module';
 import { AdminReportsController } from './admin-reports.controller';
@@ -21,6 +22,8 @@ import { Report, ReportSchema } from './schemas/report.schema';
     BlogModule,
     // Person 6's exported hide/delete/exists operations for hotel reviews.
     ReviewsModule,
+    // Person 7's exported hide/delete/exists operations for public itineraries (PR #81).
+    ItinerariesModule,
     MongooseModule.forFeature([{ name: Report.name, schema: ReportSchema }]),
   ],
   controllers: [ReportsController, AdminReportsController],
