@@ -1,7 +1,11 @@
 # ITN-27 (optional bonus): link booked flights and hotels to itinerary days
 
-Status: **proposal, not implemented.** Owner: Person 7 (Kenzy). Needs confirmation from
-Person 4 (Ismail, flight bookings) and Person 6 (Osama, hotel bookings) before coding.
+Status: **proposal, not implemented.** Owner: Person 7 (Kenzy).
+
+| Owner | Interface | Status |
+| --- | --- | --- |
+| Person 6, Osama (hotel bookings) | `HotelBookingsService.getMine` | **Confirmed 2026-11-10** (see section 1) |
+| Person 4, Ismail (flight bookings) | `FlightBookingsService.getMine` | Waiting for confirmation |
 
 Requirement (workbook, Bonus!D8): *"The system shall allow booked flights and hotels to be
 linked to itinerary days, feeding the budget."* Endpoint in PDF 8.8:
@@ -14,12 +18,24 @@ linked to itinerary days, feeding the budget."* Endpoint in PDF 8.8:
 | Module | Method used | Fields read |
 | --- | --- | --- |
 | `FlightBookingsModule` (Person 4) | `FlightBookingsService.getMine(flightBookingId, userId)` | `status`, `totalAmount`, `currency`, `bookingReference`, `segments[]` (`departureAirportCode`, `arrivalAirportCode`, `departureAt`, `departureTimeZone`, `flightNumber`) |
-| `HotelBookingsModule` (Person 6) | `HotelBookingsService.getMine(hotelBookingId, userId)` | `status`, `totalPrice`, `currency`, `bookingReference`, `hotelName`, `checkIn`, `checkOut`, `nights` |
+| `HotelBookingsModule` (Person 6) | `HotelBookingsService.getMine(hotelBookingId, userId)` | `status`, `totalPrice`, `currency`, `bookingReference`, `hotelName`, `checkIn`, `checkOut`, `nights` (confirmed by Osama) |
 
 Both already return 404 for another user's booking (ACC-11), so a user can only link their own
 bookings.
 
-**Questions for Ismail and Osama:**
+**Osama's answer (hotel bookings, 2026-11-10).** `getMine(hotelBookingId, userId)` and these
+fields are stable; he will tell Person 7 before renaming anything. Details:
+
+- Exact names: `status`, `totalPrice`, `currency`, `bookingReference`, `hotelName`, `checkIn`,
+  `checkOut`, `nights`.
+- `bookingReference` exists only once the booking is `CONFIRMED`; it is missing while `PENDING`.
+  The itinerary only links `CONFIRMED`/`COMPLETED` bookings, but treats it as optional anyway.
+- `checkIn` and `checkOut` are `YYYY-MM-DD` strings. Check-out is the departure day, not a night
+  stayed, which matches the day rule in section 4 (check-in ≤ day < check-out).
+- `getMine` returns 404 if the booking isn't that user's.
+- Amounts are USD minor units: show `totalPrice / 100` with 2 decimals.
+
+**Questions still open for Ismail (flight bookings):**
 1. Can we treat `getMine` and the fields above as a stable interface (no renames without telling
    Person 7)?
 2. Amounts are USD integer minor units (PAY-04). Is it correct to show them as `amount / 100`?
