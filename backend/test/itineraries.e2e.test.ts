@@ -19,6 +19,7 @@ import { CurrenciesService } from '../src/currencies/currencies.service';
 import { configureApplication } from '../src/configure-application';
 import { FxRatesClient, FxRatesUnavailableError } from '../src/itineraries/currency/fx-rates.client';
 import { ItinerariesModule } from '../src/itineraries/itineraries.module';
+import { ItinerariesService } from '../src/itineraries/itineraries.service';
 import { ITINERARY_ACCOUNT_STATUSES, ItineraryAccountStatusesPort } from '../src/itineraries/ports/itinerary-authors.port';
 import { BookingStatus } from '../src/common/enums/booking-status.enum';
 import { ITINERARY_HOTEL_BOOKINGS, LinkableBooking } from '../src/itineraries/ports/itinerary-bookings.port';
@@ -92,6 +93,7 @@ describe('Itineraries, activities and budgeting', { concurrency: false }, () => 
   let connection: Connection;
   let users: Model<UserDocument>;
   let accountStatuses: ItineraryAccountStatusesPort;
+  let itinerariesService: ItinerariesService;
   const fx = new FakeFxClient();
   const flights = new FakeSearch<ItineraryFlightSearch>();
   const hotels = new FakeSearch<ItineraryHotelSearch>();
@@ -147,6 +149,7 @@ describe('Itineraries, activities and budgeting', { concurrency: false }, () => 
     connection = moduleRef.get(getConnectionToken());
     users = moduleRef.get(getModelToken(User.name));
     accountStatuses = moduleRef.get(ITINERARY_ACCOUNT_STATUSES);
+    itinerariesService = moduleRef.get(ItinerariesService);
     await Promise.all([users.init(), moduleRef.get<Model<Itinerary>>(getModelToken(Itinerary.name)).init()]);
     await moduleRef.get(CurrenciesService).seedSupported();
     await moduleRef.get(ReferenceDataService).seedSupported();
@@ -613,6 +616,80 @@ describe('Itineraries, activities and budgeting', { concurrency: false }, () => 
     it('does not clone private itineraries', async () => {
       const id = await createItinerary();
       await http().post(`/api/itineraries/${id}/clone`).set('Cookie', bob).expect(404);
+    });
+  });
+
+  describe('read-only views for the blog (BLG-12, BLG-13)', () => {
+    const userIdOf = async (email: string) => (await users.findOne({ email }).lean().exec())!._id.toString();
+
+    it("lists an author's public itineraries with the same visibility rules as public search", async () => {
+      const aliceId = await userIdOf('alice@example.com');
+      for (let i = 0; i < 11; i += 1) await createItinerary(alice, { title: `Public ${i}`, visibility: 'PUBLIC' });
+      await createItinerary(alice, { title: 'Secret plan' });
+      await createItinerary(bob, { title: 'Bob trip', visibility: 'PUBLIC' });
+
+      const first = await itinerariesService.listPublicByAuthor(aliceId);
+      assert.equal(first.total, 11);
+      assert.equal(first.totalPages, 2);
+      assert.equal(first.items.length, 10);
+      assert.equal(first.items[0].title, 'Public 10', 'newest published first');
+      assert.equal(first.items[0].author?.name, 'alice');
+      assert.ok(first.items.every((item) => item.visibility === 'PUBLIC' && item.userId === aliceId));
+      assert.ok(first.items.every((item) => !('days' in item) && !('linkedBookings' in item)), 'summary fields only');
+      assert.equal((await itinerariesService.listPublicByAuthor(aliceId, 2)).items.length, 1);
+
+      await setStatus('alice@example.com', AccountStatus.SUSPENDED);
+      assert.equal((await itinerariesService.listPublicByAuthor(aliceId)).total, 11, 'suspended authors stay visible');
+      await setStatus('alice@example.com', AccountStatus.DEACTIVATED);
+      assert.deepEqual(await itinerariesService.listPublicByAuthor(aliceId), { items: [], page: 1, pageSize: 10, total: 0, totalPages: 0 });
+      assert.equal((await itinerariesService.listPublicByAuthor(new Types.ObjectId().toString())).total, 0, 'missing author');
+      assert.equal((await itinerariesService.listPublicByAuthor('not-an-id')).total, 0);
+    });
+
+    it("shows a clone's deactivated original author as Deleted user", async () => {
+      const sourceId = await createItinerary(bob, { title: 'Nile cruise', visibility: 'PUBLIC' });
+      const clone = (await http().post(`/api/itineraries/${sourceId}/clone`).set('Cookie', alice).expect(201)).body;
+      await http().patch(`/api/itineraries/${clone.itineraryId}`).set('Cookie', alice).send({ visibility: 'PUBLIC' }).expect(200);
+      await setStatus('bob@example.com', AccountStatus.DEACTIVATED);
+      const page = await itinerariesService.listPublicByAuthor(await userIdOf('alice@example.com'));
+      assert.equal(page.items[0].clonedFrom?.authorName, 'Deleted user');
+    });
+
+    it('returns one public summary only while it is public and its author is visible', async () => {
+      const aliceId = await userIdOf('alice@example.com');
+      const bobId = await userIdOf('bob@example.com');
+      const id = await createItinerary(alice, { title: 'Nile cruise', visibility: 'PUBLIC' });
+      const privateId = await createItinerary(alice, { title: 'Secret plan' });
+
+      const summary = await itinerariesService.getPublicSummary(id);
+      assert.equal(summary?.title, 'Nile cruise');
+      assert.equal(summary?.author?.name, 'alice');
+      assert.equal('days' in summary!, false);
+      assert.equal((await itinerariesService.getPublicSummary(id, aliceId))?.itineraryId, id);
+      assert.equal(await itinerariesService.getPublicSummary(id, bobId), null, "another author's itinerary");
+      assert.equal(await itinerariesService.getPublicSummary(privateId), null);
+      assert.equal(await itinerariesService.getPublicSummary(privateId, aliceId), null, 'private even for its owner');
+      assert.equal(await itinerariesService.getPublicSummary('not-an-id'), null);
+      assert.equal(await itinerariesService.getPublicSummary(id, 'not-an-id'), null);
+      assert.equal(await itinerariesService.getPublicSummary(new Types.ObjectId().toString()), null);
+
+      await http().patch(`/api/itineraries/${id}`).set('Cookie', alice).send({ visibility: 'PRIVATE' }).expect(200);
+      assert.equal(await itinerariesService.getPublicSummary(id), null, 'made private');
+      await http().patch(`/api/itineraries/${id}`).set('Cookie', alice).send({ visibility: 'PUBLIC' }).expect(200);
+      await setStatus('alice@example.com', AccountStatus.DEACTIVATED);
+      assert.equal(await itinerariesService.getPublicSummary(id), null, 'deactivated author');
+    });
+
+    it('fails closed when the account-status lookup fails', async () => {
+      const id = await createItinerary(alice, { visibility: 'PUBLIC' });
+      const original = accountStatuses.getAccountStatuses;
+      accountStatuses.getAccountStatuses = async () => { throw new Error('users unavailable'); };
+      try {
+        await assert.rejects(itinerariesService.listPublicByAuthor(await userIdOf('alice@example.com')));
+        await assert.rejects(itinerariesService.getPublicSummary(id));
+      } finally {
+        accountStatuses.getAccountStatuses = original;
+      }
     });
   });
 
