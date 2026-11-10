@@ -10,23 +10,26 @@ import { CreateActivityDto, UpdateActivityDto } from './dto/activity.dto';
 import { CreateBudgetEntryDto, UpdateBudgetEntryDto } from './dto/budget-entry.dto';
 import { BudgetSummaryDto, CategoryTotalsDto } from './dto/budget-summary.dto';
 import { CreateItineraryDto } from './dto/create-itinerary.dto';
+import { ConvertedLinkedBookingDto, CreateLinkedBookingDto, LinkedBookingDto } from './dto/linked-booking.dto';
 import { CreateItineraryDayDto, ReorderItineraryDaysDto, UpdateItineraryDayDto } from './dto/itinerary-day.dto';
 import { ItineraryFlightsQueryDto, ItineraryHotelsQueryDto, PublicItinerarySort, SearchPublicItinerariesQueryDto } from './dto/itinerary-queries.dto';
 import { AuthorNames, cityGroupsOf, DELETED_USER_NAME, ItineraryDto, ItineraryPageDto, ItinerarySummaryDto } from './dto/itinerary-response.dto';
 import { CreateTransportCostDto, UpdateTransportCostDto } from './dto/transport-cost.dto';
 import { UpdateItineraryDto } from './dto/update-itinerary.dto';
 import {
-  BudgetCategory, DAY_MS, dateOfDay, escapeRegex, formatDateOnly, ITINERARY_PAGE_SIZE, ItineraryVisibility, MAX_ACTIVITIES_PER_DAY,
-  MAX_BUDGETS_PER_DAY, MAX_DAYS, MAX_IMAGES_PER_ACTIVITY, MAX_TRANSPORT_COSTS, parseDateOnly, roundMoney,
+  BudgetCategory, DAY_MS, dateOfDay, escapeRegex, formatDateOnly, ITINERARY_PAGE_SIZE, ItineraryVisibility, LinkedBookingType, MAX_ACTIVITIES_PER_DAY,
+  MAX_BUDGETS_PER_DAY, MAX_DAYS, MAX_IMAGES_PER_ACTIVITY, MAX_LINKED_BOOKINGS, MAX_TRANSPORT_COSTS, minorToMajor, parseDateOnly, roundMoney,
 } from './itinerary.rules';
 import { AccountStatus } from '../common/enums/account-status.enum';
 import {
   ITINERARY_ACCOUNT_STATUSES, ITINERARY_AUTHOR_NAMES, ItineraryAccountStatusesPort, ItineraryAuthorNamesPort, isVisibleStatus,
 } from './ports/itinerary-authors.port';
+import { BookingStatus } from '../common/enums/booking-status.enum';
+import { ITINERARY_FLIGHT_BOOKINGS, ITINERARY_HOTEL_BOOKINGS, ItineraryBookingsPort, LinkableBooking } from './ports/itinerary-bookings.port';
 import { ITINERARY_CURRENCIES, ItineraryCurrenciesPort } from './ports/itinerary-currencies.port';
 import { FlightSearchPort, HotelSearchPort, ITINERARY_FLIGHT_SEARCH, ITINERARY_HOTEL_SEARCH, ItineraryFlightSearch, ItineraryHotelSearch } from './ports/travel-search.port';
 import { ActivityImage } from './schemas/activity-image.schema';
-import { Activity, BudgetEntry, Itinerary, ItineraryDay, ItineraryDocument, TransportCost } from './schemas/itinerary.schema';
+import { Activity, BudgetEntry, Itinerary, ItineraryDay, ItineraryDocument, LinkedBooking, TransportCost } from './schemas/itinerary.schema';
 
 /** Who is asking. Absent for guests. */
 export type Viewer = { userId: string; role: UserRole } | undefined;
@@ -44,6 +47,13 @@ export interface SearchResult<C> {
 }
 
 const NOT_FOUND = 'Itinerary not found';
+const LINK_NOT_FOUND = 'Linked booking not found';
+
+/** ITN-27: a stored link with its live booking (null if the booking no longer exists). */
+interface ResolvedLink {
+  link: LinkedBooking;
+  booking: LinkableBooking | null;
+}
 
 @Injectable()
 export class ItinerariesService {
@@ -56,6 +66,8 @@ export class ItinerariesService {
     @Inject(ITINERARY_CURRENCIES) private readonly currencies: ItineraryCurrenciesPort,
     @Inject(ITINERARY_FLIGHT_SEARCH) private readonly flights: FlightSearchPort,
     @Inject(ITINERARY_HOTEL_SEARCH) private readonly hotels: HotelSearchPort,
+    @Inject(ITINERARY_FLIGHT_BOOKINGS) private readonly flightBookings: ItineraryBookingsPort,
+    @Inject(ITINERARY_HOTEL_BOOKINGS) private readonly hotelBookings: ItineraryBookingsPort,
     private readonly exchangeRates: ExchangeRatesService,
     private readonly references: ReferenceDataService,
     private readonly airports: AirportsService,
@@ -170,6 +182,7 @@ export class ItinerariesService {
     const imageIds = day.activities.flatMap((activity) => activity.images.map((image) => image._id));
     itinerary.days = itinerary.days.filter((candidate) => !candidate._id.equals(day._id));
     itinerary.transportCosts = itinerary.transportCosts.filter((cost) => !cost.dayId?.equals(day._id));
+    itinerary.linkedBookings = itinerary.linkedBookings.filter((link) => !link.dayId.equals(day._id));
     const saved = await this.persist(itinerary);
     if (imageIds.length > 0) await this.images.deleteMany({ _id: { $in: imageIds } }).exec();
     return this.toDto(saved, userId);
@@ -348,8 +361,13 @@ export class ItinerariesService {
     const itinerary = await this.findReadable(itineraryId, viewer);
     const currency = requestedCurrency ? await this.assertCurrency(requestedCurrency, 'currency')
       : viewer ? await this.defaultCurrency(viewer.userId, itinerary.currency) : itinerary.currency;
+    // ITN-27: linked bookings are private; only the owner's summary includes them.
+    const isOwner = viewer !== undefined && itinerary.userId.toString() === viewer.userId;
+    const links = isOwner ? await this.resolveLinks(itinerary) : [];
+    const counted = links.filter(({ booking }) => booking !== null && countsInBudget(booking.status));
 
     const sources = new Set<string>([
+      ...counted.map(({ booking }) => booking!.currency),
       ...itinerary.days.flatMap((day) => day.budgets.map((entry) => entry.currency)),
       ...itinerary.days.flatMap((day) => day.activities.filter((activity) => activity.cost !== undefined)
         .map((activity) => activity.currency ?? itinerary.currency)),
@@ -362,8 +380,23 @@ export class ItinerariesService {
     const addOriginal = (code: string, amount: number) => originals.set(code, (originals.get(code) ?? 0) + amount);
 
     const overall = emptyCategories();
+    let bookedTransport = 0;
     const byDay = itinerary.days.map((day, index) => {
       const categories = emptyCategories();
+      let dayBookedTransport = 0;
+      for (const { link, booking } of counted) {
+        if (!link.dayId.equals(day._id)) continue;
+        const major = minorToMajor(booking!.amountMinor, booking!.currency);
+        const value = convert(major, booking!.currency);
+        addOriginal(booking!.currency, major);
+        if (link.type === LinkedBookingType.HOTEL) {
+          categories.ACCOMMODATION += value;
+          overall.ACCOMMODATION += value;
+        } else {
+          dayBookedTransport += value;
+        }
+      }
+      bookedTransport += dayBookedTransport;
       for (const entry of day.budgets) {
         const value = convert(entry.amount, entry.currency);
         categories[entry.category] += value;
@@ -378,7 +411,7 @@ export class ItinerariesService {
         overall.ACTIVITIES += value;
         addOriginal(from, activity.cost);
       }
-      const dayTransport = itinerary.transportCosts.filter((cost) => cost.dayId?.equals(day._id))
+      const dayTransport = dayBookedTransport + itinerary.transportCosts.filter((cost) => cost.dayId?.equals(day._id))
         .reduce((sum, cost) => sum + convert(cost.amount, cost.currency), 0);
       return {
         dayId: day._id.toString(),
@@ -405,7 +438,7 @@ export class ItinerariesService {
       };
     });
     const daily = sumCategories(overall);
-    const transport = transportCosts.reduce((sum, cost) => sum + cost.rawConverted, 0);
+    const transport = bookedTransport + transportCosts.reduce((sum, cost) => sum + cost.rawConverted, 0);
 
     return {
       itineraryId: itinerary._id.toString(),
@@ -425,11 +458,87 @@ export class ItinerariesService {
         total: roundMoney(group.dayIds.reduce((sum, id) => sum + (rawDayTotals.get(id) ?? 0), 0)),
       })),
       transportCosts: transportCosts.map(({ rawConverted, ...cost }) => ({ ...cost, convertedAmount: roundMoney(rawConverted) })),
+      ...(isOwner ? { linkedBookings: links.map(({ link, booking }): ConvertedLinkedBookingDto => {
+        const counts = booking !== null && countsInBudget(booking.status);
+        const major = booking ? minorToMajor(booking.amountMinor, booking.currency) : undefined;
+        return {
+          linkedBookingId: link._id.toString(),
+          type: link.type,
+          dayId: link.dayId.toString(),
+          status: booking?.status ?? null,
+          countsInBudget: counts,
+          ...(booking ? { label: booking.label, amount: major, currency: booking.currency } : {}),
+          convertedAmount: counts ? roundMoney(convert(major!, booking!.currency)) : 0,
+        };
+      }) } : {}),
       originalTotals: [...originals].sort(([a], [b]) => a.localeCompare(b))
         .map(([code, amount]) => ({ currency: code, amount: roundMoney(amount) })),
       rateDate: table.rateDate ? formatDateOnly(table.rateDate) : null,
       ratesStale: table.stale,
     };
+  }
+
+  // ---------------------------------------------------------------- linked bookings (ITN-27, bonus)
+
+  /**
+   * Links one of the owner's own CONFIRMED or COMPLETED bookings to a day. The day must fall on
+   * the booking's dates: a night of a hotel stay, or a flight's local departure date.
+   */
+  async linkBooking(itineraryId: string, userId: string, input: CreateLinkedBookingDto): Promise<ItineraryDto> {
+    const itinerary = await this.findOwned(itineraryId, userId);
+    const dayIndex = itinerary.days.findIndex((day) => day._id.toString() === input.dayId.toLowerCase());
+    if (dayIndex < 0) throw fieldError('dayId', 'Day not found in this itinerary');
+    const bookingOid = new Types.ObjectId(input.bookingId);
+    if (itinerary.linkedBookings.some((link) => link.type === input.type && link.bookingId.equals(bookingOid))) {
+      throw new ConflictException('This booking is already linked to this itinerary');
+    }
+    if (itinerary.linkedBookings.length >= MAX_LINKED_BOOKINGS) {
+      throw new ConflictException(`An itinerary can have at most ${MAX_LINKED_BOOKINGS} linked bookings`);
+    }
+    const booking = await this.bookingPort(input.type).getOwnBooking(input.bookingId, userId);
+    if (!countsInBudget(booking.status)) {
+      throw fieldError('bookingId', `Only CONFIRMED or COMPLETED bookings can be linked; this one is ${booking.status}`);
+    }
+    const dayDate = formatDateOnly(dateOfDay(itinerary.startDate, dayIndex + 1));
+    if (!bookingCoversDate(input.type, booking, dayDate)) {
+      throw fieldError('dayId', `${expectedDays(input.type, booking)}; this day is ${dayDate}`);
+    }
+    itinerary.linkedBookings.push({
+      type: input.type,
+      bookingId: bookingOid,
+      dayId: itinerary.days[dayIndex]._id,
+      linkedAt: new Date(),
+    } as unknown as LinkedBooking);
+    return this.toDto(await this.persist(itinerary), userId);
+  }
+
+  /** Removes the link only; the booking itself is untouched. */
+  async unlinkBooking(itineraryId: string, linkedBookingId: string, userId: string): Promise<ItineraryDto> {
+    const itinerary = await this.findOwned(itineraryId, userId);
+    const linkOid = toObjectId(linkedBookingId, LINK_NOT_FOUND);
+    if (!itinerary.linkedBookings.some((link) => link._id.equals(linkOid))) throw new NotFoundException(LINK_NOT_FOUND);
+    itinerary.linkedBookings = itinerary.linkedBookings.filter((link) => !link._id.equals(linkOid));
+    return this.toDto(await this.persist(itinerary), userId);
+  }
+
+  private bookingPort(type: LinkedBookingType): ItineraryBookingsPort {
+    return type === LinkedBookingType.HOTEL ? this.hotelBookings : this.flightBookings;
+  }
+
+  /**
+   * Live booking details for every link, looked up as the itinerary owner. A booking that no
+   * longer exists resolves to null; any other failure propagates (no silent partial totals).
+   */
+  private async resolveLinks(itinerary: ItineraryDocument): Promise<ResolvedLink[]> {
+    const ownerId = itinerary.userId.toString();
+    return Promise.all((itinerary.linkedBookings ?? []).map(async (link) => {
+      try {
+        return { link, booking: await this.bookingPort(link.type).getOwnBooking(link.bookingId.toString(), ownerId) };
+      } catch (error) {
+        if (error instanceof NotFoundException) return { link, booking: null };
+        throw error;
+      }
+    }));
   }
 
   // ---------------------------------------------------------------- public search and clone (ITN-20, ITN-21)
@@ -674,7 +783,11 @@ export class ItinerariesService {
 
   private async toDto(itinerary: ItineraryDocument, viewerId?: string): Promise<ItineraryDto> {
     const ownerId = itinerary.userId.toString() === viewerId ? viewerId : undefined;
-    return ItineraryDto.fromItinerary(itinerary.toObject() as Itinerary, await this.attributionNames([itinerary], new Map(), ownerId));
+    const dto = ItineraryDto.fromItinerary(itinerary.toObject() as Itinerary, await this.attributionNames([itinerary], new Map(), ownerId));
+    // ITN-27: linked bookings are personal, so only the owner ever sees them.
+    if (!ownerId) return dto;
+    const links = await this.resolveLinks(itinerary);
+    return { ...dto, linkedBookings: links.map((resolved) => linkedBookingDto(itinerary, resolved)) };
   }
 
   /** Names for authors and clone attributions; deactivated or missing authors show as "Deleted user". */
@@ -784,4 +897,45 @@ export function detectImageType(buffer: Buffer): string | null {
   if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'image/jpeg';
   if (buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
   return null;
+}
+
+/** ITN-27: only bookings that are actually booked count (and can be linked). */
+function countsInBudget(status: BookingStatus): boolean {
+  return status === BookingStatus.CONFIRMED || status === BookingStatus.COMPLETED;
+}
+
+/** Hotel: check-in ≤ day < check-out (check-out is the departure day). Flight: the departure date. */
+function bookingCoversDate(type: LinkedBookingType, booking: LinkableBooking, date: string): boolean {
+  if (type === LinkedBookingType.HOTEL) return booking.startDate <= date && booking.endDate !== undefined && date < booking.endDate;
+  return date === booking.startDate;
+}
+
+function expectedDays(type: LinkedBookingType, booking: LinkableBooking): string {
+  if (type === LinkedBookingType.FLIGHT) return `Pick the day dated ${booking.startDate} (the flight's departure date)`;
+  const lastNight = booking.endDate ? formatDateOnly(new Date(parseDateOnly(booking.endDate).getTime() - DAY_MS)) : booking.startDate;
+  return `Pick a day from ${booking.startDate} to ${lastNight} (the nights of this stay)`;
+}
+
+function linkedBookingDto(itinerary: ItineraryDocument, { link, booking }: ResolvedLink): LinkedBookingDto {
+  const base = {
+    linkedBookingId: link._id.toString(),
+    type: link.type,
+    bookingId: link.bookingId.toString(),
+    dayId: link.dayId.toString(),
+    linkedAt: link.linkedAt,
+  };
+  if (!booking) return { ...base, status: null, countsInBudget: false };
+  const dayIndex = itinerary.days.findIndex((day) => day._id.equals(link.dayId));
+  return {
+    ...base,
+    status: booking.status,
+    countsInBudget: countsInBudget(booking.status),
+    label: booking.label,
+    ...(booking.bookingReference ? { bookingReference: booking.bookingReference } : {}),
+    amount: minorToMajor(booking.amountMinor, booking.currency),
+    currency: booking.currency,
+    startDate: booking.startDate,
+    ...(booking.endDate ? { endDate: booking.endDate } : {}),
+    ...(dayIndex >= 0 ? { matchesDay: bookingCoversDate(link.type, booking, formatDateOnly(dateOfDay(itinerary.startDate, dayIndex + 1))) } : {}),
+  };
 }

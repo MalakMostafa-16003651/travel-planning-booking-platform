@@ -307,7 +307,7 @@ All routes need a login and role `USER` (shared `AuthGuard` and `RolesGuard`). A
 
 ## Itineraries, activities and budgeting
 
-`backend/src/itineraries` implements ITN-01, ITN-03, ITN-05, ITN-07, ITN-08, ITN-10, ITN-12, ITN-14, ITN-16, ITN-18, ITN-20, ITN-21, ITN-25 and ITN-26, plus the itinerary parts of ACC-11 and ACC-12. The interfaces it needs from other modules and the open questions are in the [itinerary contract proposal](../docs/requirements/itinerary-contract-proposal.md).
+`backend/src/itineraries` implements ITN-01, ITN-03, ITN-05, ITN-07, ITN-08, ITN-10, ITN-12, ITN-14, ITN-16, ITN-18, ITN-20, ITN-21, ITN-25 and ITN-26, the optional ITN-27 bonus (hotel bookings; flights pending), plus the itinerary parts of ACC-11 and ACC-12. The interfaces it needs from other modules and the open questions are in the [itinerary contract proposal](../docs/requirements/itinerary-contract-proposal.md).
 
 | Method | Endpoint | Who | Result |
 | --- | --- | --- | --- |
@@ -347,6 +347,8 @@ All routes need a login and role `USER` (shared `AuthGuard` and `RolesGuard`). A
 `FXRATES_API_KEY` is optional (the provider has a keyless tier) and is sent as a bearer header, never in a URL or response.
 
 **Flights and hotels (ITN-25, ITN-26).** The itinerary derives the city and dates and passes them to the Hotels search (HTL-11, HTL-12) and the Flights search (FLT-11, FLT-12, FLT-15). The hotel search is connected to `HotelsService.search`. The flight search is connected to `FlightsService.searchForItinerary`, which searches every airport of the destination city.
+
+**Linked bookings (ITN-27, optional bonus).** `POST /api/itineraries/:id/bookings` with `{ type, bookingId, dayId }` links one of the owner's own CONFIRMED or COMPLETED bookings to a day; `DELETE /api/itineraries/:id/bookings/:linkedBookingId` unlinks it (the booking itself is untouched). A hotel day must be a night of the stay (check-in ≤ day < check-out); a flight day must be its local departure date. Only the reference is stored: price and status are read live through `HotelBookingsService.getMine`, so a later cancellation shows as CANCELLED and counts 0. In the owner's budget summary, hotels count as ACCOMMODATION on their day and flights add to that day's transport. Links are owner-only (hidden from other viewers, admins included, and never cloned), removed with their day, and limited to 20 per itinerary. Linking flights returns 503 until Person 4 confirms `FlightBookingsService.getMine` as the interface. Details: [ITN-27 proposal](../docs/requirements/itn-27-linked-bookings-proposal.md).
 
 For a manual Swagger check: log in, create an itinerary, add days in Cairo, Cairo and London, then reorder them and confirm day numbers, dates and `cityGroups` follow. Add budget entries in EGP and USD and call `budget-summary?currency=EUR`. Make the itinerary PUBLIC, log in as a second user, then search for it and clone it.
 

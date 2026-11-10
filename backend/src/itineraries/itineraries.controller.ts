@@ -15,6 +15,7 @@ import { BudgetSummaryQueryDto, ItineraryFlightsQueryDto, ItineraryHotelsQueryDt
 import { ItineraryDto, ItineraryPageDto } from './dto/itinerary-response.dto';
 import { CreateActivityDto } from './dto/activity.dto';
 import { CreateBudgetEntryDto } from './dto/budget-entry.dto';
+import { CreateLinkedBookingDto } from './dto/linked-booking.dto';
 import { CreateTransportCostDto } from './dto/transport-cost.dto';
 import { UpdateItineraryDto } from './dto/update-itinerary.dto';
 import { ItinerariesService, SearchResult } from './itineraries.service';
@@ -151,7 +152,7 @@ export class ItinerariesController {
   @Delete(':id/days/:dayId')
   @UseGuards(AuthGuard)
   @ApiCookieAuth('accessToken')
-  @ApiOperation({ summary: 'ITN-07: delete a day', description: 'Deletes its activities, images and budget entries. Later days move back one day. Linked transport costs are kept but unlinked.' })
+  @ApiOperation({ summary: 'ITN-07: delete a day', description: 'Deletes its activities, images and budget entries. Later days move back one day. Transport costs and linked bookings (ITN-27) on that day are removed.' })
   @ApiOkResponse({ type: ItineraryDto })
   @ApiUnauthorizedResponse({ type: ApiErrorDto })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: NOT_FOUND_DOC })
@@ -194,6 +195,34 @@ export class ItinerariesController {
   @ApiNotFoundResponse({ type: ApiErrorDto, description: NOT_FOUND_DOC })
   addTransportCost(@Param('id') id: string, @Body() input: CreateTransportCostDto, @Req() request: AuthenticatedRequest): Promise<ItineraryDto> {
     return this.itineraries.addTransportCost(id, request.user!.userId, input);
+  }
+
+  @Post(':id/bookings')
+  @UseGuards(AuthGuard)
+  @ApiCookieAuth('accessToken')
+  @ApiOperation({
+    summary: 'ITN-27 (bonus): link one of your booked flights or hotels to a day',
+    description: 'Owner only. The booking must be yours and CONFIRMED or COMPLETED. Hotel: the day must be a night of the stay (check-in ≤ day < check-out). Flight: the day must be the local departure date. Only the reference is stored; price and status are read live, and the booking then feeds the budget summary. Linked bookings are never shown to other viewers or copied to clones.',
+  })
+  @ApiCreatedResponse({ type: ItineraryDto })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'Invalid fields, unknown dayId, booking not CONFIRMED/COMPLETED, or the day is outside the booking dates.' })
+  @ApiUnauthorizedResponse({ type: ApiErrorDto })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: `${NOT_FOUND_DOC} Also returned when the booking is not yours.` })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'Already linked, or the limit of 20 linked bookings is reached.' })
+  @ApiServiceUnavailableResponse({ type: ApiErrorDto, description: 'Linking this booking type is not connected yet (flights pending Person 4).' })
+  linkBooking(@Param('id') id: string, @Body() input: CreateLinkedBookingDto, @Req() request: AuthenticatedRequest): Promise<ItineraryDto> {
+    return this.itineraries.linkBooking(id, request.user!.userId, input);
+  }
+
+  @Delete(':id/bookings/:linkedBookingId')
+  @UseGuards(AuthGuard)
+  @ApiCookieAuth('accessToken')
+  @ApiOperation({ summary: 'ITN-27 (bonus): unlink a booking from the itinerary', description: 'Owner only. Removes the link; the booking itself is not changed or cancelled.' })
+  @ApiOkResponse({ type: ItineraryDto })
+  @ApiUnauthorizedResponse({ type: ApiErrorDto })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: `${NOT_FOUND_DOC} Also returned for an unknown linkedBookingId.` })
+  unlinkBooking(@Param('id') id: string, @Param('linkedBookingId') linkedBookingId: string, @Req() request: AuthenticatedRequest): Promise<ItineraryDto> {
+    return this.itineraries.unlinkBooking(id, linkedBookingId, request.user!.userId);
   }
 
   @Get(':id/budget-summary')
