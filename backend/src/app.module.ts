@@ -1,3 +1,4 @@
+import { AdminAnalyticsModule } from './admin-analytics/admin-analytics.module';
 import { AccountDeactivationModule } from './users/account-deactivation.module';
 import { FavoritesModule } from './favorites/favorites.module';
 import { ItineraryExportsModule } from './itinerary-exports/itinerary-exports.module';
@@ -54,6 +55,7 @@ import { ReviewsModule } from './reviews/reviews.module';
     ReviewsModule,
     AuditLogsModule,
     AdminModule,
+    AdminAnalyticsModule,
     ReportsModule,
   ],
 })

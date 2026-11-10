@@ -190,3 +190,11 @@ Person 4 tells Person 7 before renaming or removing any of them.
 `totalAmount` is an integer in minor units of `USD` (PAY-04), so `totalAmount / 100`
 is the amount in dollars, as the e-ticket and Payments already show it. Local
 departure dates come from `departureAt` with `departureTimeZone`, not the UTC date.
+
+## Approved provider booking gates - 2026-11-10 session PR
+
+Malak approved private safe-integer `bookingVersion` counters on Airline, Flight, Hotel and Room. They are internal transaction conflict gates, default zero (legacy missing/null accepted), omitted from query/JSON/object results, and not user-editable. Existing owner schemas and status fields remain authoritative. Holds and new confirmations write the same provider/flight/room documents that deactivation/cancellation edits; a losing transaction retries and revalidates. Invalid/exhausted counters fail closed. No public DTO or environment variable is added.
+
+Flight acquisition order: User gate for paid confirmation, then sorted unique Airlines, sorted unique Flights, cabin inventory. Holds require active airlines/Scheduled future flights. New confirmation rejects deactivated airlines/cancelled flights; Payments handles the existing late-success compensation. Historical confirmation replay does not acquire new gates or invalidate confirmed bookings. User cancellation acquires Flight gates without requiring an active airline. If provider flight cancellation committed first, the user path records AIRLINE cancellation and full refund; if user cancellation committed first, its policy result is preserved. Failed held/booked seat release aborts every inventory and booking write; refunds run only after committed cancellation. Expired-payment recovery uses existing Payment outcome fields and the shared payment-owned pipeline, with no new money logic in booking modules.
+
+This section describes the feature-branch implementation, not a merged release. Test outcomes and PR URL are in Malak's continuous log. R2 multiple-airport round-trip pairing remains a separate business/interface decision.

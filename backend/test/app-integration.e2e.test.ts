@@ -94,11 +94,16 @@ describe('merged production module integration', { concurrency: false }, () => {
 
   it('starts the real module graph and exposes every merged domain in Swagger', async () => {
     const document = (await request(app.getHttpServer()).get('/api/docs-json').expect(200)).body;
-    for (const path of ['/api/auth/login', '/api/auth/forgot-password', '/api/auth/reset-password', '/api/users/me', '/api/admin/audit-logs', '/api/payments',
+    for (const path of ['/api/auth/login', '/api/auth/forgot-password', '/api/auth/reset-password', '/api/users/me', '/api/admin/audit-logs', '/api/admin/analytics', '/api/payments',
       '/api/payments/webhook', '/api/refunds/{id}', '/api/posts', '/api/itineraries',
       '/api/favorites', '/api/flight-bookings/hold', '/api/flights/search', '/api/hotels/search', '/api/currencies', '/api/countries']) {
       assert.ok(document.paths[path], `Missing production route ${path}`);
     }
+    const analyticsQuery = { from: '2026-01-01', to: '2026-01-31' };
+    await request(app.getHttpServer()).get('/api/admin/analytics').query(analyticsQuery).expect(401);
+    await request(app.getHttpServer()).get('/api/admin/analytics').query(analyticsQuery).set('Cookie', user.cookie).expect(403);
+    const analytics = await request(app.getHttpServer()).get('/api/admin/analytics').query(analyticsQuery).set('Cookie', admin.cookie).expect(200);
+    assert.equal(analytics.body.total, 0);
     assert.equal(document.paths['/api/admin/audit-logs'].post, undefined);
     assert.ok(document.paths['/api/payments/webhook'].post);
   });
