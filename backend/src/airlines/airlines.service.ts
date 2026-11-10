@@ -16,7 +16,7 @@ export class AirlinesService {
   async create(input: CreateAirlineDto): Promise<Airline> {
     try {
       return await this.airlines.create({
-        name: input.name.trim(), code: input.code, logo: input.logo ?? null,
+        name: input.name.trim(), code: input.code, logo: null,
         isActive: true, baggagePolicy: { pricePerExtraBag: 1, maxExtraBagsPerPassenger: 0 }, cancellationTiers: [],
       });
     } catch (error) {
