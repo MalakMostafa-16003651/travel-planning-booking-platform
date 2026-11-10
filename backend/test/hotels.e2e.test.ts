@@ -23,6 +23,9 @@ function cookiesFrom(response: Response): string {
   return header.map((cookie) => cookie.split(';')[0]).join('; ');
 }
 
+const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(32)]);
+const JPG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(32)]);
+
 describe('Hotels E2E', { concurrency: false }, () => {
   let replicaSet: MongoMemoryReplSet;
   let app: INestApplication;
@@ -825,6 +828,78 @@ describe('Hotels E2E', { concurrency: false }, () => {
       await http().get(`/api/hotels/${hotelId}/reservations`).expect(401);
       const ordinaryUser = await login('user@example.com');
       await http().get(`/api/hotels/${hotelId}/reservations`).set('Cookie', ordinaryUser).expect(403);
+    });
+  });
+
+  describe('Hotel photos - HTL-01, HTL-02, GEN-08', () => {
+    const upload = (cookie: string | undefined, file: Buffer | undefined, name = 'photo.png') => {
+      const call = http().post(`/api/hotels/${hotelId}/photos`);
+      if (cookie) call.set('Cookie', cookie);
+      if (file) call.attach('photo', file, name);
+      return call;
+    };
+
+    it('stores a photo and serves it by URL, up to the 5-photo limit', async () => {
+      const created = await upload(moderatorCookie, PNG).expect(201);
+      assert.equal(created.body.photos.length, 1);
+      const photoId = created.body.photos[0]._id;
+      assert.equal(created.body.photos[0].contentType, 'image/png');
+      const url = `/api/hotels/${hotelId}/photos/${photoId}`;
+
+      const image = await http().get(url).expect(200);
+      assert.match(image.headers['content-type'], /image\/png/);
+
+      await upload(moderatorCookie, JPG, 'photo.jpg').expect(201);
+      for (let i = 0; i < 3; i++) await upload(moderatorCookie, PNG).expect(201);
+      const full = await upload(moderatorCookie, PNG).expect(400);
+      assert.match(full.body.message, /at most 5 photos/);
+
+      const doc = (await http().get('/api/docs-json').expect(200)).body;
+      assert.ok(doc.paths['/api/hotels/{id}/photos'].post);
+      assert.ok(doc.paths['/api/hotels/{id}/photos/{photoId}'].get);
+      assert.ok(doc.paths['/api/hotels/{id}/photos/{photoId}'].delete);
+    });
+
+    it('rejects non-images even when named .png, a missing file, and files over 5 MB', async () => {
+      await upload(moderatorCookie, Buffer.from('not an image'), 'photo.png').expect(400);
+      await upload(moderatorCookie, undefined).expect(400);
+      await upload(moderatorCookie, Buffer.concat([PNG, Buffer.alloc(5 * 1024 * 1024)])).expect(413);
+    });
+
+    it('rejects uploads without a session (401) and from a normal user (403)', async () => {
+      await upload(undefined, PNG).expect(401);
+      const ordinaryUser = await login('user@example.com');
+      await upload(ordinaryUser, PNG).expect(403);
+    });
+
+    it('rejects uploading to, and deleting from, a hotel that is not the caller\'s own', async () => {
+      const otherModerator = await login('other-photo-moderator@example.com', UserRole.HOTEL_MODERATOR);
+      await upload(otherModerator, PNG).expect(403);
+
+      const other = await users.findOne({ email: 'other-photo-moderator@example.com' }).orFail().exec();
+      await connection.collection('moderatorassignments').insertOne({ moderatorId: other._id, hotelId: new Types.ObjectId() });
+      await upload(otherModerator, PNG).expect(404);
+    });
+
+    it('removes a photo, which then 404s', async () => {
+      const created = await upload(moderatorCookie, PNG).expect(201);
+      const photoId = created.body.photos[0]._id;
+      const url = `/api/hotels/${hotelId}/photos/${photoId}`;
+
+      await http().delete(url).set('Cookie', moderatorCookie).expect(200);
+      await http().get(url).expect(404);
+      await http().delete(url).set('Cookie', moderatorCookie).expect(404);
+    });
+
+    it('hides a deactivated hotel\'s photos from guests, but not from its own moderator or an admin', async () => {
+      const created = await upload(moderatorCookie, PNG).expect(201);
+      const photoId = created.body.photos[0]._id;
+      const url = `/api/hotels/${hotelId}/photos/${photoId}`;
+
+      await connection.collection('hotels').updateOne({ _id: new Types.ObjectId(hotelId) }, { $set: { isActive: false } });
+      await http().get(url).expect(404);
+      await http().get(url).set('Cookie', moderatorCookie).expect(200);
+      await http().get(url).set('Cookie', adminCookie).expect(200);
     });
   });
 });

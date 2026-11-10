@@ -1,9 +1,12 @@
 import { Header } from '@nestjs/common';
 import { HotelReservationsPageDto } from './dto/hotel-reservations-response.dto';
-import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put, Query, Req, StreamableFile, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import {
   ApiBadRequestResponse,
+  ApiBody,
   ApiConflictResponse,
+  ApiConsumes,
   ApiCookieAuth,
   ApiCreatedResponse,
   ApiForbiddenResponse,
@@ -12,6 +15,8 @@ import {
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
+  ApiPayloadTooLargeResponse,
+  ApiProduces,
   ApiServiceUnavailableResponse,
   ApiTags,
   ApiUnauthorizedResponse,
@@ -33,10 +38,11 @@ import { UpdateHotelPoliciesDto } from './dto/update-hotel-policies.dto';
 import { UpdateRoomAvailabilityDto } from './dto/update-room-availability.dto';
 import { UpdateRoomDto } from './dto/update-room.dto';
 import { HotelReservationsPage } from './ports/hotel-reservations.port';
+import { MAX_HOTEL_PHOTOS, MAX_PHOTO_BYTES } from './hotels.rules';
 import { Hotel } from './schemas/hotel.schema';
 import { Room } from './schemas/room.schema';
 import { RoomAvailability } from './schemas/room-availability.schema';
-import { HotelsService, HotelSearchPage, RoomAvailabilityOverview } from './hotels.service';
+import { HotelsService, HotelSearchPage, RoomAvailabilityOverview, UploadedPhoto } from './hotels.service';
 import { OptionalAuthGuard } from './optional-auth.guard';
 
 @ApiTags('Hotels')
@@ -205,6 +211,53 @@ export class HotelsController {
     @Query() query: HotelAvailabilityQueryDto,
   ): Promise<RoomAvailabilityOverview[]> {
     return this.hotels.getHotelAvailability(req.user!.userId, id, query);
+  }
+
+  @Post(':id/photos')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(UserRole.HOTEL_MODERATOR)
+  @UseInterceptors(FileInterceptor('photo', { limits: { fileSize: MAX_PHOTO_BYTES, files: 1 } }))
+  @ApiCookieAuth('accessToken')
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({ schema: { type: 'object', required: ['photo'], properties: { photo: { type: 'string', format: 'binary' } } } })
+  @ApiOperation({
+    summary: 'Add a photo to the moderator\'s own hotel (HTL-01, GEN-08)',
+    description: `JPG or PNG (checked by file content), at most ${MAX_PHOTO_BYTES / 1024 / 1024} MB, at most ${MAX_HOTEL_PHOTOS} per hotel. Returns the hotel with its photo URLs.`,
+  })
+  @ApiCreatedResponse({ description: 'The hotel, with its photo URLs', type: Object })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'Missing file, not a JPG or PNG, or already at the photo limit.' })
+  @ApiPayloadTooLargeResponse({ type: ApiErrorDto, description: 'File larger than 5 MB.' })
+  @ApiUnauthorizedResponse({ type: ApiErrorDto })
+  @ApiForbiddenResponse({ type: ApiErrorDto })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: ':id is not the caller\'s assigned hotel.' })
+  addPhoto(@Req() req: AuthenticatedRequest, @Param('id') id: string, @UploadedFile() file: UploadedPhoto | undefined): Promise<Hotel> {
+    return this.hotels.addPhoto(req.user!.userId, id, file);
+  }
+
+  @Get(':id/photos/:photoId')
+  @UseGuards(OptionalAuthGuard)
+  @Header('Cache-Control', 'no-cache')
+  @Header('X-Content-Type-Options', 'nosniff')
+  @ApiProduces('image/jpeg', 'image/png')
+  @ApiOperation({ summary: 'View a hotel photo (HTL-02, GEN-08)', description: 'Same visibility as the hotel: hidden if deactivated, except to its own moderator or an admin.' })
+  @ApiOkResponse({ description: 'Photo bytes.' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'No such hotel or photo you may see.' })
+  async getPhoto(@Param('id') id: string, @Param('photoId') photoId: string, @Req() req: AuthenticatedRequest): Promise<StreamableFile> {
+    const photo = await this.hotels.getPhoto(id, photoId, req.user);
+    return new StreamableFile(photo.data, { type: photo.contentType, length: photo.data.length });
+  }
+
+  @Delete(':id/photos/:photoId')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(UserRole.HOTEL_MODERATOR)
+  @ApiCookieAuth('accessToken')
+  @ApiOperation({ summary: 'Remove a photo from the moderator\'s own hotel (HTL-01)' })
+  @ApiOkResponse({ description: 'The hotel', type: Object })
+  @ApiUnauthorizedResponse({ type: ApiErrorDto })
+  @ApiForbiddenResponse({ type: ApiErrorDto })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: ':id is not the caller\'s assigned hotel, or no such photo.' })
+  removePhoto(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Param('photoId') photoId: string): Promise<Hotel> {
+    return this.hotels.removePhoto(req.user!.userId, id, photoId);
   }
 
   @Get(':id/reservations')

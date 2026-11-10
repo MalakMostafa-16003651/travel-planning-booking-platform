@@ -15,9 +15,11 @@ import { UpdateHotelDto } from './dto/update-hotel.dto';
 import { UpdateHotelPoliciesDto } from './dto/update-hotel-policies.dto';
 import { UpdateRoomAvailabilityDto } from './dto/update-room-availability.dto';
 import { UpdateRoomDto } from './dto/update-room.dto';
+import { MAX_HOTEL_PHOTOS, detectPhotoContentType } from './hotels.rules';
 import { HOTEL_RESERVATIONS, HotelReservationsPage, HotelReservationsPort } from './ports/hotel-reservations.port';
 import { BlockedRange, BookedRange, RoomAvailability } from './schemas/room-availability.schema';
 import { Hotel } from './schemas/hotel.schema';
+import { HotelPhoto } from './schemas/hotel-photo.schema';
 import { Room } from './schemas/room.schema';
 
 export interface Requester {
@@ -52,6 +54,12 @@ export interface HotelSearchPage {
   totalPages: number;
 }
 
+/** The part of a multer file this service reads (kept in memory, never written to disk). */
+export interface UploadedPhoto {
+  buffer: Buffer;
+  size: number;
+}
+
 const HOTEL_SEARCH_PAGE_SIZE = 10; // GEN-05, same as flight bookings and itineraries
 
 @Injectable()
@@ -60,6 +68,7 @@ export class HotelsService {
     @InjectModel(Hotel.name) private readonly hotels: Model<Hotel>,
     @InjectModel(Room.name) private readonly rooms: Model<Room>,
     @InjectModel(RoomAvailability.name) private readonly roomAvailabilities: Model<RoomAvailability>,
+    @InjectModel(HotelPhoto.name) private readonly hotelPhotos: Model<HotelPhoto>,
     @InjectConnection() private readonly connection: Connection,
     private readonly references: ReferenceDataService,
     private readonly hotelBookings: HotelBookingsService,
@@ -78,6 +87,7 @@ export class HotelsService {
       checkInTime: '14:00',
       checkOutTime: '11:00',
       cancellationTiers: [],
+      photos: [],
     });
   }
 
@@ -423,5 +433,49 @@ export class HotelsService {
   async getReservations(moderatorId: string, hotelId: string, page: number): Promise<HotelReservationsPage> {
     await this.assertOwnHotel(moderatorId, hotelId);
     return this.reservations.listForHotel(hotelId, page);
+  }
+
+  /** HTL-01/GEN-08: JPG or PNG by content, at most 5 per hotel. The 5 MB limit is enforced by the upload interceptor. */
+  async addPhoto(moderatorId: string, hotelId: string, file: UploadedPhoto | undefined): Promise<Hotel> {
+    const assignedId = await this.assertOwnHotel(moderatorId, hotelId);
+    if (!file?.buffer?.length) throw new BadRequestException('Send the image in the "photo" form field');
+    const contentType = detectPhotoContentType(file.buffer);
+    if (!contentType) throw new BadRequestException('Photo must be a JPG or PNG file');
+
+    const stored = await this.hotelPhotos.create({ hotelId: assignedId, data: file.buffer, contentType, size: file.size });
+    // The "no 5th photo yet" condition keeps the limit even when uploads race.
+    const updated = await this.hotels.findOneAndUpdate(
+      { _id: assignedId, [`photos.${MAX_HOTEL_PHOTOS - 1}`]: { $exists: false } },
+      { $push: { photos: { _id: stored._id, contentType, size: file.size, uploadedAt: stored.createdAt } } },
+      { new: true },
+    ).exec();
+    if (!updated) {
+      await this.hotelPhotos.deleteOne({ _id: stored._id }).exec();
+      throw new BadRequestException(`A hotel can have at most ${MAX_HOTEL_PHOTOS} photos`);
+    }
+    return updated;
+  }
+
+  /** HTL-02/GEN-08. Same visibility as the hotel itself: hidden if deactivated, except to its own moderator or an admin. */
+  async getPhoto(hotelId: string, photoId: string, requester?: Requester): Promise<HotelPhoto> {
+    const hotel = await this.getById(hotelId, requester);
+    if (!Types.ObjectId.isValid(photoId)) throw new NotFoundException('Photo not found');
+    const photo = await this.hotelPhotos.findOne({ _id: photoId, hotelId: hotel._id }).exec();
+    if (!photo) throw new NotFoundException('Photo not found');
+    return photo;
+  }
+
+  /** HTL-01. */
+  async removePhoto(moderatorId: string, hotelId: string, photoId: string): Promise<Hotel> {
+    const assignedId = await this.assertOwnHotel(moderatorId, hotelId);
+    if (!Types.ObjectId.isValid(photoId)) throw new NotFoundException('Photo not found');
+    const updated = await this.hotels.findOneAndUpdate(
+      { _id: assignedId, 'photos._id': new Types.ObjectId(photoId) },
+      { $pull: { photos: { _id: new Types.ObjectId(photoId) } } },
+      { new: true },
+    ).exec();
+    if (!updated) throw new NotFoundException('Photo not found');
+    await this.hotelPhotos.deleteOne({ _id: photoId, hotelId: assignedId }).exec();
+    return updated;
   }
 }

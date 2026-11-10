@@ -9,6 +9,8 @@ export enum ReportTargetType {
 /** GEN-10: a report is OPEN until an admin dismisses it or hides/deletes the content. */
 export enum ReportStatus {
   OPEN = 'OPEN',
+  /** Briefly, while an admin's hide/delete is being applied (GEN-07 recovery). */
+  RESOLVING = 'RESOLVING',
   DISMISSED = 'DISMISSED',
   CONTENT_HIDDEN = 'CONTENT_HIDDEN',
   CONTENT_DELETED = 'CONTENT_DELETED',
