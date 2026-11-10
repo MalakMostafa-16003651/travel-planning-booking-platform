@@ -3,6 +3,7 @@ import { HotelReservationsPageDto } from './dto/hotel-reservations-response.dto'
 import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
+  ApiConflictResponse,
   ApiCookieAuth,
   ApiCreatedResponse,
   ApiForbiddenResponse,
@@ -135,11 +136,12 @@ export class HotelsController {
   @UseGuards(AuthGuard, RolesGuard)
   @Roles(UserRole.HOTEL_MODERATOR)
   @ApiCookieAuth('accessToken')
-  @ApiOperation({ summary: 'Remove a room from the moderator\'s own hotel (HTL-06)', description: 'A soft deactivation: existing bookings referencing the room keep a valid id.' })
+  @ApiOperation({ summary: 'Remove a room from the moderator\'s own hotel (HTL-06)', description: 'A soft deactivation: existing bookings referencing the room keep a valid id. Refused while the room has an active reservation (an unexpired hold or a confirmed stay not yet checked out).' })
   @ApiNoContentResponse()
   @ApiUnauthorizedResponse({ type: ApiErrorDto })
   @ApiForbiddenResponse({ type: ApiErrorDto })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: 'Not :id\'s hotel, or the room does not belong to it.' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'The room has an active reservation.' })
   async deactivateRoom(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Param('roomId') roomId: string): Promise<void> {
     await this.hotels.deactivateRoom(req.user!.userId, id, roomId);
   }

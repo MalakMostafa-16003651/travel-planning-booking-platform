@@ -16,7 +16,7 @@ export class Room {
   @Prop({ type: Number, required: true, min: 1, validate: Number.isSafeInteger })
   capacity!: number;
 
-  /** Integer minor units (e.g. 12500 = 125.00); shared currency is decided with Person 8, same open question as flights. */
+  /** Integer minor units of PLATFORM_CURRENCY ('USD', PAY-04), e.g. 12500 = $125.00. Confirmed with Person 8; no currency field on the room, same as flights' CabinInventory.price. */
   @Prop({ type: Number, required: true, min: 1, validate: Number.isSafeInteger })
   pricePerNight!: number;
 

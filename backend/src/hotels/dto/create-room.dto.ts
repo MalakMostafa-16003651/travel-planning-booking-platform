@@ -10,7 +10,7 @@ export class CreateRoomDto {
   @IsInt() @Min(1)
   capacity!: number;
 
-  @ApiProperty({ example: 15000, description: 'Integer minor units. Confirm platform currency with Person 8.' })
+  @ApiProperty({ example: 15000, description: "Integer minor units of PLATFORM_CURRENCY ('USD', PAY-04)." })
   @IsInt() @Min(1)
   pricePerNight!: number;
 }
