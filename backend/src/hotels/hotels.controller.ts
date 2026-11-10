@@ -60,8 +60,8 @@ export class HotelsController {
   @ApiCreatedResponse({ description: 'Hotel created', type: Object })
   @ApiUnauthorizedResponse({ type: ApiErrorDto })
   @ApiForbiddenResponse({ type: ApiErrorDto, description: 'Admin role required.' })
-  create(@Body() body: CreateHotelDto): Promise<Hotel> {
-    return this.hotels.create(body);
+  create(@Req() req: AuthenticatedRequest, @Body() body: CreateHotelDto): Promise<Hotel> {
+    return this.hotels.create(body, req.user!.userId);
   }
 
   @Get('search')

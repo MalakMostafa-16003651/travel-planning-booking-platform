@@ -371,7 +371,7 @@ payment confirmation, cancellation or account-deactivation eligibility.
 
 | Method | Endpoint | Who | Result |
 | --- | --- | --- | --- |
-| POST | `/api/hotels` | ADMIN | Create a hotel profile. `city`/`countryCode` are resolved through the shared `ReferenceDataService`, the same catalog Itineraries uses. |
+| POST | `/api/hotels` | ADMIN | Create a hotel profile. `city`/`countryCode` are resolved through the shared `ReferenceDataService`, the same catalog Itineraries uses. Records a GEN-07 `HOTEL_CREATED` audit log entry (Arwa's `AuditLogsService`), the same pattern as `AirlinesService.create`'s `AIRLINE_CREATED` entry. |
 | GET | `/api/hotels/:id` | anyone | View a hotel. A deactivated hotel (`isActive: false`) returns 404 for everyone except its assigned moderator and admins, so ACC-15 deactivation hides it without revealing its existence. |
 | PATCH | `/api/hotels/:id` | assigned HOTEL_MODERATOR | Edit the moderator's own hotel. `:id` must match their `moderatorassignments` record, the same adapter pattern `AirlinesService.getAssignedAirlineId` uses, with `hotelId` in place of `airlineId`. A mismatched or missing assignment returns 404/403 the same way `FlightsService.getOwnedScheduledFlight` hides another airline's flight. |
 | POST | `/api/hotels/:id/rooms` | assigned HOTEL_MODERATOR | Add a room (name, capacity, `pricePerNight` in integer minor units) to the moderator's own hotel. |
