@@ -21,6 +21,7 @@ import {
   MAX_BUDGETS_PER_DAY, MAX_DAYS, MAX_IMAGES_PER_ACTIVITY, MAX_LINKED_BOOKINGS, MAX_TRANSPORT_COSTS, minorToMajor, parseDateOnly, roundMoney,
 } from './itinerary.rules';
 import { AccountStatus } from '../common/enums/account-status.enum';
+import { detectImageExtension } from '../common/files/image-type';
 import {
   ITINERARY_ACCOUNT_STATUSES, ITINERARY_AUTHOR_NAMES, ItineraryAccountStatusesPort, ItineraryAuthorNamesPort, isVisibleStatus,
 } from './ports/itinerary-authors.port';
@@ -971,11 +972,12 @@ function roundCategories(categories: CategoryTotalsDto): CategoryTotalsDto {
   };
 }
 
-/** GEN-08: trust the file's bytes, not the client-supplied MIME type or extension. */
-export function detectImageType(buffer: Buffer): string | null {
-  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'image/jpeg';
-  if (buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
-  return null;
+/** GEN-08: the shared byte check decides the type; the file name and declared type are ignored. */
+const IMAGE_CONTENT_TYPES = { jpg: 'image/jpeg', png: 'image/png' } as const;
+
+function detectImageType(buffer: Buffer): string | null {
+  const extension = detectImageExtension(buffer);
+  return extension ? IMAGE_CONTENT_TYPES[extension] : null;
 }
 
 /** ITN-27: only bookings that are actually booked count (and can be linked). */
