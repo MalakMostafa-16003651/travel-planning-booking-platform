@@ -209,7 +209,6 @@ export class ItinerariesController {
   @ApiUnauthorizedResponse({ type: ApiErrorDto })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: `${NOT_FOUND_DOC} Also returned when the booking is not yours.` })
   @ApiConflictResponse({ type: ApiErrorDto, description: 'Already linked, or the limit of 20 linked bookings is reached.' })
-  @ApiServiceUnavailableResponse({ type: ApiErrorDto, description: 'Linking this booking type is not connected yet (flights pending Person 4).' })
   linkBooking(@Param('id') id: string, @Body() input: CreateLinkedBookingDto, @Req() request: AuthenticatedRequest): Promise<ItineraryDto> {
     return this.itineraries.linkBooking(id, request.user!.userId, input);
   }

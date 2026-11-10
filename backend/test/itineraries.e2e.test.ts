@@ -22,7 +22,7 @@ import { ItinerariesModule } from '../src/itineraries/itineraries.module';
 import { ItinerariesService } from '../src/itineraries/itineraries.service';
 import { ITINERARY_ACCOUNT_STATUSES, ItineraryAccountStatusesPort } from '../src/itineraries/ports/itinerary-authors.port';
 import { BookingStatus } from '../src/common/enums/booking-status.enum';
-import { ITINERARY_HOTEL_BOOKINGS, LinkableBooking } from '../src/itineraries/ports/itinerary-bookings.port';
+import { ITINERARY_FLIGHT_BOOKINGS, ITINERARY_HOTEL_BOOKINGS, LinkableBooking } from '../src/itineraries/ports/itinerary-bookings.port';
 import { ITINERARY_FLIGHT_SEARCH, ITINERARY_HOTEL_SEARCH, ItineraryFlightSearch, ItineraryHotelSearch } from '../src/itineraries/ports/travel-search.port';
 import { Itinerary } from '../src/itineraries/schemas/itinerary.schema';
 import { User, UserDocument } from '../src/users/schemas/user.schema';
@@ -62,7 +62,7 @@ function cookiesFrom(response: Response): string {
   return header.map((cookie) => cookie.split(';')[0]).join('; ');
 }
 
-/** ITN-27: stands in for HotelBookingsService.getMine (owner-only, 404 otherwise). */
+/** ITN-27: stands in for HotelBookingsService/FlightBookingsService.getMine (owner-only, 404 otherwise). */
 class FakeBookings {
   rows = new Map<string, { userId: string; booking: LinkableBooking }>();
   fail = false;
@@ -98,6 +98,7 @@ describe('Itineraries, activities and budgeting', { concurrency: false }, () => 
   const flights = new FakeSearch<ItineraryFlightSearch>();
   const hotels = new FakeSearch<ItineraryHotelSearch>();
   const hotelBookings = new FakeBookings();
+  const flightBookings = new FakeBookings();
   let alice: string;
   let bob: string;
 
@@ -142,6 +143,7 @@ describe('Itineraries, activities and budgeting', { concurrency: false }, () => 
       .overrideProvider(ITINERARY_FLIGHT_SEARCH).useValue(flights)
       .overrideProvider(ITINERARY_HOTEL_SEARCH).useValue(hotels)
       .overrideProvider(ITINERARY_HOTEL_BOOKINGS).useValue(hotelBookings)
+      .overrideProvider(ITINERARY_FLIGHT_BOOKINGS).useValue(flightBookings)
       .compile();
     app = moduleRef.createNestApplication();
     configureApplication(app);
@@ -165,6 +167,8 @@ describe('Itineraries, activities and budgeting', { concurrency: false }, () => 
     hotels.criteria = [];
     hotelBookings.rows.clear();
     hotelBookings.fail = false;
+    flightBookings.rows.clear();
+    flightBookings.fail = false;
     alice = await login('alice@example.com');
     bob = await login('bob@example.com');
   });
@@ -753,6 +757,37 @@ describe('Itineraries, activities and budgeting', { concurrency: false }, () => 
       await http().delete(`/api/itineraries/${id}/bookings/${linkedBookingId}`).set('Cookie', alice).expect(404);
     });
 
+    it('links a booked flight on its departure date and adds it to that day\'s transport', async () => {
+      const { id, dayIds } = await tripWithDays();
+      const flightId = flightBookings.add(await userIdOf('alice@example.com'), {
+        amountMinor: 40000, bookingReference: 'FB-TEST1', label: 'MS777 CAI-LHR', startDate: '2026-12-22', endDate: undefined,
+      });
+
+      const wrongDay = await link(id, { type: 'FLIGHT', bookingId: flightId, dayId: dayIds[0] }).expect(400);
+      assert.match(wrongDay.body.errors.dayId[0], /dated 2026-12-22.*this day is 2026-12-20/);
+      const linked = (await link(id, { type: 'FLIGHT', bookingId: flightId, dayId: dayIds[2] }).expect(201)).body;
+      assert.equal(linked.linkedBookings[0].type, 'FLIGHT');
+      assert.equal(linked.linkedBookings[0].label, 'MS777 CAI-LHR');
+      assert.equal(linked.linkedBookings[0].amount, 400);
+      assert.equal(linked.linkedBookings[0].matchesDay, true);
+      assert.equal('endDate' in linked.linkedBookings[0], false);
+
+      const summary = (await http().get(`/api/itineraries/${id}/budget-summary`).set('Cookie', alice).expect(200)).body;
+      assert.equal(summary.byDay[2].transport, 400);
+      assert.equal(summary.byDay[2].total, 400);
+      assert.equal(summary.totals.transport, 400);
+      assert.equal(summary.totals.categories.ACCOMMODATION, 0);
+      assert.equal(summary.totals.grandTotal, 400);
+      assert.equal(summary.byCity.find((city: { city: string }) => city.city === 'London').total, 400);
+      assert.deepEqual(
+        (({ type, countsInBudget, convertedAmount }) => ({ type, countsInBudget, convertedAmount }))(summary.linkedBookings[0]),
+        { type: 'FLIGHT', countsInBudget: true, convertedAmount: 400 },
+      );
+
+      // Linking the same flight again is a conflict.
+      await link(id, { type: 'FLIGHT', bookingId: flightId, dayId: dayIds[2] }).expect(409);
+    });
+
     it('keeps links owner-only: hidden from other viewers, their summaries and clones', async () => {
       const { id, dayIds } = await tripWithDays();
       await link(id, { type: 'HOTEL', bookingId: hotelBookings.add(await userIdOf('alice@example.com')), dayId: dayIds[0] }).expect(201);
@@ -800,8 +835,8 @@ describe('Itineraries, activities and budgeting', { concurrency: false }, () => 
       await link(id, { type: 'TRAIN', bookingId, dayId: dayIds[0] }).expect(400);
       await link(id, { type: 'HOTEL', bookingId: 'nope', dayId: dayIds[0] }).expect(400);
       await link(id, { type: 'HOTEL', bookingId: new Types.ObjectId().toString(), dayId: dayIds[0] }).expect(404);
-      // Flight linking waits for Person 4's confirmation.
-      await link(id, { type: 'FLIGHT', bookingId, dayId: dayIds[0] }).expect(503);
+      // A hotel booking id is not a flight booking.
+      await link(id, { type: 'FLIGHT', bookingId, dayId: dayIds[0] }).expect(404);
       await http().delete(`/api/itineraries/${id}/bookings/${new Types.ObjectId()}`).set('Cookie', alice).expect(404);
     });
 

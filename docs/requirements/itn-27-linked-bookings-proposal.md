@@ -1,11 +1,11 @@
 # ITN-27 (optional bonus): link booked flights and hotels to itinerary days
 
-Status: **implemented for hotel bookings (2026-11-10); flight linking returns 503 until Person 4 confirms.** Owner: Person 7 (Kenzy).
+Status: **implemented for hotel and flight bookings.** Owner: Person 7 (Kenzy).
 
 | Owner | Interface | Status |
 | --- | --- | --- |
 | Person 6, Osama (hotel bookings) | `HotelBookingsService.getMine` | **Confirmed 2026-11-10** (see section 1) |
-| Person 4, Ismail (flight bookings) | `FlightBookingsService.getMine` | Waiting for confirmation |
+| Person 4, Ismail (flight bookings) | `FlightBookingsService.getMine` | Connected 2026-11-10; Ismail informed of the fields read (see section 8) |
 
 Requirement (workbook, Bonus!D8): *"The system shall allow booked flights and hotels to be
 linked to itinerary days, feeding the budget."* Endpoint in PDF 8.8:
@@ -121,3 +121,18 @@ booking contributing 0; currency conversion of booking amounts.
   off the booking's dates; the link is kept so the owner can move or remove it.
 - A booking that no longer exists shows `status: null` and counts 0. Any other lookup failure
   fails the request (500) instead of returning partial totals.
+
+## 8. Flight bookings connected (2026-11-10)
+
+`FlightBookingsModule` already exports `FlightBookingsService`, and its `getMine` already returns
+404 for another user's booking, so the flight side reads it without any change to Person 4's code.
+The student decided to connect it and inform Ismail rather than wait for a reply. He was sent the
+list of fields read and asked to warn Person 7 before renaming any of them.
+
+`FlightBookingLookupAdapter` reads `status`, `totalAmount` (USD minor units), `currency`,
+`bookingReference` and, from `segments[]`, `flightNumber`, `departureAirportCode`,
+`arrivalAirportCode`, `departureAt` and `departureTimeZone`. The link day must equal the **local**
+departure date of the earliest segment in its airport's time zone (for example 23:30 UTC in Cairo
+is the next day). The label lists each segment, such as `MS777 CAI-LHR, BA154 LHR-CAI`. The
+whole booking price is counted on that day as transport.
+
