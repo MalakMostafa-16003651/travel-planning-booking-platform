@@ -14,10 +14,25 @@ class CityDto {
   @ApiProperty({ example: 'US' }) countryCode!: string;
 }
 
+class AttractionDto {
+  @ApiProperty({ example: 'att-1' }) attractionId!: string;
+  @ApiProperty({ example: 'Giza Pyramids and Sphinx' }) name!: string;
+  @ApiProperty({ example: 'cairo' }) cityId!: string;
+}
+
 @ApiTags('Reference data')
 @Controller()
 export class ReferenceDataController {
   constructor(private readonly references: ReferenceDataService) {}
+
+  @Get('attractions')
+  @Header('Cache-Control', 'no-store')
+  @ApiOperation({ summary: 'List official supported attractions (PDF section 5.1)' })
+  @ApiOkResponse({ type: AttractionDto, isArray: true })
+  @ApiInternalServerErrorResponse({ type: ApiErrorDto })
+  async attractions(): Promise<AttractionDto[]> {
+    return (await this.references.listAttractions()).map(({ attractionId, name, cityId }) => ({ attractionId, name, cityId }));
+  }
 
   @Get('countries')
   @Header('Cache-Control', 'no-store')
