@@ -50,4 +50,5 @@ team prompt. Each student keeps one continuous file named with their confirmed I
 
 The [Person 7 workflow record](docs/work-logs/16001313.md) and the
 [Person 5 workflow record](docs/work-logs/16002622.md) follow the same format for
-Itineraries and Hotels respectively.
+Itineraries and Hotels respectively. The [Person 4 workflow record](docs/work-logs/16002979.md)
+covers flight bookings and seat holds.

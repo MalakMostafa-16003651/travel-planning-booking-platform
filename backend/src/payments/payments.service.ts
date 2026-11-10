@@ -1,4 +1,5 @@
-import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { EmailEligibilityService } from '../auth/email-eligibility.service';
+import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { isValidObjectId, Model, Types } from 'mongoose';
 import Stripe from 'stripe';
@@ -34,20 +35,23 @@ export class PaymentsService {
     private readonly policies: PoliciesService,
     private readonly refunds: RefundsService,
     private readonly stripe: StripeService,
+    private readonly emailEligibility: EmailEligibilityService,
   ) {}
 
   /** PAY-01: starts paying for a booking. Returns the clientSecret for Stripe.js. */
   async create(dto: CreatePaymentDto, user: AuthUser) {
+    await this.emailEligibility.assertCanBook(user.userId);
     const { bookingType, bookingId } = dto;
     const booking = await this.policies.getOwnedBooking(bookingType, bookingId, user.userId);
     this.assertPayable(booking);
 
     const existing = await this.payments.findOne(bookingRef(bookingType, bookingId)).exec();
+    // A paid or failed payment answers 409 whatever the policies; a PENDING one is reused only while the
+    // current policies are accepted, so a provider change after the first attempt needs a new acceptance.
+    if (existing && existing.status !== PaymentStatus.PENDING) return this.reuseExisting(existing);
+    await this.assertPoliciesAccepted(user.userId, bookingType, booking);
+    await this.emailEligibility.assertCanBook(user.userId);
     if (existing) return this.reuseExisting(existing);
-
-    if (!await this.policies.hasAccepted(user.userId, bookingType, bookingId, booking.policies)) {
-      throw new ConflictException('Please accept the current booking policies before paying');
-    }
 
     // The id comes first so it can go into the PaymentIntent metadata.
     const paymentId = new Types.ObjectId();
@@ -79,6 +83,7 @@ export class PaymentsService {
 
   /** PAY-01: tries again after a failed payment, on the same Payment record. */
   async retry(id: string, user: AuthUser) {
+    await this.emailEligibility.assertCanBook(user.userId);
     const payment = await this.findOwnedPayment(id, user, false);
     if (payment.status !== PaymentStatus.FAILED) throw new ConflictException('Only a FAILED payment can be retried');
     if (payment.failureReason === AMOUNT_MISMATCH_REASON) {
@@ -89,6 +94,8 @@ export class PaymentsService {
     const booking = await this.bookingsPort.getBooking(bookingType, bookingId, payment.userId.toString());
     if (!booking) throw new NotFoundException('Booking not found');
     this.assertPayable(booking);
+    await this.assertPoliciesAccepted(payment.userId.toString(), bookingType, booking);
+    await this.emailEligibility.assertCanBook(user.userId);
 
     // The old intent must not be paid later by mistake. If cancelling fails, it may have been paid after all.
     try {
@@ -104,6 +111,7 @@ export class PaymentsService {
       }
     }
 
+    await this.emailEligibility.assertCanBook(user.userId);
     const intent = await this.stripe.createPaymentIntent({
       amount: toMinorUnits(payment.amount),
       currency: payment.currency,
@@ -157,8 +165,15 @@ export class PaymentsService {
    * the success is applied, which refunds it because the booking is no longer payable.
    */
   async cancelPendingPayment(bookingType: BookingType, bookingId: string): Promise<void> {
-    const payment = await this.payments.findOne({ ...bookingRef(bookingType, bookingId), status: { $in: [PaymentStatus.PENDING, PaymentStatus.FAILED] } }).exec();
+    const payment = await this.payments.findOne({ ...bookingRef(bookingType, bookingId), $or: [
+      { status: { $in: [PaymentStatus.PENDING, PaymentStatus.FAILED] } },
+      { status: PaymentStatus.SUCCEEDED, bookingConfirmedAt: null, autoRefundedAt: null },
+    ] }).exec();
     if (!payment) return;
+    if (payment.status === PaymentStatus.SUCCEEDED) {
+      await this.finishSucceededPayment(payment);
+      return;
+    }
     try {
       await this.stripe.cancelPaymentIntent(payment.stripePaymentIntentId);
     } catch (error) {
@@ -222,12 +237,18 @@ export class PaymentsService {
       // The money came through the older intent, so the newer one must not be paid too.
       if (isOlderIntent) await this.stripe.cancelPaymentIntent(currentIntentId).catch(() => undefined);
       await this.finishSucceededPayment(updated);
-    } else if (isOlderIntent) {
-      // Another success made the payment SUCCEEDED at the same moment.
-      await this.refundDoublePayment(payment, intent);
-    } else if (payment.status === PaymentStatus.SUCCEEDED) {
-      // A redelivered event finishes whatever the first delivery could not.
-      await this.finishSucceededPayment(payment);
+      return;
+    }
+    // Another handler changed the payment since it was read. Decide from what is stored now, not from
+    // that earlier read: the same intent won (a parallel delivery of this success), or another intent did.
+    const latest = await this.payments.findById(payment._id).exec();
+    if (!latest || (latest.status !== PaymentStatus.SUCCEEDED && latest.status !== PaymentStatus.REFUNDED)) return;
+    if (latest.stripePaymentIntentId === intent.id) {
+      // A redelivered or parallel success finishes whatever the first handler could not.
+      await this.finishSucceededPayment(latest);
+    } else {
+      // A different intent of the same payment was paid: this one is a second charge.
+      await this.refundDoublePayment(latest, intent);
     }
   }
 
@@ -241,6 +262,10 @@ export class PaymentsService {
       await this.payments.updateOne({ _id: payment._id }, { bookingConfirmedAt: new Date() }).exec();
       return;
     }
+    // Another delivery may have finalized confirmation while this handler awaited the booking.
+    // Respect that durable marker before treating a later user cancellation as a failed payment.
+    const latest = await this.payments.findById(payment._id).exec();
+    if (!latest || latest.bookingConfirmedAt || latest.autoRefundedAt) return;
     // The money arrived, but the booking is gone, cancelled or its hold expired.
     if (!await this.refunds.hasRefunds(payment)) {
       const bookingId = readBookingId(payment);
@@ -277,6 +302,8 @@ export class PaymentsService {
     const booking = await this.bookingsPort.getBooking(bookingType, bookingId, userId);
     if (booking?.status === BookingStatus.CONFIRMED) return true;
     if (!booking || !this.isPayable(booking)) return false;
+    // ACC-02: keep historical confirmations; a newly ineligible paid hold follows the existing full-refund path.
+    if (!await this.emailEligibility.canBook(userId)) return false;
     if (await this.bookingsPort.markConfirmed(bookingType, bookingId, payment._id.toString())) return true;
     // The booking changed meanwhile. If a parallel delivery of this success confirmed it, that is a success too.
     const latest = await this.bookingsPort.getBooking(bookingType, bookingId, userId);
@@ -291,7 +318,8 @@ export class PaymentsService {
       { returnDocument: 'after' },
     ).exec();
     if (updated) {
-      // TODO(Person 2): notify the user that the payment failed, once NotificationsService exists.
+      // No notification: GEN-01 does not list payment failures and Person 2's types have none; the
+      // failure is shown through the payment's FAILED status and failureReason (PAY-01).
       await this.bookingsPort.markPaymentFailed(updated.bookingType, readBookingId(updated), updated._id.toString());
     }
   }
@@ -322,10 +350,18 @@ export class PaymentsService {
     return booking.status === BookingStatus.PENDING && !expired;
   }
 
+  /** PAY-02: payment is blocked until the booking's current policies are accepted. */
+  private async assertPoliciesAccepted(userId: string, bookingType: BookingType, booking: PayableBooking) {
+    if (!await this.policies.hasAccepted(userId, bookingType, booking.bookingId, booking.policies)) {
+      throw new ConflictException('Please accept the current booking policies before paying');
+    }
+  }
+
   private assertPayable(booking: PayableBooking) {
     // PAY-04: one platform currency for every price, payment and refund.
     if (booking.currency !== PLATFORM_CURRENCY) throw new ConflictException('The booking is not in the platform currency');
     if (booking.status !== BookingStatus.PENDING) throw new ConflictException('Only a PENDING booking can be paid');
     if (!this.isPayable(booking)) throw new ConflictException('The booking hold has expired');
+    if (booking.checkoutReady === false) throw new ServiceUnavailableException('Hotel checkout is temporarily unavailable');
   }
 }

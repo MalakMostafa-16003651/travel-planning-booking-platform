@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, OnModuleInit, UnauthorizedException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { ClientSession, Model, Types } from 'mongoose';
 import { FAILED_LOGIN_LIMIT, LOGIN_LOCKOUT_MS } from '../auth/auth.constants';
 import { AccountStatus } from '../common/enums/account-status.enum';
 import { UserRole } from '../common/enums/user-role.enum';
@@ -25,8 +25,8 @@ function unlockedLoginFilter(userId: string, passwordHash: string) {
   };
 }
 
-function incrementableCredentialVersion() {
-  const version = { $ifNull: ['$credentialVersion', 0] };
+function incrementableVersion(field: 'credentialVersion' | 'bookingVersion') {
+  const version = { $ifNull: ['$' + field, 0] };
   return {
     // Pipeline updates bypass schema validation. Reject malformed stored values
     // and reserve room for one exact integer increment; legacy missing means zero.
@@ -56,6 +56,29 @@ export class UsersService implements OnModuleInit {
     await this.users.init();
   }
 
+  /** ACC-12: NEW confirmations and deactivation write the same User in their transactions. */
+  async acquireBookingGate(userId: string, session: ClientSession): Promise<void> {
+    if (!/^[0-9a-f]{24}$/i.test(userId)) throw new ConflictException('Account is no longer eligible for booking');
+    const result = await this.users.updateOne({ _id: userId, status: AccountStatus.ACTIVE, role: UserRole.USER,
+      $expr: incrementableVersion('bookingVersion'),
+    }, [{ $set: { bookingVersion: { $add: [{ $ifNull: ['$bookingVersion', 0] }, 1] }, updatedAt: '$$NOW' } }],
+    { session, updatePipeline: true, timestamps: false, upsert: false }).exec();
+    if (result.matchedCount !== 1) throw new ConflictException('Account is no longer eligible for booking');
+  }
+
+  /** Only after acquiring the gate and checking BOTH booking modules in this transaction. */
+  async deactivateUnderBookingGate(userId: string, credentialVersion: number, session: ClientSession): Promise<boolean> {
+    if (!Number.isSafeInteger(credentialVersion) || credentialVersion < 0) return false;
+    const result = await this.users.updateOne({ _id: userId, status: AccountStatus.ACTIVE, role: UserRole.USER,
+      mustChangePassword: false, $expr: { $and: [
+        { $eq: [{ $ifNull: ['$credentialVersion', 0] }, credentialVersion] }, incrementableVersion('credentialVersion'),
+      ] },
+    }, [{ $set: { status: AccountStatus.DEACTIVATED,
+      credentialVersion: { $add: [{ $ifNull: ['$credentialVersion', 0] }, 1] }, updatedAt: '$$NOW' } }],
+    { session, updatePipeline: true, timestamps: false, upsert: false }).exec();
+    return result.matchedCount === 1;
+  }
+
   /** Shared internal lookup: no credentials or whole User documents leave this service. */
   async getAccountStatuses(userIds: string[]): Promise<Map<string, AccountStatus>> {
     const ids = this.lookupIds(userIds);
@@ -76,6 +99,21 @@ export class UsersService implements OnModuleInit {
   private lookupIds(userIds: string[]): Types.ObjectId[] {
     return [...new Set(userIds.filter((id) => typeof id === 'string' && /^[a-f\d]{24}$/i.test(id))
       .map((id) => id.toLowerCase()))].map((id) => new Types.ObjectId(id));
+  }
+
+  /** Private verification lookup: no password or session secrets are selected. */
+  async findForEmailVerification(userId: string, session?: ClientSession): Promise<UserDocument | null> {
+    if (!Types.ObjectId.isValid(userId)) return null;
+    return this.users.findById(userId).select('+emailVerifiedAt').session(session ?? null).exec();
+  }
+  async hasVerifiedEmail(userId: string, session?: ClientSession): Promise<boolean> {
+    if (!Types.ObjectId.isValid(userId)) return false;
+    return !!await this.users.exists({ _id: userId, status: AccountStatus.ACTIVE, emailVerifiedAt: { $type: 'date' } }).session(session ?? null).exec();
+  }
+  async markEmailVerified(userId: string, email: string, session: ClientSession): Promise<boolean> {
+    const result = await this.users.updateOne({ _id: userId, email, status: AccountStatus.ACTIVE, emailVerifiedAt: null },
+      { $currentDate: { emailVerifiedAt: true } }, { session, upsert: false }).exec();
+    return result.matchedCount === 1;
   }
 
   async findForAuthentication(email: string): Promise<UserDocument | null> {
@@ -208,6 +246,7 @@ export class UsersService implements OnModuleInit {
     expectedVersion: number,
     newHash: string,
     expectedMustChangePassword: boolean,
+    session?: ClientSession,
   ): Promise<boolean> {
     if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0 || expectedVersion >= Number.MAX_SAFE_INTEGER) {
       return false;
@@ -221,7 +260,7 @@ export class UsersService implements OnModuleInit {
         $expr: {
           $and: [
             { $eq: [{ $ifNull: ['$credentialVersion', 0] }, expectedVersion] },
-            incrementableCredentialVersion(),
+            incrementableVersion('credentialVersion'),
           ],
         },
       },
@@ -235,17 +274,17 @@ export class UsersService implements OnModuleInit {
           updatedAt: '$$NOW',
         },
       }],
-      { updatePipeline: true, timestamps: false, upsert: false },
+      { updatePipeline: true, timestamps: false, upsert: false, session },
     ).exec();
     return result.matchedCount === 1;
   }
 
-  async setTemporaryPassword(userId: string, newHash: string): Promise<boolean> {
+  async setTemporaryPassword(userId: string, newHash: string, session?: ClientSession): Promise<boolean> {
     const result = await this.users.updateOne(
       {
         _id: userId,
         role: { $in: [UserRole.USER, UserRole.AIRLINE_MODERATOR, UserRole.HOTEL_MODERATOR] },
-        $expr: incrementableCredentialVersion(),
+        $expr: incrementableVersion('credentialVersion'),
       },
       [{
         $set: {
@@ -257,7 +296,7 @@ export class UsersService implements OnModuleInit {
           updatedAt: '$$NOW',
         },
       }],
-      { updatePipeline: true, timestamps: false, upsert: false },
+      { updatePipeline: true, timestamps: false, upsert: false, session },
     ).exec();
     return result.matchedCount === 1;
   }

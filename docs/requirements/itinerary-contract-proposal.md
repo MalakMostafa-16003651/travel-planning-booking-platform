@@ -1,6 +1,6 @@
 # Itineraries, Activities and Budgeting: shared contract
 
-Status: implemented backend corrections on the current feature branch; flight/hotel search adapters remain pending integration with their owners. Person 7 owns this module. Malak's explicitly authorized fixes and tests are recorded in docs/work-logs/16003651.md; no changes are attributed to Kiki that she did not perform.
+Status: implemented backend corrections on `develop`. Both search ports are connected: ITN-25 to `HotelsService.search` and ITN-26 to `FlightsService.searchForItinerary` (see below). Person 7 owns this module. Malak's explicitly authorized fixes and tests are recorded in docs/work-logs/16003651.md; no changes are attributed to Kiki that she did not perform.
 
 Sources: reviewed requirements workbook (ITN-01 through ITN-26, GEN-08, ACC-09/11/12), revised project PDF sections 5.1 and 8, and team-leader-approved reference schema design on 2026-11-06. Milestone 1 is backend only.
 
@@ -41,14 +41,97 @@ Existing transport entries without dayId remain readable/editable as part of the
 
 ## Search ports requiring owner integration
 
-These request contracts are corrected to the workbook and documented for coordination. Real adapters remain explicitly unavailable (503) until the owners provide their search services. Tests inject search doubles to verify the criteria; that is not a claim that live search works.
+These request contracts are corrected to the workbook and documented for coordination. Tests inject search doubles to verify the criteria the itinerary derives.
 
 ### ITN-25 / Lama
 
 GET /api/itineraries/:id/hotels takes dayId, guests, rooms and optional page. The city stop determines city/countryCode/checkIn/checkOut. Check-in is its first day; check-out is the day after its last. The HotelSearchPort receives city, countryCode, checkIn, checkOut, guests, rooms, page. Reuse HTL-11/12 rather than copying hotel availability logic.
 
+**Connected (2026-11-08, Person 7).** These fields are exactly `SearchHotelsQueryDto` minus the optional price filters and sort, so `HotelsServiceSearchAdapter` passes them to the exported `HotelsService.search` unchanged and returns its `HotelSearchPage`. ItinerariesModule imports HotelsModule; no Hotels code was edited. HotelsService resolves the city through the shared ReferenceDataModule, so the search returns matches only once the countries/cities Atlas seed has been run. Lama: please confirm this is how you want the search reused.
+
 ### ITN-26 / Gamila
 
 GET /api/itineraries/:id/flights takes departureAirportCode, roundTrip, optional departureDate/returnDate, adults/children/infants, cabinClass and page. The official airports in the first itinerary day's city determine arrivalAirportCodes. Departure defaults to itinerary start; round-trip return defaults to the last itinerary day. Airports must exist, arrival/departure cannot be identical, return cannot precede departure, at least one adult is required and infants cannot outnumber adults. FlightSearchPort receives departureAirportCode, arrivalAirportCodes, roundTrip, departureDate, optional returnDate, counts, optional cabinClass/page. Gamila must confirm the adapter mapping to FLT-11/12/15; no direct FlightsService implementation is edited in this batch.
 
+**Review against FlightsService on `develop` (2026-11-08, Person 7). The port can't be connected as written:**
+
+1. **One airport vs several.** The port sends `arrivalAirportCodes[]` (every official airport in the destination city). `FlightsService.search` and `searchRoundTrip` take a single `arrivalAirportCode`.
+2. **Pagination happens inside FlightsService.** `search` returns one page of 10, and the method that returns the full list (`searchOneWay`) is private. Calling `search` once per airport and merging the pages would give wrong totals, page contents and sort order across airports.
+3. **Two result shapes.** One-way returns `{ items, page, pageSize, total }`; round trip returns `{ outbound, return }`, each paginated. The adapter would branch on `roundTrip` (the port's `unknown` return type allows this).
+4. Cabin classes already match `CabinClass` (ECONOMY, PREMIUM_ECONOMY, BUSINESS, FIRST), and the passenger rules match FLT-11.
+
+**Options (needs a decision from Gamila and the team leader):**
+- **A, no Flights change (Person 7 proposal):** the itinerary sends a single `arrivalAirportCode`. It accepts an optional `arrivalAirportCode` query parameter that must be one of the first city's official airports, defaulting to that city's only airport, and returns 400 listing the choices when there are several. The adapter then calls `search` or `searchRoundTrip` directly.
+- **B, Flights change (Gamila):** FlightsService exposes a public search that accepts several arrival airports and paginates the combined, sorted list.
+
+**Decision: option B (2026-11-09).** Gamila added `FlightsService.searchForItinerary(criteria)`, which takes the port's criteria unchanged. It runs the FLT-11 one-way search for each destination airport (and each return leg), merges and sorts by departure time, then paginates once (10 per page). One-way returns `{ items, page, pageSize, total }`; round trip returns `{ outbound, return }`, each paginated, keeping only returns that leave after an outbound arrival. FlightsModule exports `ItineraryFlightSearchAdapter`, and ItinerariesModule binds it with `{ provide: ITINERARY_FLIGHT_SEARCH, useExisting: ItineraryFlightSearchAdapter }`. The itinerary keeps its own validation (airports exist, departure differs from every destination, return date, passenger counts).
+
 Optional ITN-27/28 remain outside this work. Account deactivation itself and its booking-confirmation safeguards remain Person 1's separate ACC-12 task.
+
+## Read-only views exported to other modules (BLG-12, BLG-13)
+
+Added 2026-11-10 at Omar's offer, so the blog follows the itinerary visibility rules
+automatically instead of querying the `itineraries` collection directly. Import
+`ItinerariesModule` (it exports `ItinerariesService`); there is no circular import.
+
+```ts
+// BLG-12 author page: the author's PUBLIC itineraries, newest published first, page size 10.
+listPublicByAuthor(authorId: string, page?: number): Promise<ItineraryPageDto>
+
+// BLG-13 post attachment: one PUBLIC itinerary summary, or null. With authorId, it must belong
+// to that user (use it both to validate an attachment and to render it).
+getPublicSummary(itineraryId: string, authorId?: string): Promise<ItinerarySummaryDto | null>
+```
+
+Both apply the same rules as public search and viewing:
+
+- Only `PUBLIC` itineraries. Private ones return nothing, even for their owner.
+- An author who is `DEACTIVATED` or missing (ACC-12) gets an empty page, and their itinerary
+  summary is `null`. `SUSPENDED` authors stay visible.
+- Only summary fields are read. Activities, budgets and linked bookings never leave the module.
+- Clone attribution shows "Deleted user" for a deactivated or missing original author.
+- Invalid ids return an empty page or `null`, never an error.
+- A failed account-status lookup throws (fail closed), so it never grants access.
+
+## Attractions catalog (agreed with Malak, 2026-11-10)
+
+PDF section 5.1 lists **attractions** among the official reference datasets. Agreement:
+
+- **Malak owns** attraction seeding in `ReferenceDataModule`, so there is one shared catalog.
+  She will check the official dataset and confirm its fields and original identifiers before the
+  schema is frozen.
+- She will expose `ReferenceDataService.findAttraction(attractionId)`, returning the record or
+  `null`.
+- **Person 7, after that PR is merged and the catalog is seeded:** validate `Activity.attractionId`
+  on create and update with `findAttraction`, returning 400 for an unknown id.
+- No separate attractions catalog is added in the itinerary module. Until the handoff,
+  `attractionId` stays optional free text (1 to 64 characters) and is not validated.
+
+## Moderation hooks for administrators (GEN-09, GEN-10, with Arwa)
+
+Built 2026-11-10 from the proposal sent to Arwa, before her reply, so it is ready when she
+connects it. If she prefers different behaviour, only these methods change. `ItinerariesService`
+(exported by `ItinerariesModule`) now offers the same three operations her
+`ContentModerationService` uses for posts and reviews:
+
+```ts
+itineraryExists(itineraryId: string): Promise<boolean>
+setItineraryHidden(itineraryId: string, hidden: boolean): Promise<void>  // 404 if unknown
+adminDeleteItinerary(itineraryId: string): Promise<void>                 // 404 if unknown
+```
+
+- **Reportable:** `itineraryExists` is true only for PUBLIC itineraries, including hidden ones
+  (so reviews keep working). Private, unknown and invalid ids return false.
+- **Hidden** (`Itinerary.isHidden`): removed from public search, public and direct viewing,
+  cloning, budget summary, hotel and flight search, activity images, and
+  `listPublicByAuthor` / `getPublicSummary`, all before pagination. The owner still sees it,
+  flagged `isHidden: true`. Changing its visibility does not unhide it; only an administrator
+  can. Admins get 404 like everyone else (ACC-11 keeps admins out of itinerary content); they act
+  on the reported id.
+- **Delete:** removes the itinerary and its activity images.
+- **Arwa's side:** call these from `ContentModerationService` and remove the "not supported yet"
+  rejection for `ITINERARY`. No reports code was edited.
+- **Blog (Omar/Hicham):** the blog still reads the `itineraries` collection directly and does not
+  check `isHidden`. Until it switches to `listPublicByAuthor` / `getPublicSummary`, a hidden
+  itinerary can still appear on author pages and posts.
+

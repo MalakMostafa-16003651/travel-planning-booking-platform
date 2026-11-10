@@ -1,15 +1,26 @@
+import { AccountDeactivationModule } from './users/account-deactivation.module';
+import { FavoritesModule } from './favorites/favorites.module';
+import { ItineraryExportsModule } from './itinerary-exports/itinerary-exports.module';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { resolve } from 'node:path';
+import { AdminModule } from './admin/admin.module';
+import { AuditLogsModule } from './audit-logs/audit-logs.module';
 import { AuthModule } from './auth/auth.module';
 import { validateEnvironment } from './config/validate-environment';
+import { BlogModule } from './blog/blog.module';
 import { FlightBookingsModule } from './flight-bookings/flight-bookings.module';
 import { PaymentsModule } from './payments/payments.module';
 import { AirportsModule } from './airports/airports.module';
 import { AirlinesModule } from './airlines/airlines.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { ReportsModule } from './reports/reports.module';
 import { ItinerariesModule } from './itineraries/itineraries.module';
 import { FlightsModule } from './flights/flights.module';
+import { HotelsModule } from './hotels/hotels.module';
+import { HotelBookingsModule } from './hotel-bookings/hotel-bookings.module';
+import { ReviewsModule } from './reviews/reviews.module';
 
 @Module({
   imports: [
@@ -27,13 +38,23 @@ import { FlightsModule } from './flights/flights.module';
       }),
     }),
     AuthModule,
+    AccountDeactivationModule,
+    NotificationsModule,
     FlightBookingsModule,
+    BlogModule,
     PaymentsModule,
     AirportsModule,
     AirlinesModule,
     FlightsModule,
     ItinerariesModule,
-    FlightsModule,
+    ItineraryExportsModule,
+    FavoritesModule,
+    HotelsModule,
+    HotelBookingsModule,
+    ReviewsModule,
+    AuditLogsModule,
+    AdminModule,
+    ReportsModule,
   ],
 })
 export class AppModule {}

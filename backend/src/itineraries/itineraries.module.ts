@@ -8,7 +8,14 @@ import { UsersModule } from '../users/users.module';
 import { UsersService } from '../users/users.service';
 import { AirportsModule } from '../airports/airports.module';
 import { ReferenceDataModule } from '../reference-data/reference-data.module';
-import { PendingFlightSearchAdapter, PendingHotelSearchAdapter } from './adapters/pending-travel-search.adapters';
+import { HotelsModule } from '../hotels/hotels.module';
+import { HotelsServiceSearchAdapter } from './adapters/hotel-search.adapter';
+import { HotelBookingsModule } from '../hotel-bookings/hotel-bookings.module';
+import { FlightBookingLookupAdapter, HotelBookingLookupAdapter } from './adapters/booking-lookup.adapters';
+import { FlightBookingsModule } from '../flight-bookings/flight-bookings.module';
+import { ITINERARY_FLIGHT_BOOKINGS, ITINERARY_HOTEL_BOOKINGS } from './ports/itinerary-bookings.port';
+import { ItineraryFlightSearchAdapter } from '../flights/adapters/itinerary-flight-search.adapter';
+import { FlightsModule } from '../flights/flights.module';
 import { ExchangeRatesService } from './currency/exchange-rates.service';
 import { FxRatesClient } from './currency/fx-rates.client';
 import { ItinerariesController } from './itineraries.controller';
@@ -29,6 +36,10 @@ import { Itinerary, ItinerarySchema } from './schemas/itinerary.schema';
     UsersModule,
     ReferenceDataModule,
     AirportsModule,
+    HotelsModule,
+    FlightsModule,
+    HotelBookingsModule,
+    FlightBookingsModule,
     MongooseModule.forFeature([
       { name: Itinerary.name, schema: ItinerarySchema },
       { name: ActivityImage.name, schema: ActivityImageSchema },
@@ -43,12 +54,15 @@ import { Itinerary, ItinerarySchema } from './schemas/itinerary.schema';
     ExchangeRatesService,
     FxRatesClient,
     OptionalAuthGuard,
-    // Swap these for the real modules as they land; nothing else in this module changes.
+    // Shared services from other modules, bound to this module's ports.
     { provide: ITINERARY_ACCOUNT_STATUSES, useExisting: UsersService },
     { provide: ITINERARY_AUTHOR_NAMES, useExisting: UsersService },
     { provide: ITINERARY_CURRENCIES, useExisting: CurrenciesService },
-    { provide: ITINERARY_FLIGHT_SEARCH, useClass: PendingFlightSearchAdapter }, // -> FlightsService (Person 3)
-    { provide: ITINERARY_HOTEL_SEARCH, useClass: PendingHotelSearchAdapter }, // -> HotelsService (Person 5)
+    { provide: ITINERARY_FLIGHT_SEARCH, useExisting: ItineraryFlightSearchAdapter }, // FlightsService.searchForItinerary (FLT-11, FLT-12, FLT-15)
+    { provide: ITINERARY_HOTEL_SEARCH, useClass: HotelsServiceSearchAdapter }, // HotelsService.search (HTL-11, HTL-12)
+    // ITN-27 (bonus): owner-only booking lookups.
+    { provide: ITINERARY_HOTEL_BOOKINGS, useClass: HotelBookingLookupAdapter }, // HotelBookingsService.getMine (confirmed by Person 6)
+    { provide: ITINERARY_FLIGHT_BOOKINGS, useClass: FlightBookingLookupAdapter }, // FlightBookingsService.getMine (Person 4)
   ],
   exports: [ItinerariesService],
 })

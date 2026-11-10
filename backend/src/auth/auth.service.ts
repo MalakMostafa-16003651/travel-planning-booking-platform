@@ -1,3 +1,4 @@
+import { EmailVerificationService } from './email-verification.service';
 import { ForbiddenException, Injectable, OnModuleInit, UnauthorizedException } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 import { AccountStatus } from '../common/enums/account-status.enum';
@@ -15,6 +16,7 @@ export class AuthService implements OnModuleInit {
   private dummyPasswordHash!: string;
 
   constructor(
+    private readonly verification: EmailVerificationService,
     private readonly users: UsersService,
     private readonly passwords: PasswordService,
   ) {}
@@ -53,7 +55,7 @@ export class AuthService implements OnModuleInit {
     return authenticated;
   }
 
-  async register(input: RegisterDto): Promise<RegisteredUserDto> {
+  async register(input: RegisterDto, source = 'registration'): Promise<RegisteredUserDto> {
     const passwordHash = await this.passwords.hash(input.password);
     const user = await this.users.createRegisteredUser({
       name: input.name,
@@ -61,6 +63,7 @@ export class AuthService implements OnModuleInit {
       passwordHash,
       termsAcceptedAt: new Date(),
     });
+    await this.verification.registered(user._id.toString(), source);
     return RegisteredUserDto.fromUser(user);
   }
 }

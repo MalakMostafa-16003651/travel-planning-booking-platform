@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { resolve } from 'node:path';
 import { after, before, beforeEach, describe, it } from 'node:test';
-import { INestApplication } from '@nestjs/common';
+import { INestApplication, NotFoundException } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { getConnectionToken, getModelToken, MongooseModule } from '@nestjs/mongoose';
 import { Test } from '@nestjs/testing';
@@ -19,7 +19,10 @@ import { CurrenciesService } from '../src/currencies/currencies.service';
 import { configureApplication } from '../src/configure-application';
 import { FxRatesClient, FxRatesUnavailableError } from '../src/itineraries/currency/fx-rates.client';
 import { ItinerariesModule } from '../src/itineraries/itineraries.module';
+import { ItinerariesService } from '../src/itineraries/itineraries.service';
 import { ITINERARY_ACCOUNT_STATUSES, ItineraryAccountStatusesPort } from '../src/itineraries/ports/itinerary-authors.port';
+import { BookingStatus } from '../src/common/enums/booking-status.enum';
+import { ITINERARY_FLIGHT_BOOKINGS, ITINERARY_HOTEL_BOOKINGS, LinkableBooking } from '../src/itineraries/ports/itinerary-bookings.port';
 import { ITINERARY_FLIGHT_SEARCH, ITINERARY_HOTEL_SEARCH, ItineraryFlightSearch, ItineraryHotelSearch } from '../src/itineraries/ports/travel-search.port';
 import { Itinerary } from '../src/itineraries/schemas/itinerary.schema';
 import { User, UserDocument } from '../src/users/schemas/user.schema';
@@ -59,15 +62,43 @@ function cookiesFrom(response: Response): string {
   return header.map((cookie) => cookie.split(';')[0]).join('; ');
 }
 
+/** ITN-27: stands in for HotelBookingsService/FlightBookingsService.getMine (owner-only, 404 otherwise). */
+class FakeBookings {
+  rows = new Map<string, { userId: string; booking: LinkableBooking }>();
+  fail = false;
+
+  add(userId: string, changes: Partial<LinkableBooking> = {}): string {
+    const bookingId = new Types.ObjectId().toString();
+    this.rows.set(bookingId, {
+      userId,
+      booking: {
+        status: BookingStatus.CONFIRMED, amountMinor: 25050, currency: 'USD', bookingReference: 'HB-TEST1',
+        label: 'Nile Hotel', startDate: '2026-12-20', endDate: '2026-12-22', ...changes,
+      },
+    });
+    return bookingId;
+  }
+
+  async getOwnBooking(bookingId: string, userId: string): Promise<LinkableBooking> {
+    if (this.fail) throw new Error('hotel bookings unavailable');
+    const row = this.rows.get(bookingId);
+    if (!row || row.userId !== userId) throw new NotFoundException('Hotel booking not found');
+    return { ...row.booking };
+  }
+}
+
 describe('Itineraries, activities and budgeting', { concurrency: false }, () => {
   let mongo: MongoMemoryServer;
   let app: INestApplication;
   let connection: Connection;
   let users: Model<UserDocument>;
   let accountStatuses: ItineraryAccountStatusesPort;
+  let itinerariesService: ItinerariesService;
   const fx = new FakeFxClient();
   const flights = new FakeSearch<ItineraryFlightSearch>();
   const hotels = new FakeSearch<ItineraryHotelSearch>();
+  const hotelBookings = new FakeBookings();
+  const flightBookings = new FakeBookings();
   let alice: string;
   let bob: string;
 
@@ -111,6 +142,8 @@ describe('Itineraries, activities and budgeting', { concurrency: false }, () => 
       .overrideProvider(FxRatesClient).useValue(fx)
       .overrideProvider(ITINERARY_FLIGHT_SEARCH).useValue(flights)
       .overrideProvider(ITINERARY_HOTEL_SEARCH).useValue(hotels)
+      .overrideProvider(ITINERARY_HOTEL_BOOKINGS).useValue(hotelBookings)
+      .overrideProvider(ITINERARY_FLIGHT_BOOKINGS).useValue(flightBookings)
       .compile();
     app = moduleRef.createNestApplication();
     configureApplication(app);
@@ -118,6 +151,7 @@ describe('Itineraries, activities and budgeting', { concurrency: false }, () => 
     connection = moduleRef.get(getConnectionToken());
     users = moduleRef.get(getModelToken(User.name));
     accountStatuses = moduleRef.get(ITINERARY_ACCOUNT_STATUSES);
+    itinerariesService = moduleRef.get(ItinerariesService);
     await Promise.all([users.init(), moduleRef.get<Model<Itinerary>>(getModelToken(Itinerary.name)).init()]);
     await moduleRef.get(CurrenciesService).seedSupported();
     await moduleRef.get(ReferenceDataService).seedSupported();
@@ -131,6 +165,10 @@ describe('Itineraries, activities and budgeting', { concurrency: false }, () => 
     Object.assign(fx, { calls: 0, fail: false, omit: [] });
     flights.criteria = [];
     hotels.criteria = [];
+    hotelBookings.rows.clear();
+    hotelBookings.fail = false;
+    flightBookings.rows.clear();
+    flightBookings.fail = false;
     alice = await login('alice@example.com');
     bob = await login('bob@example.com');
   });
@@ -582,6 +620,324 @@ describe('Itineraries, activities and budgeting', { concurrency: false }, () => 
     it('does not clone private itineraries', async () => {
       const id = await createItinerary();
       await http().post(`/api/itineraries/${id}/clone`).set('Cookie', bob).expect(404);
+    });
+  });
+
+  describe('moderation hooks for administrators (GEN-09, GEN-10)', () => {
+    const userIdOf = async (email: string) => (await users.findOne({ email }).lean().exec())!._id.toString();
+
+    it('only lets PUBLIC itineraries be reported', async () => {
+      const publicId = await createItinerary(alice, { visibility: 'PUBLIC' });
+      const privateId = await createItinerary(alice);
+      assert.equal(await itinerariesService.itineraryExists(publicId), true);
+      assert.equal(await itinerariesService.itineraryExists(privateId), false);
+      assert.equal(await itinerariesService.itineraryExists(new Types.ObjectId().toString()), false);
+      assert.equal(await itinerariesService.itineraryExists('not-an-id'), false);
+      await itinerariesService.setItineraryHidden(publicId, true);
+      assert.equal(await itinerariesService.itineraryExists(publicId), true, 'hidden ones can still be reviewed');
+    });
+
+    it('hides an itinerary from everyone but its owner, until an administrator unhides it', async () => {
+      const id = await createItinerary(alice, { title: 'Nile cruise', visibility: 'PUBLIC' });
+      await addDay(id, 'Cairo');
+      const aliceId = await userIdOf('alice@example.com');
+      await itinerariesService.setItineraryHidden(id, true);
+
+      assert.equal((await http().get('/api/itineraries/public/search').expect(200)).body.total, 0);
+      await http().get(`/api/itineraries/public/${id}`).expect(404);
+      await http().get(`/api/itineraries/${id}`).set('Cookie', bob).expect(404);
+      const admin = await login('admin@example.com', { role: UserRole.ADMIN });
+      await http().get(`/api/itineraries/${id}`).set('Cookie', admin).expect(404);
+      await http().get(`/api/itineraries/${id}/budget-summary`).set('Cookie', bob).expect(404);
+      await http().post(`/api/itineraries/${id}/clone`).set('Cookie', bob).expect(404);
+      assert.equal((await itinerariesService.listPublicByAuthor(aliceId)).total, 0);
+      assert.equal(await itinerariesService.getPublicSummary(id), null);
+
+      const owner = (await http().get(`/api/itineraries/${id}`).set('Cookie', alice).expect(200)).body;
+      assert.equal(owner.isHidden, true);
+      const mine = (await http().get('/api/itineraries').set('Cookie', alice).expect(200)).body;
+      assert.equal(mine.items[0].isHidden, true);
+      // Changing visibility does not unhide it.
+      await http().patch(`/api/itineraries/${id}`).set('Cookie', alice).send({ visibility: 'PRIVATE' }).expect(200);
+      await http().patch(`/api/itineraries/${id}`).set('Cookie', alice).send({ visibility: 'PUBLIC' }).expect(200);
+      await http().get(`/api/itineraries/public/${id}`).expect(404);
+
+      await itinerariesService.setItineraryHidden(id, false);
+      const visible = (await http().get(`/api/itineraries/public/${id}`).expect(200)).body;
+      assert.equal('isHidden' in visible, false);
+      assert.equal((await http().get('/api/itineraries/public/search').expect(200)).body.total, 1);
+      await assert.rejects(itinerariesService.setItineraryHidden(new Types.ObjectId().toString(), true), NotFoundException);
+      await assert.rejects(itinerariesService.setItineraryHidden('not-an-id', true), NotFoundException);
+    });
+
+    it('hides activity images of a hidden itinerary from other viewers', async () => {
+      const id = await createItinerary(alice, { visibility: 'PUBLIC' });
+      const day = (await addDay(id, 'Cairo')).days[0].dayId;
+      const activityId = (await http().post(`/api/itineraries/${id}/days/${day}/activities`).set('Cookie', alice)
+        .send({ title: 'Karnak' }).expect(201)).body.days[0].activities[0].activityId;
+      const url = (await http().post(`/api/activities/${activityId}/images`).set('Cookie', alice).attach('image', PNG, 'k.png').expect(201))
+        .body.days[0].activities[0].images[0].url;
+      await http().get(url).expect(200);
+      await itinerariesService.setItineraryHidden(id, true);
+      await http().get(url).expect(404);
+      await http().get(url).set('Cookie', alice).expect(200);
+    });
+
+    it('deletes an itinerary and its images for an administrator', async () => {
+      const id = await createItinerary(alice, { visibility: 'PUBLIC' });
+      const day = (await addDay(id, 'Cairo')).days[0].dayId;
+      const activityId = (await http().post(`/api/itineraries/${id}/days/${day}/activities`).set('Cookie', alice)
+        .send({ title: 'Karnak' }).expect(201)).body.days[0].activities[0].activityId;
+      await http().post(`/api/activities/${activityId}/images`).set('Cookie', alice).attach('image', PNG, 'k.png').expect(201);
+      assert.equal(await connection.collection('activityimages').countDocuments(), 1);
+
+      await itinerariesService.adminDeleteItinerary(id);
+      assert.equal(await connection.collection('itineraries').countDocuments(), 0);
+      assert.equal(await connection.collection('activityimages').countDocuments(), 0);
+      await http().get(`/api/itineraries/${id}`).set('Cookie', alice).expect(404);
+      await assert.rejects(itinerariesService.adminDeleteItinerary(id), NotFoundException);
+      await assert.rejects(itinerariesService.adminDeleteItinerary('not-an-id'), NotFoundException);
+    });
+  });
+
+  describe('read-only views for the blog (BLG-12, BLG-13)', () => {
+    const userIdOf = async (email: string) => (await users.findOne({ email }).lean().exec())!._id.toString();
+
+    it("lists an author's public itineraries with the same visibility rules as public search", async () => {
+      const aliceId = await userIdOf('alice@example.com');
+      for (let i = 0; i < 11; i += 1) await createItinerary(alice, { title: `Public ${i}`, visibility: 'PUBLIC' });
+      await createItinerary(alice, { title: 'Secret plan' });
+      await createItinerary(bob, { title: 'Bob trip', visibility: 'PUBLIC' });
+
+      const first = await itinerariesService.listPublicByAuthor(aliceId);
+      assert.equal(first.total, 11);
+      assert.equal(first.totalPages, 2);
+      assert.equal(first.items.length, 10);
+      assert.equal(first.items[0].title, 'Public 10', 'newest published first');
+      assert.equal(first.items[0].author?.name, 'alice');
+      assert.ok(first.items.every((item) => item.visibility === 'PUBLIC' && item.userId === aliceId));
+      assert.ok(first.items.every((item) => !('days' in item) && !('linkedBookings' in item)), 'summary fields only');
+      assert.equal((await itinerariesService.listPublicByAuthor(aliceId, 2)).items.length, 1);
+
+      await setStatus('alice@example.com', AccountStatus.SUSPENDED);
+      assert.equal((await itinerariesService.listPublicByAuthor(aliceId)).total, 11, 'suspended authors stay visible');
+      await setStatus('alice@example.com', AccountStatus.DEACTIVATED);
+      assert.deepEqual(await itinerariesService.listPublicByAuthor(aliceId), { items: [], page: 1, pageSize: 10, total: 0, totalPages: 0 });
+      assert.equal((await itinerariesService.listPublicByAuthor(new Types.ObjectId().toString())).total, 0, 'missing author');
+      assert.equal((await itinerariesService.listPublicByAuthor('not-an-id')).total, 0);
+    });
+
+    it("shows a clone's deactivated original author as Deleted user", async () => {
+      const sourceId = await createItinerary(bob, { title: 'Nile cruise', visibility: 'PUBLIC' });
+      const clone = (await http().post(`/api/itineraries/${sourceId}/clone`).set('Cookie', alice).expect(201)).body;
+      await http().patch(`/api/itineraries/${clone.itineraryId}`).set('Cookie', alice).send({ visibility: 'PUBLIC' }).expect(200);
+      await setStatus('bob@example.com', AccountStatus.DEACTIVATED);
+      const page = await itinerariesService.listPublicByAuthor(await userIdOf('alice@example.com'));
+      assert.equal(page.items[0].clonedFrom?.authorName, 'Deleted user');
+    });
+
+    it('returns one public summary only while it is public and its author is visible', async () => {
+      const aliceId = await userIdOf('alice@example.com');
+      const bobId = await userIdOf('bob@example.com');
+      const id = await createItinerary(alice, { title: 'Nile cruise', visibility: 'PUBLIC' });
+      const privateId = await createItinerary(alice, { title: 'Secret plan' });
+
+      const summary = await itinerariesService.getPublicSummary(id);
+      assert.equal(summary?.title, 'Nile cruise');
+      assert.equal(summary?.author?.name, 'alice');
+      assert.equal('days' in summary!, false);
+      assert.equal((await itinerariesService.getPublicSummary(id, aliceId))?.itineraryId, id);
+      assert.equal(await itinerariesService.getPublicSummary(id, bobId), null, "another author's itinerary");
+      assert.equal(await itinerariesService.getPublicSummary(privateId), null);
+      assert.equal(await itinerariesService.getPublicSummary(privateId, aliceId), null, 'private even for its owner');
+      assert.equal(await itinerariesService.getPublicSummary('not-an-id'), null);
+      assert.equal(await itinerariesService.getPublicSummary(id, 'not-an-id'), null);
+      assert.equal(await itinerariesService.getPublicSummary(new Types.ObjectId().toString()), null);
+
+      await http().patch(`/api/itineraries/${id}`).set('Cookie', alice).send({ visibility: 'PRIVATE' }).expect(200);
+      assert.equal(await itinerariesService.getPublicSummary(id), null, 'made private');
+      await http().patch(`/api/itineraries/${id}`).set('Cookie', alice).send({ visibility: 'PUBLIC' }).expect(200);
+      await setStatus('alice@example.com', AccountStatus.DEACTIVATED);
+      assert.equal(await itinerariesService.getPublicSummary(id), null, 'deactivated author');
+    });
+
+    it('fails closed when the account-status lookup fails', async () => {
+      const id = await createItinerary(alice, { visibility: 'PUBLIC' });
+      const original = accountStatuses.getAccountStatuses;
+      accountStatuses.getAccountStatuses = async () => { throw new Error('users unavailable'); };
+      try {
+        await assert.rejects(itinerariesService.listPublicByAuthor(await userIdOf('alice@example.com')));
+        await assert.rejects(itinerariesService.getPublicSummary(id));
+      } finally {
+        accountStatuses.getAccountStatuses = original;
+      }
+    });
+  });
+
+  describe('ITN-27 (bonus) linked bookings', () => {
+    const userIdOf = async (email: string) => (await users.findOne({ email }).lean().exec())!._id.toString();
+
+    /** Days: Cairo 2026-12-20, Cairo 2026-12-21, London 2026-12-22. */
+    async function tripWithDays(cookie = alice) {
+      const id = await createItinerary(cookie, { currency: 'USD' });
+      await addDay(id, 'Cairo', {}, cookie);
+      await addDay(id, 'Cairo', {}, cookie);
+      const body = await addDay(id, 'London', {}, cookie);
+      return { id, dayIds: body.days.map((day: { dayId: string }) => day.dayId) as string[] };
+    }
+
+    const link = (id: string, body: Record<string, unknown>, cookie = alice) =>
+      http().post(`/api/itineraries/${id}/bookings`).set('Cookie', cookie).send(body);
+
+    it('links a confirmed hotel booking for the owner and feeds the budget', async () => {
+      const { id, dayIds } = await tripWithDays();
+      const bookingId = hotelBookings.add(await userIdOf('alice@example.com'));
+
+      const linked = (await link(id, { type: 'HOTEL', bookingId, dayId: dayIds[0] }).expect(201)).body;
+      assert.equal(linked.linkedBookings.length, 1);
+      assert.deepEqual(
+        (({ type, bookingId: b, dayId, status, countsInBudget, label, bookingReference, amount, currency, startDate, endDate, matchesDay }) =>
+          ({ type, b, dayId, status, countsInBudget, label, bookingReference, amount, currency, startDate, endDate, matchesDay }))(linked.linkedBookings[0]),
+        { type: 'HOTEL', b: bookingId, dayId: dayIds[0], status: 'CONFIRMED', countsInBudget: true, label: 'Nile Hotel',
+          bookingReference: 'HB-TEST1', amount: 250.5, currency: 'USD', startDate: '2026-12-20', endDate: '2026-12-22', matchesDay: true },
+      );
+      await link(id, { type: 'HOTEL', bookingId, dayId: dayIds[1] }).expect(409);
+
+      let summary = (await http().get(`/api/itineraries/${id}/budget-summary`).set('Cookie', alice).expect(200)).body;
+      assert.equal(summary.totals.categories.ACCOMMODATION, 250.5);
+      assert.equal(summary.totals.grandTotal, 250.5);
+      assert.equal(summary.byDay[0].categories.ACCOMMODATION, 250.5);
+      assert.equal(summary.byDay[1].categories.ACCOMMODATION, 0);
+      assert.equal(summary.linkedBookings[0].convertedAmount, 250.5);
+      assert.deepEqual(summary.originalTotals, [{ currency: 'USD', amount: 250.5 }]);
+      // 1 USD = 50 EGP.
+      summary = (await http().get(`/api/itineraries/${id}/budget-summary?currency=EGP`).set('Cookie', alice).expect(200)).body;
+      assert.equal(summary.totals.categories.ACCOMMODATION, 12525);
+
+      // A later cancellation stays visible but no longer counts.
+      hotelBookings.rows.get(bookingId)!.booking.status = BookingStatus.CANCELLED;
+      const owner = (await http().get(`/api/itineraries/${id}`).set('Cookie', alice).expect(200)).body;
+      assert.equal(owner.linkedBookings[0].status, 'CANCELLED');
+      assert.equal(owner.linkedBookings[0].countsInBudget, false);
+      summary = (await http().get(`/api/itineraries/${id}/budget-summary`).set('Cookie', alice).expect(200)).body;
+      assert.equal(summary.totals.grandTotal, 0);
+      assert.equal(summary.linkedBookings[0].convertedAmount, 0);
+
+      // A booking that no longer exists shows as unavailable.
+      hotelBookings.rows.delete(bookingId);
+      const gone = (await http().get(`/api/itineraries/${id}`).set('Cookie', alice).expect(200)).body;
+      assert.equal(gone.linkedBookings[0].status, null);
+
+      const linkedBookingId = gone.linkedBookings[0].linkedBookingId;
+      const unlinked = (await http().delete(`/api/itineraries/${id}/bookings/${linkedBookingId}`).set('Cookie', alice).expect(200)).body;
+      assert.deepEqual(unlinked.linkedBookings, []);
+      await http().delete(`/api/itineraries/${id}/bookings/${linkedBookingId}`).set('Cookie', alice).expect(404);
+    });
+
+    it('links a booked flight on its departure date and adds it to that day\'s transport', async () => {
+      const { id, dayIds } = await tripWithDays();
+      const flightId = flightBookings.add(await userIdOf('alice@example.com'), {
+        amountMinor: 40000, bookingReference: 'FB-TEST1', label: 'MS777 CAI-LHR', startDate: '2026-12-22', endDate: undefined,
+      });
+
+      const wrongDay = await link(id, { type: 'FLIGHT', bookingId: flightId, dayId: dayIds[0] }).expect(400);
+      assert.match(wrongDay.body.errors.dayId[0], /dated 2026-12-22.*this day is 2026-12-20/);
+      const linked = (await link(id, { type: 'FLIGHT', bookingId: flightId, dayId: dayIds[2] }).expect(201)).body;
+      assert.equal(linked.linkedBookings[0].type, 'FLIGHT');
+      assert.equal(linked.linkedBookings[0].label, 'MS777 CAI-LHR');
+      assert.equal(linked.linkedBookings[0].amount, 400);
+      assert.equal(linked.linkedBookings[0].matchesDay, true);
+      assert.equal('endDate' in linked.linkedBookings[0], false);
+
+      const summary = (await http().get(`/api/itineraries/${id}/budget-summary`).set('Cookie', alice).expect(200)).body;
+      assert.equal(summary.byDay[2].transport, 400);
+      assert.equal(summary.byDay[2].total, 400);
+      assert.equal(summary.totals.transport, 400);
+      assert.equal(summary.totals.categories.ACCOMMODATION, 0);
+      assert.equal(summary.totals.grandTotal, 400);
+      assert.equal(summary.byCity.find((city: { city: string }) => city.city === 'London').total, 400);
+      assert.deepEqual(
+        (({ type, countsInBudget, convertedAmount }) => ({ type, countsInBudget, convertedAmount }))(summary.linkedBookings[0]),
+        { type: 'FLIGHT', countsInBudget: true, convertedAmount: 400 },
+      );
+
+      // Linking the same flight again is a conflict.
+      await link(id, { type: 'FLIGHT', bookingId: flightId, dayId: dayIds[2] }).expect(409);
+    });
+
+    it('keeps links owner-only: hidden from other viewers, their summaries and clones', async () => {
+      const { id, dayIds } = await tripWithDays();
+      await link(id, { type: 'HOTEL', bookingId: hotelBookings.add(await userIdOf('alice@example.com')), dayId: dayIds[0] }).expect(201);
+      await http().patch(`/api/itineraries/${id}`).set('Cookie', alice).send({ visibility: 'PUBLIC' }).expect(200);
+
+      const asBob = (await http().get(`/api/itineraries/${id}`).set('Cookie', bob).expect(200)).body;
+      assert.equal(asBob.linkedBookings, undefined);
+      assert.equal((await http().get(`/api/itineraries/public/${id}`).expect(200)).body.linkedBookings, undefined);
+      const admin = await login('admin@example.com', { role: UserRole.ADMIN });
+      assert.equal((await http().get(`/api/itineraries/${id}`).set('Cookie', admin).expect(200)).body.linkedBookings, undefined);
+
+      const bobSummary = (await http().get(`/api/itineraries/${id}/budget-summary`).set('Cookie', bob).expect(200)).body;
+      assert.equal(bobSummary.linkedBookings, undefined);
+      assert.equal(bobSummary.totals.grandTotal, 0);
+      const guestSummary = (await http().get(`/api/itineraries/${id}/budget-summary`).expect(200)).body;
+      assert.equal(guestSummary.linkedBookings, undefined);
+
+      const clone = (await http().post(`/api/itineraries/${id}/clone`).set('Cookie', bob).expect(201)).body;
+      assert.deepEqual(clone.linkedBookings, []);
+    });
+
+    it('rejects other users, unbooked reservations and days outside the booking dates', async () => {
+      const { id, dayIds } = await tripWithDays();
+      const aliceId = await userIdOf('alice@example.com');
+      const bookingId = hotelBookings.add(aliceId);
+
+      await http().post(`/api/itineraries/${id}/bookings`).send({ type: 'HOTEL', bookingId, dayId: dayIds[0] }).expect(401);
+      await link(id, { type: 'HOTEL', bookingId, dayId: dayIds[0] }, bob).expect(404); // not bob's itinerary
+      const bobsTrip = await tripWithDays(bob);
+      await link(bobsTrip.id, { type: 'HOTEL', bookingId, dayId: bobsTrip.dayIds[0] }, bob).expect(404); // not bob's booking
+
+      for (const status of [BookingStatus.PENDING, BookingStatus.EXPIRED, BookingStatus.CANCELLED]) {
+        const pending = hotelBookings.add(aliceId, { status });
+        const response = await link(id, { type: 'HOTEL', bookingId: pending, dayId: dayIds[0] }).expect(400);
+        assert.match(response.body.errors.bookingId[0], new RegExp(`this one is ${status}`));
+      }
+      const completed = hotelBookings.add(aliceId, { status: BookingStatus.COMPLETED });
+      await link(id, { type: 'HOTEL', bookingId: completed, dayId: dayIds[1] }).expect(201);
+
+      // Check-out day (2026-12-22) is not a night of the stay.
+      const outside = await link(id, { type: 'HOTEL', bookingId, dayId: dayIds[2] }).expect(400);
+      assert.match(outside.body.errors.dayId[0], /from 2026-12-20 to 2026-12-21.*this day is 2026-12-22/);
+      const unknownDay = await link(id, { type: 'HOTEL', bookingId, dayId: new Types.ObjectId().toString() }).expect(400);
+      assert.ok(unknownDay.body.errors.dayId);
+      await link(id, { type: 'TRAIN', bookingId, dayId: dayIds[0] }).expect(400);
+      await link(id, { type: 'HOTEL', bookingId: 'nope', dayId: dayIds[0] }).expect(400);
+      await link(id, { type: 'HOTEL', bookingId: new Types.ObjectId().toString(), dayId: dayIds[0] }).expect(404);
+      // A hotel booking id is not a flight booking.
+      await link(id, { type: 'FLIGHT', bookingId, dayId: dayIds[0] }).expect(404);
+      await http().delete(`/api/itineraries/${id}/bookings/${new Types.ObjectId()}`).set('Cookie', alice).expect(404);
+    });
+
+    it('moves links with their day, flags date mismatches and removes links with a deleted day', async () => {
+      const { id, dayIds } = await tripWithDays();
+      await link(id, { type: 'HOTEL', bookingId: hotelBookings.add(await userIdOf('alice@example.com')), dayId: dayIds[0] }).expect(201);
+      // Day 1 becomes the third day (2026-12-22), which is the check-out day.
+      const reordered = (await http().patch(`/api/itineraries/${id}/days/reorder`).set('Cookie', alice)
+        .send({ dayIds: [dayIds[2], dayIds[1], dayIds[0]] }).expect(200)).body;
+      assert.equal(reordered.linkedBookings[0].dayId, dayIds[0]);
+      assert.equal(reordered.linkedBookings[0].matchesDay, false);
+      const afterDelete = (await http().delete(`/api/itineraries/${id}/days/${dayIds[0]}`).set('Cookie', alice).expect(200)).body;
+      assert.deepEqual(afterDelete.linkedBookings, []);
+    });
+
+    it('limits links per itinerary and fails closed when a lookup fails', async () => {
+      const { id, dayIds } = await tripWithDays();
+      const aliceId = await userIdOf('alice@example.com');
+      for (let i = 0; i < 20; i += 1) await link(id, { type: 'HOTEL', bookingId: hotelBookings.add(aliceId), dayId: dayIds[0] }).expect(201);
+      await link(id, { type: 'HOTEL', bookingId: hotelBookings.add(aliceId), dayId: dayIds[0] }).expect(409);
+
+      hotelBookings.fail = true;
+      await http().get(`/api/itineraries/${id}/budget-summary`).set('Cookie', alice).expect(500);
+      await http().get(`/api/itineraries/${id}`).set('Cookie', alice).expect(500);
     });
   });
 

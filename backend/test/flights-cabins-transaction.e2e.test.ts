@@ -11,6 +11,7 @@ import { FlightsService } from '../src/flights/flights.service';
 import { FlightBookingsService } from '../src/flight-bookings/flight-bookings.service';
 import {CabinClass,CabinInventory,CabinInventorySchema,} from '../src/flights/schemas/cabin-inventory.schema';
 import { Flight, FlightSchema } from '../src/flights/schemas/flight.schema';
+import { NotificationsService } from '../src/notifications/notifications.service';
 
 describe('FlightsService - cabin transaction', () => {
   let replicaSet: MongoMemoryReplSet;
@@ -50,6 +51,9 @@ describe('FlightsService - cabin transaction', () => {
       getAssignedAirlineId: async () => airlineId,
     } as unknown as AirlinesService;
     const bookingsService = {} as FlightBookingsService;
+    const notificationsService = {
+     notifyMany: async () => undefined,
+     } as unknown as NotificationsService;
     service = new FlightsService(
       connection,
       flights,
@@ -57,7 +61,9 @@ describe('FlightsService - cabin transaction', () => {
       airports,
       airlinesModel,
       airlinesService,
-       bookingsService,
+      bookingsService,
+      notificationsService,
+
     );
 
     await Promise.all([flights.init(), cabins.init()]);

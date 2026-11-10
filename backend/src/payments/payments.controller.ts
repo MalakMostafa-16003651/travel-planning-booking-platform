@@ -43,6 +43,7 @@ export class PaymentsController {
   @ApiNotFoundResponse({ type: ApiErrorDto, description: 'No such booking belongs to you.' })
   @ApiConflictResponse({ type: ApiErrorDto, description: 'Booking not PENDING, hold expired, policies not accepted, or already paid.' })
   @ApiBadGatewayResponse({ type: ApiErrorDto, description: 'Stripe error.' })
+  @ApiServiceUnavailableResponse({ type: ApiErrorDto, description: 'Hotel checkout is temporarily unavailable until its booking confirmation connection is ready.' })
   create(@Body() dto: CreatePaymentDto, @Req() request: AuthenticatedRequest) {
     return this.payments.create(dto, request.user!);
   }
@@ -61,6 +62,7 @@ export class PaymentsController {
   @ApiNotFoundResponse({ type: ApiErrorDto, description: 'No such payment or booking belongs to you.' })
   @ApiConflictResponse({ type: ApiErrorDto, description: 'Payment not FAILED, needs an admin check, or booking no longer payable.' })
   @ApiBadGatewayResponse({ type: ApiErrorDto, description: 'Stripe error.' })
+  @ApiServiceUnavailableResponse({ type: ApiErrorDto, description: 'Hotel checkout is temporarily unavailable; the existing payment is preserved.' })
   retry(@Param() params: IdParamDto, @Req() request: AuthenticatedRequest) {
     return this.payments.retry(params.id, request.user!);
   }

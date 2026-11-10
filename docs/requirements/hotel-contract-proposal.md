@@ -1,6 +1,17 @@
 # Hotels, Rooms and Availability: shared contract
 
 Status: **proposal, not yet agreed.** Person 5 (Lama) owns `backend/src/hotels`.
+
+Audit update (2026-11-07): this proposal does not yet cover the complete official
+hotel requirements. Reconcile it with the
+[Milestone 1 ownership matrix](milestone-1-ownership-matrix.md) before HotelBooking
+is built against it. The reviewed workbook also requires hotel photos/star
+class/amenities, room type/beds/name uniqueness, positive bookable ranges,
+reservation-safe room deactivation, country-only search, rating filters/sorting
+and complete room/availability responses. This notice records those gaps; it
+does not approve a replacement shared schema. Lama and Osama must coordinate
+the corrected availability/reservation interface under the team's existing rules.
+
 This mirrors the pattern Person 3 used for Person 4 (see the
 [flight booking contract](flight-booking-contract-proposal.md)): the schemas and
 collection/field names below are the integration surface. HotelBooking (Person 6)
@@ -143,6 +154,10 @@ as a matching city.
 Same open question as flights: `pricePerNight`'s currency (PAY-04). Using
 integer minor units as a placeholder, consistent with `CabinInventory.price`.
 
+## ACC-11 integration update - 2026-11-08
+
+Malak approved the multi-room HTL-22 response while implementing ACC-11. The feature branch replaces the pending reservation binding with HotelBookingsReservationsAdapter, reusing Osama's HotelBookingsService.listForHotel and projected guest names from UsersService. Ownership is checked first. The response has rooms[], guestCount, bookingReference, userId/guestName, dates/status/currency, totalAmount in minor units and the existing page/pageSize/total/totalPages. Single roomId and guests are replaced by the approved fields. No database schema changes. The exact contract is backend/src/hotels/ports/hotel-reservations.port.ts and its Swagger DTO. Older pending-adapter wording below is historical; this change becomes shared develop behavior after PR review/merge. Other availability/booking questions remain open.
+
 ## 5. What Person 5 exports for others
 
 ### Person 6 (HotelBooking, not shipped)
@@ -176,3 +191,6 @@ written; no changes requested to that port.
 | 3 | Room type: free text or an enum? | Team | Free text; the workbook does not define a fixed room-type list. |
 | 4 | Who flips `Hotel.isActive`? | Person 2 | Admin endpoint writes the field directly, same as the (also unbuilt) Airline equivalent; Hotels only enforces it. |
 | 5 | `AI_PROMPTS.txt` vs `docs/work-logs/`: same open team question as the other contracts. | Team leader | Follow whatever the TA confirms for the rest of the team. |
+
+
+Session publication (2026-11-08): [PR55](https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/pull/55) contains the approved ACC-11 integration and ACC-07 backend. The team leader requested merging the saved edits. Use the PR record for the final merge state; tests/setup limits remain as documented. Before merging Osama's separate fix/HTL-22-reservations-port-shape branch, reconcile its per-room roomId/guests output with this approved rooms[]/guestCount/bookingReference contract.

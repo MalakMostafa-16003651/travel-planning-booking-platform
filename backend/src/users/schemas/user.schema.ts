@@ -15,6 +15,9 @@ export class User {
   @Prop({ required: true, lowercase: true, trim: true })
   email!: string;
 
+  @Prop({ type: Date, default: null, select: false })
+  emailVerifiedAt!: Date | null;
+
   @Prop({ required: true, select: false })
   passwordHash!: string;
 
@@ -26,6 +29,10 @@ export class User {
     validate: { validator: Number.isSafeInteger, message: 'Credential version must be an integer' },
   })
   credentialVersion!: number;
+
+  /** ACC-12 transaction coordination only; never a password/session epoch or public field. */
+  @Prop({ type: Number, default: 0, min: 0, max: Number.MAX_SAFE_INTEGER, select: false, validate: Number.isSafeInteger })
+  bookingVersion!: number;
 
   @Prop({ type: String })
   phoneNumber?: string;

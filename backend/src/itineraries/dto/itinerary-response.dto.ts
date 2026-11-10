@@ -1,3 +1,4 @@
+import { LinkedBookingDto } from './linked-booking.dto';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { BudgetCategory, CityGroup, dateOfDay, formatDateOnly, groupDaysByCity, ItineraryVisibility, TransportMode } from '../itinerary.rules';
 import { Activity, BudgetEntry, Itinerary, ItineraryDay, TransportCost } from '../schemas/itinerary.schema';
@@ -163,6 +164,8 @@ export class ItinerarySummaryDto {
   @ApiProperty({ example: 'USD' }) currency!: string;
   @ApiPropertyOptional({ type: ClonedFromDto }) clonedFrom?: ClonedFromDto;
   @ApiPropertyOptional({ nullable: true }) publishedAt?: Date | null;
+  @ApiPropertyOptional({ description: 'GEN-10: present (true) only when an administrator has hidden it. Only its owner can still see it.' })
+  isHidden?: boolean;
   @ApiProperty() createdAt!: Date;
   @ApiProperty() updatedAt!: Date;
 
@@ -197,6 +200,7 @@ export class ItinerarySummaryDto {
         },
       } : {}),
       publishedAt: itinerary.publishedAt ?? null,
+      ...(itinerary.isHidden ? { isHidden: true } : {}),
       createdAt: itinerary.createdAt,
       updatedAt: itinerary.updatedAt,
     };
@@ -210,6 +214,8 @@ export class ItineraryDto extends ItinerarySummaryDto {
   @ApiProperty({ type: [ItineraryDayDto] }) days!: ItineraryDayDto[];
   @ApiProperty({ type: [CityGroupDto], description: 'Consecutive days in the same city, recomputed after every change.' }) cityGroups!: CityGroupDto[];
   @ApiProperty({ type: [TransportCostDto] }) transportCosts!: TransportCostDto[];
+  @ApiPropertyOptional({ type: [LinkedBookingDto], description: 'ITN-27 (bonus): only in the owner\'s own responses, with live booking status and price.' })
+  linkedBookings?: LinkedBookingDto[];
 
   static fromItinerary(itinerary: Itinerary, names?: AuthorNames): ItineraryDto {
     return {

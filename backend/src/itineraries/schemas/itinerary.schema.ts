@@ -1,6 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Types } from 'mongoose';
-import { BudgetCategory, ItineraryVisibility, TransportMode } from '../itinerary.rules';
+import { BudgetCategory, ItineraryVisibility, LinkedBookingType, TransportMode } from '../itinerary.rules';
 
 /*
  * Days, activities, budget entries and transport costs are bounded and owned by one
@@ -117,6 +117,29 @@ export class TransportCost {
 }
 export const TransportCostSchema = SchemaFactory.createForClass(TransportCost);
 
+/**
+ * ITN-27 (bonus): a reference to one of the owner's own confirmed bookings. Only the reference
+ * is stored; amount, status and dates are read live from the booking module.
+ */
+@Schema({ versionKey: false })
+export class LinkedBooking {
+  declare _id: Types.ObjectId; // linkedBookingId
+
+  @Prop({ type: String, enum: LinkedBookingType, required: true })
+  type!: LinkedBookingType;
+
+  /** flightBookingId or hotelBookingId. */
+  @Prop({ type: Types.ObjectId, required: true })
+  bookingId!: Types.ObjectId;
+
+  @Prop({ type: Types.ObjectId, required: true })
+  dayId!: Types.ObjectId;
+
+  @Prop({ type: Date, required: true })
+  linkedAt!: Date;
+}
+export const LinkedBookingSchema = SchemaFactory.createForClass(LinkedBooking);
+
 @Schema({ timestamps: true, versionKey: false })
 export class ItineraryDay {
   declare _id: Types.ObjectId; // dayId. Day number and date come from array position.
@@ -198,11 +221,22 @@ export class Itinerary {
   @Prop({ type: [TransportCostSchema], default: [] })
   transportCosts!: TransportCost[];
 
+  /** ITN-27 (bonus): owner-only; never copied to clones or shown to other viewers. */
+  @Prop({ type: [LinkedBookingSchema], default: [] })
+  linkedBookings!: LinkedBooking[];
+
   @Prop({ type: ClonedFromSchema })
   clonedFrom?: ClonedFrom;
 
   @Prop({ type: Date, default: null })
   publishedAt!: Date | null;
+
+  /**
+   * GEN-10: hidden by an administrator after a report. Independent of `visibility`: a hidden
+   * itinerary is shown only to its owner, and only an administrator can unhide it.
+   */
+  @Prop({ type: Boolean, default: false })
+  isHidden!: boolean;
 
   declare createdAt: Date;
   declare updatedAt: Date;
