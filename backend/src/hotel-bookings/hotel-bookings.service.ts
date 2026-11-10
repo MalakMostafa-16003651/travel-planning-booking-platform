@@ -405,6 +405,24 @@ export class HotelBookingsService {
     return found !== null;
   }
 
+  /**
+   * HTL-06 (Person 5 connects this before deactivating a room): true while the room belongs to a reservation
+   * that still needs it, i.e. a PENDING hold that has not expired, or a CONFIRMED stay whose check-out date
+   * (UTC) is still ahead. Completed, cancelled and expired reservations do not count. Pass the caller's
+   * session to read inside its transaction. An invalid id has no reservations.
+   */
+  async roomHasActiveReservations(roomId: string, session?: ClientSession): Promise<boolean> {
+    if (!/^[0-9a-f]{24}$/i.test(roomId)) return false;
+    const found = await this.bookings.exists({
+      'rooms.roomId': new Types.ObjectId(roomId),
+      $or: [
+        { status: BookingStatus.PENDING, holdExpiresAt: { $gt: new Date() } },
+        { status: BookingStatus.CONFIRMED, checkOut: { $gt: this.clock.today() } },
+      ],
+    }).session(session ?? null).exec();
+    return found !== null;
+  }
+
   // Scheduled work (HotelBookingsMaintenanceService)
 
   /**
