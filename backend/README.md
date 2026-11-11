@@ -293,17 +293,27 @@ integration; itinerary Flights/Hotels search adapters remain pending.
 | GET | `/api/flight-bookings/:id` | One of your bookings, with `refund` (`PENDING`, `REFUNDED` or `FAILED`, from Payments) once a refund exists. |
 | GET | `/api/flight-bookings/:id/cancellation-quote` | The refund you would receive. Changes nothing. |
 | POST | `/api/flight-bookings/:id/cancel` | Cancels a Confirmed booking and requests its refund. |
-| GET | `/api/flight-bookings/:id/e-ticket` | PDF e-ticket for a Confirmed booking. |
+| GET | `/api/flight-bookings/:id/e-ticket` | PDF e-ticket for a Confirmed booking, including selected seats. |
+| GET | `/api/flight-bookings/:id/seat-map` | Own booking: capacity, occupied numbers and own selections. |
+| PUT | `/api/flight-bookings/:id/seats` | Replace future-segment selections atomically; `selections: []` clears them. |
 
 All routes need a login and role `USER` (shared `AuthGuard` and `RolesGuard`). Another user's booking returns **404**. Amounts are integer minor units of USD.
 
 **Cancellation deadline (FLT-26):** the refund is quoted inside the cancellation transaction, and the write only matches while the outbound departure is still in the future by database time (`$$NOW`). A slow airline-policy lookup therefore can never commit a cancellation after departure.
+
+**Seat selection (FLT-28):** adults/children may choose free numbered seats1..cabin capacity during an unexpired hold or before a Confirmed flight departs; infants have no seat. Send `{ "selections": [{ "flightId": "...", "passengerId": "...", "seatNumber": 3 }] }`. It is free, owner-only and transactional. A conflict returns409 without losing earlier selections. Confirmation retains seats; expiry and cancellation release them. Cabin capacity cannot shrink below an assigned seat. FLT-27 flight changes use the separate flow below.
 
 **Overselling** is prevented by one conditional cabin write: `heldSeats` only increases if `totalSeats - bookedSeats - heldSeats` still covers the request. Hold, confirm, cancel and expiry run in MongoDB transactions, so a round trip reserves both cabins or neither. Transactions need a replica set: Atlas always has one, and the tests start one.
 
 **Expiry** runs every minute, as does retrying failed refund requests and completing departed bookings. Payment checks `holdExpiresAt` directly, so a late sweep cannot extend a hold.
 
 **Integration:** `ports/` defines what this module needs from Flights, Payments and Notifications. The inventory adapter reads Person 3's `flights`, `cabininventories`, `airports` and `airlines` collections. `BOOKING_PAYMENTS` is bound to Person 8's `BookingPaymentsAdapter` (hold-expiry PaymentIntent cancellation, refunds, refund status), and `BOOKING_NOTIFICATIONS` to Person 2's `NotificationsService` (booking confirmed and cancelled). `test/flight-bookings-integration.e2e.test.ts` runs these real services together, with only Stripe's network calls faked.
+
+
+
+**Flight changes (FLT-27):** POST /api/flight-bookings/:id/changes with replacement flightId/cabinId segments for the same airport pairs, cabin classes and leg count. The owner gets a10-minute quote/hold; the original remains Confirmed. Read/accept /api/bookings/flight-change/:changeId/policies (POST accept-policies with accepted:true). Positive differences use POST /api/payments with bookingType:flight-change and bookingId:changeId; signed Stripe success alone applies them. Equal/lower fares use POST /api/flight-booking-changes/:changeId/confirm after acceptance. GET that change URL for status/lower-fare refund; POST its cancel route to abandon a pending proposal. Booking ID/reference and passenger IDs are preserved. Changed-leg seats are cleared; unchanged seats remain.
+
+Changes/booking responses use integer USD minor units; payment/policy amounts use major units. Lower-fare and cancellation refunds span actual original/change receipts and remain retryable on failure. No new env setting. The approved policy-index migration builds the replacement unique index before retiring the exact known legacy one. See the shared flight contract for lifecycle, recovery, compatibility and owner handoffs. This feature is in draft PR103 until reviewed/merged.
 
 ## Itineraries, activities and budgeting
 

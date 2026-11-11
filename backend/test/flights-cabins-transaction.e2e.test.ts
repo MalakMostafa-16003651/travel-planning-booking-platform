@@ -1,3 +1,5 @@
+import { FlightSeatAssignmentsService } from '../src/flight-bookings/flight-seat-assignments.service';
+import { FlightSeatAssignment, FlightSeatAssignmentSchema } from '../src/flight-bookings/schemas/flight-seat-assignment.schema';
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import { ConflictException } from '@nestjs/common';
@@ -63,6 +65,7 @@ describe('FlightsService - cabin transaction', () => {
       airlinesService,
       bookingsService,
       notificationsService,
+      new FlightSeatAssignmentsService(connection.model(FlightSeatAssignment.name, FlightSeatAssignmentSchema)),
 
     );
 

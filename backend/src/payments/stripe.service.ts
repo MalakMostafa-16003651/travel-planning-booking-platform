@@ -9,14 +9,14 @@ export class StripeService {
 
   constructor(private readonly config: ConfigService) {}
 
-  createPaymentIntent(params: { amount: number; currency: string; metadata: Record<string, string> }): Promise<Stripe.PaymentIntent> {
+  createPaymentIntent(params: { amount: number; currency: string; metadata: Record<string, string> }, idempotencyKey?: string): Promise<Stripe.PaymentIntent> {
     return this.call(() => this.stripe.paymentIntents.create({
       amount: params.amount,
       currency: params.currency.toLowerCase(),
       metadata: params.metadata,
       // No redirect-based methods, so the frontend needs no return_url.
       automatic_payment_methods: { enabled: true, allow_redirects: 'never' },
-    }));
+    }, idempotencyKey ? { idempotencyKey } : undefined));
   }
 
   retrievePaymentIntent(id: string): Promise<Stripe.PaymentIntent> {

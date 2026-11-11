@@ -1,3 +1,4 @@
+import { configureTestBookableRoom } from './hotel-test-data';
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, it, mock } from 'node:test';
 import { getModelToken } from '@nestjs/mongoose';
@@ -35,6 +36,7 @@ describe('ACC-12 real account deactivation and booking serialization', { concurr
     await fixture.connection.collection('hotels').insertOne({ _id: hotelId, name: 'Deactivation hotel', city: 'Cairo', countryCode: 'EG', address: '1 Corniche',
       isActive: true, checkInTime: '14:00', checkOutTime: '12:00', cancellationTiers: [{ daysBeforeCheckIn: 1, refundPercentage: 100 }] });
     await fixture.connection.collection('rooms').insertOne({ _id: roomId, hotelId, name: 'Room one', isActive: true, capacity: 2, pricePerNight: 10000 });
+    await configureTestBookableRoom(fixture.connection,roomId,hotelId);
     const held = await fixture.http().post('/api/hotel-bookings').set('Cookie', owner.cookie).send({ hotelId: hotelId.toString(), checkIn: '2035-01-10', checkOut: '2035-01-12',
       rooms: [{ roomId: roomId.toString(), adults: 1, childrenAges: [] }] }).expect(201);
     return { bookingId: held.body.hotelBookingId as string, hotelId, roomId };

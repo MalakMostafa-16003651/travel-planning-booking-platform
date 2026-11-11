@@ -8,6 +8,7 @@ import { UserRole } from '../common/enums/user-role.enum';
 import { CreateFlightBookingDto } from './dto/create-flight-booking.dto';
 import { CancellationQuoteDto, FlightBookingDto, FlightBookingPageDto, FlightBookingSummaryDto } from './dto/flight-booking-response.dto';
 import { ListFlightBookingsQueryDto } from './dto/list-flight-bookings-query.dto';
+import { FlightSeatAssignmentsService } from './flight-seat-assignments.service';
 import { ETicketService } from './e-ticket.service';
 import { FlightBookingsService } from './flight-bookings.service';
 
@@ -19,7 +20,7 @@ import { FlightBookingsService } from './flight-bookings.service';
 @Roles(UserRole.USER)
 @Controller('flight-bookings')
 export class FlightBookingsController {
-  constructor(private readonly bookings: FlightBookingsService, private readonly eTickets: ETicketService) {}
+  constructor(private readonly bookings: FlightBookingsService, private readonly eTickets: ETicketService, private readonly seatAssignments: FlightSeatAssignmentsService) {}
 
   @Post()
   @Header('Cache-Control', 'no-store')
@@ -98,7 +99,7 @@ export class FlightBookingsController {
   @ApiConflictResponse({ type: ApiErrorDto, description: 'Booking is not Confirmed.' })
   async eTicket(@Param('id') id: string, @Req() request: AuthenticatedRequest): Promise<StreamableFile> {
     const booking = await this.bookings.getTicketableBooking(id, request.user!.userId);
-    return new StreamableFile(await this.eTickets.generate(booking), {
+    return new StreamableFile(await this.eTickets.generate(booking, await this.seatAssignments.list(booking._id.toString())), {
       type: 'application/pdf',
       disposition: `attachment; filename="e-ticket-${booking.bookingReference}.pdf"`,
     });

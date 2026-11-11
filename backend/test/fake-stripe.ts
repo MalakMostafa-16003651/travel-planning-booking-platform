@@ -12,6 +12,8 @@ export const TEST_STRIPE_CONFIG = { STRIPE_SECRET_KEY: 'sk_test_never_used_for_n
 export class FakeStripe {
   intents = new Map<string, Stripe.PaymentIntent>();
   refunds = new Map<string, Stripe.Refund>();
+  private intentsByKey = new Map<string, Stripe.PaymentIntent>();
+  private intentParamsByKey = new Map<string, unknown>();
   private refundsByKey = new Map<string, Stripe.Refund>();
   private refundParamsByKey = new Map<string, { paymentIntentId: string; amount: number; metadata: Record<string, string> }>();
   calls = { createIntent: 0, createRefund: 0 };
@@ -23,11 +25,16 @@ export class FakeStripe {
   private sequence = 0;
 
   install(service: StripeService) {
-    service.createPaymentIntent = async ({ amount, currency, metadata }) => {
+    service.createPaymentIntent = async ({ amount, currency, metadata }, idempotencyKey) => {
+      if (idempotencyKey && this.intentsByKey.has(idempotencyKey)) {
+        if (!isDeepStrictEqual(this.intentParamsByKey.get(idempotencyKey), { amount, currency, metadata })) throw new Error('Stripe intent idempotency parameters changed');
+        return { ...this.intentsByKey.get(idempotencyKey)! };
+      }
       this.calls.createIntent += 1;
       const id = `pi_test_${++this.sequence}`;
       const intent = { id, object: 'payment_intent', amount, amount_received: 0, currency: currency.toLowerCase(), metadata, status: 'requires_payment_method', client_secret: `${id}_secret`, last_payment_error: null } as unknown as Stripe.PaymentIntent;
       this.intents.set(id, intent);
+      if (idempotencyKey) { this.intentsByKey.set(idempotencyKey,intent); this.intentParamsByKey.set(idempotencyKey,{amount,currency,metadata:{...metadata}}); }
       return { ...intent };
     };
     service.retrievePaymentIntent = async (id) => ({ ...this.intent(id) });

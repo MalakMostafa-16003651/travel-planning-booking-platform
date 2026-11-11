@@ -1,3 +1,4 @@
+import { ReviewRatingsModule } from '../reviews/review-ratings.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AuthModule } from '../auth/auth.module';
@@ -18,6 +19,7 @@ import { OptionalAuthGuard } from './optional-auth.guard';
 @Module({
   imports: [
     AuthModule,
+    ReviewRatingsModule,
     AuditLogsModule,
     ReferenceDataModule,
     HotelBookingsModule,

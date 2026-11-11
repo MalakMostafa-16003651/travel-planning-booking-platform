@@ -25,6 +25,9 @@ export class Refund {
   @Prop({ type: Types.ObjectId })
   hotelBookingId?: Types.ObjectId;
 
+  @Prop({ type: Types.ObjectId })
+  flightBookingChangeId?: Types.ObjectId;
+
   // Major units, like Payment.amount.
   @Prop({ type: Number, required: true, min: 0 })
   amount!: number;
