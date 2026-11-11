@@ -22,6 +22,9 @@ export class PolicyAcceptance {
   @Prop({ type: Types.ObjectId })
   hotelBookingId?: Types.ObjectId;
 
+  @Prop({ type: Types.ObjectId })
+  flightBookingChangeId?: Types.ObjectId;
+
   // The policies the user saw, so a later provider change needs a new acceptance.
   @Prop({ type: MongooseSchema.Types.Mixed, required: true })
   policies!: unknown;
@@ -36,6 +39,8 @@ export class PolicyAcceptance {
 export const PolicyAcceptanceSchema = SchemaFactory.createForClass(PolicyAcceptance);
 // One acceptance per user per booking; accepting again updates it.
 PolicyAcceptanceSchema.index(
-  { userId: 1, bookingType: 1, flightBookingId: 1, hotelBookingId: 1 },
-  { unique: true, name: 'policy_acceptances_booking_unique' },
+  { userId: 1, bookingType: 1, flightBookingId: 1, hotelBookingId: 1, flightBookingChangeId: 1 },
+  { unique: true, name: 'policy_acceptances_target_unique' },
 );
+
+PolicyAcceptanceSchema.index({ userId: 1, flightBookingChangeId: 1 }, { unique: true, partialFilterExpression: { flightBookingChangeId: { $exists: true } }, name: 'policy_acceptances_change_unique' });

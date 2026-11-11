@@ -5,8 +5,8 @@ import { PaymentStatus } from './payment-status.enum';
 import { HOLD_EXPIRED_REASON } from './payments.service';
 
 /** One recovery predicate for both booking modules. Gateways/status writes stay in Payments. */
-export function expiredBookingPaymentPipeline(type: BookingType, bookingCollection: string, limit: number): PipelineStage[] {
-  const field = type === 'flight' ? 'flightBookingId' : 'hotelBookingId';
+export function expiredBookingPaymentPipeline(type: BookingType, bookingCollection: string, limit: number, terminalStatuses: BookingStatus[] = [BookingStatus.EXPIRED]): PipelineStage[] {
+  const field = type === 'flight' ? 'flightBookingId' : type === 'flight-change' ? 'flightBookingChangeId' : 'hotelBookingId';
   return [
     { $match: { bookingType: type, $or: [
       { status: PaymentStatus.PENDING },
@@ -14,7 +14,7 @@ export function expiredBookingPaymentPipeline(type: BookingType, bookingCollecti
       { status: PaymentStatus.SUCCEEDED, bookingConfirmedAt: null, autoRefundedAt: null },
     ] } },
     { $lookup: { from: bookingCollection, localField: field, foreignField: '_id', as: 'booking' } },
-    { $match: { 'booking.status': BookingStatus.EXPIRED } },
+    { $match: { 'booking.status': { $in: terminalStatuses } } },
     { $sort: { updatedAt: 1, _id: 1 } }, { $limit: limit }, { $project: { [field]: 1 } },
   ];
 }

@@ -7,7 +7,7 @@ exactly. Section 7 records which decisions the team adopted. Anything the team
 changes here is updated in the `adapters/` folder or `flight-booking.rules.ts`.
 
 Sources: `Final_ SP1_Reviewed_Requirements.xlsx` (authoritative), the project PDF
-section 8.4, and the team's naming rules. FLT-28 is being added under the approved design below; FLT-27 requires its separate shared payment-interface agreement.
+section 8.4, and the team's naming rules. FLT-27/FLT-28 use the approved shared extensions below; their current feature-branch implementation awaits final validation/review.
 
 ## 1. Requirements owned by Person 4
 
@@ -202,7 +202,7 @@ These provider gates were merged in PR82. R2 airport/time pairing and Person7 te
 
 ## Approved FLT-28 seat selection - 2026-11-11
 
-Status: implemented on the feature branch;18/18 seat tests and162/162 affected integration checks pass, PR review pending. Malak approved the shared FlightSeatAssignment schema and narrow booking/cabin integrations. FLT-27 is separate pending work, with no flight-change/payment contract implemented here.
+Status: implemented on the feature branch;18/18 seat tests and162/162 affected integration checks pass, PR review pending. Malak approved the shared FlightSeatAssignment schema and narrow booking/cabin integrations. FLT-27 now has the approved implementation described in the next section.
 
 - GET /api/flight-bookings/:id/seat-map returns cabin capacity, occupied seat numbers, each segment's modifiable flag and only the current owner's selections. It does not expose other passenger/booking identities or allocate an array up to cabin capacity.
 - PUT /api/flight-bookings/:id/seats accepts { selections: [{ flightId, passengerId, seatNumber }] }. It atomically replaces the owner's selections on future segments; [] clears those selections. Already-departed leg history is preserved. Both routes use the existing USER auth/role/origin guards; other owners receive404.
@@ -211,3 +211,24 @@ Status: implemented on the feature branch;18/18 seat tests and162/162 affected i
 - Flight transaction gates serialize selection with cabin capacity edits and flight cancellation. A cabin cannot shrink below its highest active assigned seat or booked+held count. Final booking writes enforce both actual departure and hold deadlines. Conflicts roll back the whole replacement and return409.
 - Paid confirmation retains selections and removes their expiry in the same transaction. Hold expiry, owner cancellation and airline cancellation release assignments with the existing inventory/booking transaction. Booking details expose optional seatSelections, and the owner e-ticket includes the chosen seats.
 - No new public status, environment variable, cabin layout convention or seat price is introduced. Ismail reuses lifecycle hooks; Gamila retains existing cabin fields and capacity rules. Seat numbers are a simple approved1..capacity model, not airline row/letter layouts.
+
+
+## Approved FLT-27 flight/date changes - 2026-11-11
+
+Malak approved this shared design. Implemented on the same PR103 feature branch; final delta checks and review are required before merge. The original FlightBooking remains Confirmed during a replacement hold and keeps its ID/reference after application. Passenger identity/DOB/baggage input is reused; age types and seat count are recalculated for the new departure.
+
+1. POST /api/flight-bookings/:id/changes with replacement segments (flightId/cabinId). Preserve airport pairs, cabin classes and leg count; choose at least one different flight. Every original and replacement leg must be Scheduled/future and the airline admission gates must pass. The server quotes the complete replacement fare and reserves only additional/changed cabin capacity for10 minutes. It authorizes the owner before attempting recovery, scoped to that booking. One pending proposal per original booking; unresolved lower-fare refunds must finish before a new proposal.
+2. GET /api/bookings/flight-change/:changeId/policies, then POST the corresponding accept-policies route with accepted:true. The acceptance includes the server-owned quote and replacement policies. All change responses/booking amounts are USD minor units; Payments/policy display amounts are major units.
+3. For a positive difference, POST /api/payments with bookingType:flight-change and bookingId:changeId. Existing Stripe retry/signature/amount/currency/verification rules apply. Only backend-verified success switches the booking. Change checkout uses a stable Payment ID and Stripe idempotency key; a signed success can recover a failed initial Payment insert using the stored server quote. No zero-value Stripe charge is created.
+4. For equal/lower fares, POST /api/flight-booking-changes/:changeId/confirm after policy acceptance. The switch is transactional: convert replacement holds, release superseded booked capacity, update the same booking, preserve passenger IDs/reference, remove seats on changed legs or new infants, retain unchanged-leg seats and mark the change applied. Original/target cancellation and deadline races abort the whole switch.
+5. GET /api/flight-booking-changes/:changeId returns quote/result and the lower-fare refund status when a Refund exists. POST its cancel route abandons a Pending change and releases only replacement holds. Original booking cancellation also abandons pending proposals; actual proposed-flight cancellation releases them too. Maintenance retries expiry, gateway cleanup and missing payment outcomes; a change-maintenance failure does not stop ordinary booking work.
+
+FlightBookingChange is private persistence with owner/original references, original fingerprint/fare snapshot, proposed trip/policies, held deltas, deadline, status, applied payment/time and refund obligation. Status uses the existing BookingStatus enum: Confirmed means the proposal was applied. No new environment variable or public payment status.
+
+Payment has exactly one primary target: flightBookingId, hotelBookingId or flightBookingChangeId. Original payments retain their captured amount. There is one separate Payment per change. Refunds of the canonical booking can also carry a change-receipt reference for provenance; bookingType identifies their primary target. PolicyAcceptance adds the change reference. Startup creates the covering five-field unique policy index before retiring only the exact known legacy index; no acceptance data is deleted. Retain the new index when using the new booking type.
+
+Lower fares and later cancellations allocate refunds deterministically across original plus successfully applied change receipts; pending/completed refunds consume refundable balances and failed attempts do not. Lost responses/inserts replay the same Stripe refund key. A failed refund reopens its durable obligation transactionally, including after a Pending refund later fails. The canonical booking's latest cancellation status aggregates its receipt refunds; the change response scopes its lower-fare refund by change. A queued/accepted refund is not proof that money arrived.
+
+BON-01 keeps its canonical-booking provider/fare attribution, includes applied difference receipts and deduplicates booking counts per provider across charges. After a provider change, the report follows the canonical replacement provider; it is not an immutable provider-payout ledger. No payment amount is rewritten and no refund is counted twice.
+
+Ismail: use these lifecycle/store hooks; do not duplicate holds/pricing/Stripe logic. Hicham: accept flight-change through the existing policy/payment API and preserve idempotency/recovery. Gamila: retain Flight/airline transaction gates and the cancellation callback. Kiki's stable getMine contract and booking references remain in use; read current fare/status. Known independent audit gaps outside these changes remain open. Live Stripe account demonstration is still separate from isolated fake-network regression.

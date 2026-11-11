@@ -1,3 +1,4 @@
+import { FlightBookingChangesStore } from './flight-booking-changes.store';
 import { FlightSeatAssignmentsService } from './flight-seat-assignments.service';
 import { expiredBookingPaymentPipeline } from '../payments/expired-booking-payments';
 import { UsersService } from '../users/users.service';
@@ -55,6 +56,7 @@ export class FlightBookingsService {
     private readonly emailEligibility: EmailEligibilityService,
     private readonly users: UsersService,
     private readonly seatAssignments: FlightSeatAssignmentsService,
+    private readonly changesStore: FlightBookingChangesStore,
   ) {}
 
   /** FLT-19/FLT-21: prices the request without reserving or storing anything. */
@@ -94,6 +96,12 @@ export class FlightBookingsService {
     });
     return FlightBookingDto.from(booking);
   }
+
+  /** Shared pricing/eligibility; FLT-27 never duplicates fare rules. */
+  async priceBookingChange(input: CreateFlightBookingDto, session: ClientSession) {
+    return this.price(input.passengers, await this.selectSegments(input, session));
+  }
+  acquireChangeFlightGates(ids: string[], session: ClientSession) { return this.acquireFlightGates(ids, session, true); }
 
   async listMine(userId: string, group: FlightBookingGroup | undefined, page = 1): Promise<FlightBookingPageDto> {
     const owner = { userId: new Types.ObjectId(userId) };
@@ -208,6 +216,16 @@ export class FlightBookingsService {
       await this.settleRefund(cancelled);
       await this.notifyCancelled(cancelled);
     }
+    await this.cancelChangesForFlight(flightId);
+  }
+
+  /** Release replacement holds when their proposed flight is cancelled, too. */
+  private async cancelChangesForFlight(flightId: string): Promise<void> {
+    const pending = await this.changesStore.changes.find({ status: BookingStatus.PENDING, 'proposed.segments.flightId': new Types.ObjectId(flightId) }).exec();
+    for (const change of pending) await this.connection.transaction(async session => {
+      await this.bookings.updateOne({ _id: change.flightBookingId }, { $set: { updatedAt: new Date() } }, { session }).exec();
+      await this.changesStore.release(change._id, BookingStatus.CANCELLED, session, this.inventory);
+    });
   }
 
   /** FLT-05: keeps stored schedules current after a time change. */
@@ -561,6 +579,7 @@ export class FlightBookingsService {
         }
       }
       await this.seatAssignments.release(cancelled._id, session);
+      await this.changesStore.cancelForBooking(cancelled._id, session, this.inventory);
       return cancelled;
     });
   }
@@ -595,12 +614,13 @@ export class FlightBookingsService {
   private async settleRefund(booking: FlightBookingDocument): Promise<void> {
     if (!booking.refundDue || !booking.refundAmount) return;
     try {
-      const { refundId } = await this.payments.createRefund({
+      const { refundId, status } = await this.payments.createRefund({
         bookingType: 'FLIGHT',
         bookingId: booking._id.toString(),
         amount: booking.refundAmount,
         reason: booking.cancelledBy === CancelledBy.AIRLINE ? 'Flight cancelled by the airline' : 'Booking cancelled by the user',
       });
+      if (status === 'FAILED') throw new Error('Refund failed; retry remains due');
       await this.bookings.updateOne({ _id: booking._id }, { $set: { refundDue: false, refundId: new Types.ObjectId(refundId) } }).exec();
     } catch {
       // refundDue stays true, so retryDueRefunds tries again.

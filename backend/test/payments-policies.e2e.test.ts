@@ -53,8 +53,9 @@ describe('PAY-02 booking policy acceptance', { concurrency: false }, () => {
     await fixture.http().get(`/api/bookings/flight/${new Types.ObjectId().toString()}/policies`).set('Cookie', owner.cookie).expect(404);
     // A flight booking id is not a hotel reservation.
     await fixture.http().get(`/api/bookings/hotel/${bookingId}/policies`).set('Cookie', owner.cookie).expect(404);
+    await fixture.http().get('/api/bookings/flight-change/' + bookingId + '/policies').set('Cookie', owner.cookie).expect(404);
     const badType = await fixture.http().get(`/api/bookings/train/${bookingId}/policies`).set('Cookie', owner.cookie).expect(400);
-    assert.deepEqual(badType.body.errors, { type: ['type must be flight or hotel'] });
+    assert.deepEqual(badType.body.errors, { type: ['type must be flight, hotel or flight-change'] });
     await fixture.http().get('/api/bookings/flight/not-an-id/policies').set('Cookie', owner.cookie).expect(400);
     assert.equal(await acceptances().countDocuments(), 0);
   });

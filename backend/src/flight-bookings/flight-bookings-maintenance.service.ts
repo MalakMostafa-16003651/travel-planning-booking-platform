@@ -1,3 +1,4 @@
+import { FlightBookingChangesService } from './flight-booking-changes.service';
 import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from '@nestjs/common';
 import { FlightBookingsService } from './flight-bookings.service';
 
@@ -10,7 +11,7 @@ export class FlightBookingsMaintenanceService implements OnApplicationBootstrap,
   private timer?: NodeJS.Timeout;
   private running = false;
 
-  constructor(private readonly bookings: FlightBookingsService) {}
+  constructor(private readonly bookings: FlightBookingsService, private readonly changes?: FlightBookingChangesService) {}
 
   onApplicationBootstrap(): void {
     this.timer = setInterval(() => void this.sweep(), SWEEP_INTERVAL_MS);
@@ -25,6 +26,8 @@ export class FlightBookingsMaintenanceService implements OnApplicationBootstrap,
     if (this.running) return;
     this.running = true;
     try {
+      try { await this.changes?.sweep(); }
+      catch { this.logger.error('Flight change maintenance failed; ordinary booking work will continue'); }
       await this.bookings.expireOverdueHolds();
       await this.bookings.completeDepartedBookings();
       await this.bookings.retryDueRefunds();

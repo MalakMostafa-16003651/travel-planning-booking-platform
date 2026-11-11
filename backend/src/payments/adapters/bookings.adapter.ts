@@ -1,3 +1,4 @@
+import { FlightBookingChangesService } from '../../flight-bookings/flight-booking-changes.service';
 import { ConflictException, forwardRef, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { MongoFlightInventoryAdapter } from '../../flight-bookings/adapters/mongo-flight-inventory.adapter';
 import { FlightBookingsService } from '../../flight-bookings/flight-bookings.service';
@@ -32,14 +33,17 @@ export class BookingsAdapter implements BookingsPort {
     @Inject(forwardRef(() => FlightBookingsService)) private readonly flightBookings: FlightBookingsService,
     @Inject(forwardRef(() => HotelBookingsService)) private readonly hotelBookings: HotelBookingsService,
     private readonly inventory: MongoFlightInventoryAdapter,
+    @Inject(forwardRef(() => FlightBookingChangesService)) private readonly changes?: FlightBookingChangesService,
   ) {}
 
   getBooking(type: BookingType, bookingId: string, userId: string): Promise<PayableBooking | null> {
+    if (type === 'flight-change') return this.changes!.payable(bookingId, userId);
     return type === 'flight' ? this.getFlightBooking(bookingId, userId) : this.getHotelBooking(bookingId, userId);
   }
 
   async markConfirmed(type: BookingType, bookingId: string, paymentId: string): Promise<boolean> {
     try {
+      if (type === 'flight-change') { await this.changes!.confirmPaid(bookingId, paymentId); return true; }
       if (type === 'flight') {
         // Idempotent for the same paymentId; throws 409 when the hold has ended.
         await this.flightBookings.confirmPaidBooking(bookingId, paymentId);

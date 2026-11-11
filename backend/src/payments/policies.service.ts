@@ -1,4 +1,4 @@
-import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Inject, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { isDeepStrictEqual } from 'node:util';
@@ -15,11 +15,23 @@ function normalizePolicies(policies: unknown): unknown {
 }
 
 @Injectable()
-export class PoliciesService {
+export class PoliciesService implements OnModuleInit {
   constructor(
     @Inject(BOOKINGS_PORT) private readonly bookingsPort: BookingsPort,
     @InjectModel(PolicyAcceptance.name) private readonly acceptances: Model<PolicyAcceptance>,
   ) {}
+
+  /** Build the covering unique index before retiring only the known legacy index. No records are deleted. */
+  async onModuleInit(): Promise<void> {
+    await this.acceptances.init();
+    await this.acceptances.collection.createIndex({ userId: 1, bookingType: 1, flightBookingId: 1, hotelBookingId: 1, flightBookingChangeId: 1 }, { unique: true, name: 'policy_acceptances_target_unique' });
+    const legacy = (await this.acceptances.collection.indexes()).find(i => i.name === 'policy_acceptances_booking_unique');
+    if (legacy) {
+      if (!legacy.unique || JSON.stringify(legacy.key) !== JSON.stringify({ userId: 1, bookingType: 1, flightBookingId: 1, hotelBookingId: 1 })) throw new Error('Unexpected legacy policy index; migration needs review');
+      try { await this.acceptances.collection.dropIndex('policy_acceptances_booking_unique'); }
+      catch (error) { if ((error as { code?: number }).code !== 27) throw error; }
+    }
+  }
 
   /** PAY-02: what the user must accept before paying. */
   async getPolicies(type: BookingType, bookingId: string, userId: string) {
