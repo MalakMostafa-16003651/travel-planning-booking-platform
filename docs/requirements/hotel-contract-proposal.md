@@ -8,7 +8,7 @@ Admin POST /api/hotels requires name, city, address, starClass (integer 1–5), 
 
 POST /api/hotels/:id/rooms requires name, type (1–80 trimmed characters), beds (positive safe integer), capacity and pricePerNight (positive safe integers). A trimmed room name is case-insensitively unique within its hotel, including inactive/legacy rooms. Concurrent creates/edits serialize through the existing Hotel/Room booking gates and a partial unique collation index covers completed records. Legacy duplicates/metadata are preserved: complete or rename them explicitly; no migration invents room types, bed counts or hotel stars.
 
-Hotel detail/search expose averageRating and ratingCount from the shared visible-review reader. Hidden reviews do not contribute. ReviewsService.getRatingStats retains its interface by delegating to the same reader; no stored duplicate average or circular Hotels/Reviews module import is introduced. Detail is not a combined reviews/dated-room endpoint: those use their existing dedicated APIs.
+Hotel detail/search expose averageRating and ratingCount from the shared visible-review reader. Hidden reviews do not contribute. ReviewsService.getRatingStats retains its interface by delegating to the same reader; no stored duplicate average or circular Hotels/Reviews module import is introduced. Follow-up 2026-11-11 (HTL-02): GET /api/hotels/:id also returns `hotelId`, `reviews` (ReviewsService.listForHotel page 1, same visibility rules) and, when both checkIn and checkOut are given (optional guests), `availableRooms` (the same page as GET /api/hotels/:id/rooms/available); otherwise `availableRooms` is null. The dedicated paginated APIs remain. ReviewsService is resolved at call time through ModuleRef, so no circular module import is added.
 
 ## Positive availability and existing reservations
 
@@ -27,6 +27,8 @@ Existing moderator block/edit/unblock endpoints remain:
 POST /api/hotels/:id/rooms/:roomId/availability
 PATCH /api/hotels/:id/rooms/:roomId/availability
 These exclusions are separate from configuring positive ranges. Existing room deactivation and provider/account gates remain in place.
+
+Follow-up 2026-11-11 (HTL-06): PATCH /api/hotels/:id/rooms/:roomId accepts `isActive` (false deactivates through the existing reservation check and gate, which returns 409 while a Confirmed or live Pending reservation needs the room; true reactivates it). DELETE /api/hotels/:id/rooms/:roomId now permanently deletes the Room and its RoomAvailability only when no hotel reservation of any status references the room. That check runs inside the room's booking-gate transaction, and any history is a 409 that suggests deactivation. Previously DELETE was a soft deactivation.
 
 ## Search and read responses
 
@@ -48,6 +50,6 @@ Osama: reuse the adapter/gates and canonical reservation queries; maintain posit
 Kiki: existing shared hotel-search adapter remains the integration surface. Country-only/rating support adds capabilities without copying search logic.
 Arwa: hotel-create requests now include starClass/amenities; existing audit transaction remains.
 
-No new role, public booking status, environment variable or separate workflow file is added. Test fixtures explicitly configure positive dates in isolated MongoDB; they do not open Atlas rooms. Validation evidence and the review outcome are recorded in Malak's single work log. Full acceptance of unrelated hotel detail/media/delete criteria remains tracked separately in the matrix.
+No new role, public booking status, environment variable or separate workflow file is added. Test fixtures explicitly configure positive dates in isolated MongoDB; they do not open Atlas rooms. Validation evidence and the review outcome are recorded in Malak's single work log. Hotel detail composition and never-reserved deletion were completed in the 2026-11-11 follow-up above.
 
 Validation: combined backend regression907/907,96 suites/67 test files, zero failures; production build passed. Full evidence is recorded in the single student log. PR103 is pending review, not a merged release.

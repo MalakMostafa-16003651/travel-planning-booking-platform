@@ -317,13 +317,28 @@ describe('Hotels E2E', { concurrency: false }, () => {
         .expect(404);
     });
 
-    it('deactivates a room instead of deleting it', async () => {
+    it('deactivates/reactivates a room with PATCH isActive and deletes a never-reserved room (HTL-06)', async () => {
       const room = await createRoom();
-      await http().delete(`/api/hotels/${hotelId}/rooms/${room._id}`).set('Cookie', moderatorCookie).expect(204);
+      await http().patch(`/api/hotels/${hotelId}/rooms/${room._id}`).set('Cookie', moderatorCookie).send({ isActive: false }).expect(200);
+      let stored = await connection.collection('rooms').findOne({ _id: new Types.ObjectId(room._id) });
+      assert.equal(stored!.isActive, false, 'deactivated, document kept');
+      const reactivated = await http().patch(`/api/hotels/${hotelId}/rooms/${room._id}`).set('Cookie', moderatorCookie).send({ isActive: true }).expect(200);
+      assert.equal(reactivated.body.isActive, true);
 
-      const stored = await connection.collection('rooms').findOne({ _id: new Types.ObjectId(room._id) });
-      assert.ok(stored, 'the room document is kept, not removed');
-      assert.equal(stored!.isActive, false);
+      await http().delete(`/api/hotels/${hotelId}/rooms/${room._id}`).set('Cookie', moderatorCookie).expect(204);
+      stored = await connection.collection('rooms').findOne({ _id: new Types.ObjectId(room._id) });
+      assert.equal(stored, null, 'a room that was never reserved is deleted');
+      assert.equal(await connection.collection('roomavailabilities').countDocuments({ roomId: new Types.ObjectId(room._id) }), 0);
+    });
+
+    it('refuses to delete a room that was ever reserved, even after its reservation ended (HTL-06)', async () => {
+      const room = await createRoom();
+      await connection.collection('hotelbookings').insertOne({ rooms: [{ roomId: new Types.ObjectId(room._id) }], status: 'EXPIRED' });
+      const refused = await http().delete(`/api/hotels/${hotelId}/rooms/${room._id}`).set('Cookie', moderatorCookie).expect(409);
+      assert.match(refused.body.message, /deactivate it instead/);
+      assert.ok(await connection.collection('rooms').findOne({ _id: new Types.ObjectId(room._id) }), 'the room is kept');
+      // Deactivation is still allowed: the expired reservation no longer needs the room.
+      await http().patch(`/api/hotels/${hotelId}/rooms/${room._id}`).set('Cookie', moderatorCookie).send({ isActive: false }).expect(200);
     });
 
     it('refuses to deactivate a room with an active reservation (HTL-06, Osama\'s roomHasActiveReservations)', async () => {
@@ -336,8 +351,10 @@ describe('Hotels E2E', { concurrency: false }, () => {
         .expect(201);
 
       await http().delete(`/api/hotels/${hotelId}/rooms/${room._id}`).set('Cookie', moderatorCookie).expect(409);
+      await http().patch(`/api/hotels/${hotelId}/rooms/${room._id}`).set('Cookie', moderatorCookie).send({ isActive: false }).expect(409);
 
       const stored = await connection.collection('rooms').findOne({ _id: new Types.ObjectId(room._id) });
+      assert.ok(stored, 'the room is not deleted');
       assert.equal(stored!.isActive, true, 'the room is not deactivated while the hold is active');
     });
 

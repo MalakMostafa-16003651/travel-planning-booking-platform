@@ -6,6 +6,9 @@ import { activeBookedRange, assertDates, BookableDates, coversStay, normalizeBoo
 import { SetRoomBookableRangesDto } from './dto/set-room-bookable-ranges.dto';
 import { assertSearchStay } from './hotel-search.rules';
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
+import type { ReviewsService } from '../reviews/reviews.service';
+import { HotelDetailQueryDto } from './dto/hotel-detail-query.dto';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, Types } from 'mongoose';
 import { AuditAction, AuditTargetType } from '../audit-logs/audit-log.enums';
@@ -94,7 +97,45 @@ export class HotelsService {
     private readonly auditLogs: AuditLogsService,
     private readonly ratings: ReviewRatingsService,
     private readonly inventory: RoomInventoryAdapter,
+    private readonly moduleRef: ModuleRef,
   ) {}
+
+  /**
+   * ReviewsModule imports HotelsModule, so the full ReviewsService cannot be injected here (an import
+   * cycle). It is looked up when first needed; in a narrow module without ReviewsModule the result is null.
+   */
+  private async reviewsService(): Promise<ReviewsService | null> {
+    try {
+      const { ReviewsService: token } = await import('../reviews/reviews.service');
+      return this.moduleRef.get(token, { strict: false });
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * HTL-02: the hotel profile (photos, star class, amenities, check-in/out times, cancellation tiers),
+   * its average rating and number of ratings, the newest reviews (first page of 10, same visibility as
+   * GET /hotels/:id/reviews) and, when both stay dates are given, the rooms available for that stay
+   * (first page, same rules as GET /hotels/:id/rooms/available).
+   */
+  async getDetails(id: string, requester: Requester | undefined, query: HotelDetailQueryDto): Promise<Record<string, unknown>> {
+    if ((query.checkIn === undefined) !== (query.checkOut === undefined)) {
+      const field = query.checkIn === undefined ? 'checkIn' : 'checkOut';
+      throw new BadRequestException({ message: 'Validation failed', errors: { [field]: ['Give both checkIn and checkOut, or neither'] } });
+    }
+    const hotel = await this.getById(id, requester) as unknown as Record<string, unknown> & { _id: Types.ObjectId; isActive: boolean };
+    const hotelId = hotel._id.toString();
+    const reviews = await (await this.reviewsService())?.listForHotel(hotelId, 1, requester) ?? null;
+    let availableRooms: AvailableRoomsPage | null = null;
+    if (query.checkIn !== undefined && query.checkOut !== undefined) {
+      availableRooms = hotel.isActive
+        ? await this.getAvailableRooms(hotelId, Object.assign(new AvailableRoomsQueryDto(), { checkIn: query.checkIn, checkOut: query.checkOut, guests: query.guests, page: 1 }))
+        // A deactivated hotel (visible only to its moderator/admin) cannot be booked, so nothing is available.
+        : { items: [], page: 1, pageSize: 10, total: 0, totalPages: 0 };
+    }
+    return { ...hotel, hotelId, reviews, availableRooms };
+  }
 
   async create(input: CreateHotelDto, adminId: string): Promise<Hotel> {
     const city = await this.references.resolveCity(input.city, input.countryCode);
@@ -244,8 +285,10 @@ export class HotelsService {
 
   /** HTL-05. */
   async updateRoom(moderatorId: string, hotelId: string, roomId: string, input: UpdateRoomDto): Promise<Room> {
-    const values=[input.name,input.type,input.beds,input.capacity,input.pricePerNight];
+    const values=[input.name,input.type,input.beds,input.capacity,input.pricePerNight,input.isActive];
     if(!values.some(v=>v!==undefined))throw new BadRequestException('At least one room field must be supplied');
+    // HTL-06: deactivation keeps its own reservation check and gate; then the other fields are applied.
+    if(input.isActive===false)await this.deactivateRoom(moderatorId,hotelId,roomId);
     const room=await this.getOwnRoom(moderatorId,hotelId,roomId);
     const set:Record<string,unknown>={};
     if(input.name!==undefined)set.name=input.name.trim();
@@ -253,6 +296,8 @@ export class HotelsService {
     if(input.beds!==undefined)set.beds=input.beds;
     if(input.capacity!==undefined)set.capacity=input.capacity;
     if(input.pricePerNight!==undefined)set.pricePerNight=input.pricePerNight;
+    if(input.isActive===true)set.isActive=true;
+    if(!Object.keys(set).length)return room;
     try {
       return await this.connection.transaction(async session=>{
         await this.inventory.acquireBookingGate(room.hotelId.toString(),[room._id.toString()],session,false);
@@ -284,6 +329,23 @@ export class HotelsService {
    * PR #70): an unexpired PENDING hold, or a CONFIRMED stay that has not checked out yet. The check
    * and the write run in one transaction so a hold cannot slip in between them.
    */
+  /**
+   * HTL-06 deletion: allowed only for a room that has never been reserved (no reservation of any status
+   * references it). Otherwise 409; deactivate it instead (PATCH isActive false), which keeps the ids of its
+   * past reservations valid. The room's booking gate is taken first, so a hold racing this delete either
+   * commits before it (and the delete sees the reservation) or finds no room and fails.
+   */
+  async deleteRoom(moderatorId: string, hotelId: string, roomId: string): Promise<void> {
+    const room = await this.getOwnRoom(moderatorId, hotelId, roomId);
+    await this.connection.transaction(async (session) => {
+      await this.inventory.acquireBookingGate(room.hotelId.toString(), [room._id.toString()], session, false);
+      const reserved = await this.connection.collection('hotelbookings').findOne({ 'rooms.roomId': room._id }, { session, projection: { _id: 1 } });
+      if (reserved) throw new ConflictException('This room has been reserved before and cannot be deleted; deactivate it instead');
+      await this.rooms.deleteOne({ _id: room._id }, { session }).exec();
+      await this.roomAvailabilities.deleteOne({ roomId: room._id }, { session }).exec();
+    });
+  }
+
   async deactivateRoom(moderatorId: string, hotelId: string, roomId: string): Promise<void> {
     const room = await this.getOwnRoom(moderatorId, hotelId, roomId);
     await this.connection.transaction(async (session) => {
