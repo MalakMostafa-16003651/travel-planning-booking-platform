@@ -7,6 +7,7 @@ import { UpdateAirlinePoliciesDto } from './dto/update-airline-policies.dto';
 import { Airline } from './schemas/airline.schema';
 import { AuditAction, AuditTargetType } from '../audit-logs/audit-log.enums';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { hasDefinedField } from '../common/validation/defined-fields';
 
 @Injectable()
 export class AirlinesService {
@@ -55,6 +56,15 @@ export class AirlinesService {
     return new Types.ObjectId(String(assignments[0].airlineId));
   }
 
+  /**
+   * The PDF's /api/airlines/:id moderator routes: :id must be the caller's own assigned airline. Another
+   * airline is reported as not found, the same way flights hide another airline's flight.
+   */
+  async assertOwnAirline(moderatorId: string, airlineId: string): Promise<void> {
+    const assigned = await this.getAssignedAirlineId(moderatorId);
+    if (!Types.ObjectId.isValid(airlineId) || !assigned.equals(airlineId)) throw new NotFoundException('Airline not found for your assignment');
+  }
+
   async getMine(moderatorId: string): Promise<Airline> {
     const id = await this.getAssignedAirlineId(moderatorId);
     const airline = await this.airlines.findById(id).exec();
@@ -63,7 +73,7 @@ export class AirlinesService {
   }
 
   async updateMine(moderatorId: string, input: UpdateAirlineDto): Promise<Airline> {
-    if (!Object.keys(input).length) throw new BadRequestException('At least one airline profile field must be supplied');
+    if (!hasDefinedField(input)) throw new BadRequestException('At least one airline profile field must be supplied');
     const id = await this.getAssignedAirlineId(moderatorId);
     try {
       const updated = await this.airlines.findByIdAndUpdate(id, { $set: input }, { new: true, runValidators: true }).exec();

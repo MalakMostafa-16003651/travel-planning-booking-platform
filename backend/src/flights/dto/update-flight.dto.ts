@@ -4,4 +4,6 @@ import { ValidateIf, IsString, Matches, MaxLength } from 'class-validator';
 export class UpdateFlightDto {
   @ApiPropertyOptional({ example: '2026-12-10T15:00' }) @ValidateIf((_object, value) => value !== undefined) @IsString() @MaxLength(19) @Matches(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/) departureLocalDateTime?: string;
   @ApiPropertyOptional({ example: '2026-12-10T19:00' }) @ValidateIf((_object, value) => value !== undefined) @IsString() @MaxLength(19) @Matches(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/) arrivalLocalDateTime?: string;
+  @ApiPropertyOptional({ example: 'CAI', description: 'FLT-05: allowed only while the flight has no booking. Must be in the airport catalog.' }) @ValidateIf((_object, value) => value !== undefined) @IsString() @Matches(/^[A-Z]{3}$/) departureAirportCode?: string;
+  @ApiPropertyOptional({ example: 'DXB', description: 'FLT-05: allowed only while the flight has no booking. Must be in the airport catalog.' }) @ValidateIf((_object, value) => value !== undefined) @IsString() @Matches(/^[A-Z]{3}$/) arrivalAirportCode?: string;
 }
