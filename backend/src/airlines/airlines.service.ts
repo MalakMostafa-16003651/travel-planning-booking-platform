@@ -5,24 +5,38 @@ import { CreateAirlineDto } from './dto/create-airline.dto';
 import { UpdateAirlineDto } from './dto/update-airline.dto';
 import { UpdateAirlinePoliciesDto } from './dto/update-airline-policies.dto';
 import { Airline } from './schemas/airline.schema';
+import { AuditAction, AuditTargetType } from '../audit-logs/audit-log.enums';
+import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { hasDefinedField } from '../common/validation/defined-fields';
 
 @Injectable()
 export class AirlinesService {
   constructor(
     @InjectModel(Airline.name) private readonly airlines: Model<Airline>,
     @InjectConnection() private readonly connection: Connection,
+    private readonly auditLogs: AuditLogsService,
   ) {}
 
-  async create(input: CreateAirlineDto): Promise<Airline> {
-    try {
-      return await this.airlines.create({
-        name: input.name.trim(), code: input.code, logo: null,
-        isActive: true, baggagePolicy: { pricePerExtraBag: 1, maxExtraBagsPerPassenger: 0 }, cancellationTiers: [],
-      });
-    } catch (error) {
-      if ((error as { code?: number }).code === 11000) throw new ConflictException('An airline with this code already exists');
-      throw error;
-    }
+  async create(input: CreateAirlineDto, adminId: string): Promise<Airline> {
+    return this.connection.transaction(async (session) => {
+      let airline: Airline;
+      try {
+        [airline] = await this.airlines.create([{
+          name: input.name.trim(), code: input.code, logo:null,
+          isActive: true, baggagePolicy: { pricePerExtraBag: 1, maxExtraBagsPerPassenger: 0 }, cancellationTiers: [],
+        }], { session });
+      } catch (error) {
+        if ((error as { code?: number }).code === 11000) throw new ConflictException('An airline with this code already exists');
+        throw error;
+      }
+      await this.auditLogs.log({
+        adminId,
+        action: AuditAction.AIRLINE_CREATED,
+        targetType: AuditTargetType.AIRLINE,
+        targetId: airline._id.toString(),
+      }, session);
+      return airline;
+    });
   }
 
   async getById(id: string): Promise<Airline> {
@@ -42,6 +56,15 @@ export class AirlinesService {
     return new Types.ObjectId(String(assignments[0].airlineId));
   }
 
+  /**
+   * The PDF's /api/airlines/:id moderator routes: :id must be the caller's own assigned airline. Another
+   * airline is reported as not found, the same way flights hide another airline's flight.
+   */
+  async assertOwnAirline(moderatorId: string, airlineId: string): Promise<void> {
+    const assigned = await this.getAssignedAirlineId(moderatorId);
+    if (!Types.ObjectId.isValid(airlineId) || !assigned.equals(airlineId)) throw new NotFoundException('Airline not found for your assignment');
+  }
+
   async getMine(moderatorId: string): Promise<Airline> {
     const id = await this.getAssignedAirlineId(moderatorId);
     const airline = await this.airlines.findById(id).exec();
@@ -50,7 +73,7 @@ export class AirlinesService {
   }
 
   async updateMine(moderatorId: string, input: UpdateAirlineDto): Promise<Airline> {
-    if (!Object.keys(input).length) throw new BadRequestException('At least one airline profile field must be supplied');
+    if (!hasDefinedField(input)) throw new BadRequestException('At least one airline profile field must be supplied');
     const id = await this.getAssignedAirlineId(moderatorId);
     try {
       const updated = await this.airlines.findByIdAndUpdate(id, { $set: input }, { new: true, runValidators: true }).exec();

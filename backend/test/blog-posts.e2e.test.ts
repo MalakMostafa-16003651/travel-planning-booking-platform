@@ -307,6 +307,29 @@ describe('BLG-01/02/03/04/08/09/12 blog posts', { concurrency: false }, () => {
     assert.equal(plain.body.itinerary, null);
   });
 
+  it('BLG-12/BLG-13/GEN-10: hides an itinerary hidden by an admin from the author page and from posts', async () => {
+    const itineraries = fixture.connection.collection('itineraries');
+    const tripId = new Types.ObjectId();
+    await itineraries.insertOne({ _id: tripId, userId: new Types.ObjectId(author.userId), title: 'Red Sea week', visibility: 'PUBLIC',
+      publishedAt: new Date(), countries: ['EG'], startDate: new Date('2027-03-01T00:00:00Z'), currency: 'USD', transportCosts: [], days: [] });
+    const created = await fixture.http().post('/api/posts').set('Cookie', author.cookie)
+      .send({ title: 'Diving trip', content: 'Plan attached.', status: 'PUBLISHED', itineraryId: tripId.toString() }).expect(201);
+    const postId = created.body.postId as string;
+
+    // Person 7's moderation hook (GEN-10) hides it: it leaves the author page and the post.
+    await itineraries.updateOne({ _id: tripId }, { $set: { isHidden: true } });
+    const page = await fixture.http().get(`/api/authors/${author.userId}`).expect(200);
+    assert.equal(page.body.itineraries.total, 0);
+    assert.equal((await fixture.http().get(`/api/posts/${postId}`).expect(200)).body.itinerary, null);
+    // A hidden itinerary cannot be attached again either.
+    await fixture.http().patch(`/api/posts/${postId}`).set('Cookie', author.cookie).send({ itineraryId: tripId.toString() }).expect(400);
+
+    // Unhidden: it shows again.
+    await itineraries.updateOne({ _id: tripId }, { $set: { isHidden: false } });
+    assert.equal((await fixture.http().get(`/api/authors/${author.userId}`).expect(200)).body.itineraries.total, 1);
+    assert.equal((await fixture.http().get(`/api/posts/${postId}`).expect(200)).body.itinerary.itineraryId, tripId.toString());
+  });
+
   it('BLG-13/ACC-12: hides attachments of deactivated or missing authors from admin moderation reads', async () => {
     const itineraryId = new Types.ObjectId();
     const itineraries = fixture.connection.collection('itineraries');

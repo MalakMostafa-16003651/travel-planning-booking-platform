@@ -21,7 +21,7 @@ export class AdminBookingsController {
   @ApiCookieAuth('accessToken')
   @ApiOperation({
     summary: 'ACC-17: read-only list of all bookings',
-    description: 'ADMIN only. Reference, user, provider, travel date, amount and status; newest first, 10 per page (GEN-05). Filter by type, status and travel-date range. Passport numbers and other passenger details are never included. type=FLIGHT (default) or HOTEL.',
+    description: 'ADMIN only. Reference, user, provider, travel date, amount and status; newest first, 10 per page (GEN-05). Filter by type, status and travel-date range. Passport numbers and other passenger details are never included. Without type, flights and hotels are listed together with one total; type=FLIGHT or type=HOTEL lists one kind.',
   })
   @ApiOkResponse({ type: AdminBookingPageDto })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'Invalid page, filter or date range.' })

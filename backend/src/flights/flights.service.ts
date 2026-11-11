@@ -1,5 +1,5 @@
-
-
+import { advanceBookingVersion, incrementableVersion } from '../common/booking-gate';
+import { FlightSeatAssignmentsService } from '../flight-bookings/flight-seat-assignments.service';
 import {BadRequestException,ConflictException,ForbiddenException,Injectable,Logger,NotFoundException,OnModuleInit,ServiceUnavailableException,} from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, QueryFilter, Types } from 'mongoose';
@@ -20,6 +20,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { FlightSearchDto, FlightSort, RoundTripSearchDto } from './dto/flight-search.dto';
 import { localDateBounds, localDateTimeToUtc, utcToLocalDateTime } from './flight-time.util';
 import { ItineraryFlightSearch } from '../itineraries/ports/travel-search.port';
+import { hasDefinedField } from '../common/validation/defined-fields';
 
 const SEARCH_PAGE_SIZE = BOOKINGS_PAGE_SIZE; // GEN-05: 10 per page
 
@@ -46,6 +47,7 @@ export class FlightsService implements OnModuleInit {
 
     private readonly bookings: FlightBookingsService,
     private readonly notifications: NotificationsService,
+    private readonly seatAssignments: FlightSeatAssignmentsService,
   ) {}
 
 async onModuleInit(): Promise<void> {
@@ -292,7 +294,7 @@ async onModuleInit(): Promise<void> {
     flightId: string,
     input: UpdateFlightDto,
   ): Promise<Flight> {
-    if (!Object.keys(input).length) {
+    if (!hasDefinedField(input)) {
       throw new BadRequestException(
         'Supply at least one time field',
       );
@@ -303,7 +305,7 @@ async onModuleInit(): Promise<void> {
       flightId,
     );
 
-    const [departureAirport, arrivalAirport] =
+    let [departureAirport, arrivalAirport] =
       await Promise.all([
         this.airports
           .findById(flight.departureAirportId)
@@ -319,6 +321,24 @@ async onModuleInit(): Promise<void> {
         'Flight airport reference is missing',
       );
     }
+
+    // FLT-05: airports may change only while the flight has no booking (checked again in the transaction below).
+    if (input.departureAirportCode !== undefined || input.arrivalAirportCode !== undefined) {
+      const [newDeparture, newArrival] = await Promise.all([
+        input.departureAirportCode === undefined ? departureAirport : this.airports.findOne({ code: input.departureAirportCode }).exec(),
+        input.arrivalAirportCode === undefined ? arrivalAirport : this.airports.findOne({ code: input.arrivalAirportCode }).exec(),
+      ]);
+      if (!newDeparture || !newArrival) {
+        throw new BadRequestException('Both airports must exist in the predefined airport catalog');
+      }
+      if (newDeparture._id.equals(newArrival._id)) {
+        throw new BadRequestException('Departure and arrival airports must be different');
+      }
+      departureAirport = newDeparture;
+      arrivalAirport = newArrival;
+    }
+    const airportsChanged = !departureAirport._id.equals(flight.departureAirportId)
+      || !arrivalAirport._id.equals(flight.arrivalAirportId);
 
     const departureAt = input.departureLocalDateTime
       ? localDateTimeToUtc(
@@ -346,37 +366,54 @@ async onModuleInit(): Promise<void> {
       );
     }
 
-    const changed =
+    const timesChanged =
       departureAt.getTime() !== flight.departureAt.getTime() ||
       arrivalAt.getTime() !== flight.arrivalAt.getTime();
 
-    if (!changed) {
+    if (!timesChanged && !airportsChanged) {
       return flight;
     }
 
     const updateFields: Partial<Flight> = {
       departureAt,
       arrivalAt,
+      // The duplicate-flight-number rule uses the local departure date at the (possibly new) departure airport.
+      departureLocalDate: utcToLocalDateTime(departureAt, departureAirport.timeZone).slice(0, 10),
     };
-
-    if (input.departureLocalDateTime) {
-      updateFields.departureLocalDate =
-        input.departureLocalDateTime.slice(0, 10);
+    if (airportsChanged) {
+      updateFields.departureAirportId = departureAirport._id;
+      updateFields.arrivalAirportId = arrivalAirport._id;
     }
 
     let updatedFlight: Flight | null;
 
     try {
-      updatedFlight = await this.flights
-        .findOneAndUpdate(
-          {
-            _id: flight._id,
-            status: FlightStatus.SCHEDULED,
-          },
-          { $set: updateFields },
-          { new: true, runValidators: true },
-        )
-        .exec();
+      updatedFlight = airportsChanged
+        ? await this.connection.transaction(async (session) => {
+          // Same flight gate that booking holds take, so a booking cannot slip in between this check and the write.
+          const gate = await this.flights.updateOne({ _id: flight._id, status: FlightStatus.SCHEDULED,
+            $expr: incrementableVersion('bookingVersion') },
+          advanceBookingVersion(), { session, updatePipeline: true, timestamps: false }).exec();
+          if (gate.modifiedCount !== 1) throw new ConflictException('Flight is no longer available for editing');
+          const cabinIds = (await this.cabins.find({ flightId: flight._id }, { _id: 1 }).session(session).exec()).map((cabin) => cabin._id);
+          const [booked, changing] = await Promise.all([
+            this.connection.collection('flightbookings').findOne({ 'segments.flightId': flight._id }, { session, projection: { _id: 1 } }),
+            this.connection.collection('flightbookingchanges').findOne({ 'holds.cabinId': { $in: cabinIds } }, { session, projection: { _id: 1 } }),
+          ]);
+          if (booked || changing) throw new ConflictException('Airports cannot be changed once the flight has any booking');
+          return this.flights.findOneAndUpdate({ _id: flight._id, status: FlightStatus.SCHEDULED },
+            { $set: updateFields }, { new: true, runValidators: true, session }).exec();
+        })
+        : await this.flights
+          .findOneAndUpdate(
+            {
+              _id: flight._id,
+              status: FlightStatus.SCHEDULED,
+            },
+            { $set: updateFields },
+            { new: true, runValidators: true },
+          )
+          .exec();
     } catch (error) {
       if ((error as { code?: number }).code === 11000) {
         throw new ConflictException(
@@ -422,86 +459,25 @@ async onModuleInit(): Promise<void> {
 
   // FLT-05: Update cabin inventory
 
-  async updateCabin(
-    moderatorId: string,
-    flightId: string,
-    cabinId: string,
-    input: UpdateCabinDto,
-  ): Promise<CabinInventory> {
-    if (!Object.keys(input).length) {
-      throw new BadRequestException(
-        'Supply at least one cabin field',
-      );
-    }
-
-    const flight = await this.getOwnedScheduledFlight(
-      moderatorId,
-      flightId,
-    );
-
-    const cabinObjectId = this.objectId(
-      cabinId,
-      'Cabin',
-    );
-
-    const cabin = await this.cabins
-      .findOne({
-        _id: cabinObjectId,
-        flightId: flight._id,
-      })
-      .exec();
-
-    if (!cabin) {
-      throw new NotFoundException(
-        'Cabin not found for this flight',
-      );
-    }
-
-    if (input.totalSeats !== undefined) {
-      const updated = await this.cabins
-        .findOneAndUpdate(
-          {
-            _id: cabinObjectId,
-            flightId: flight._id,
-            $expr: {
-              $gte: [
-                input.totalSeats,
-                {
-                  $add: ['$bookedSeats', '$heldSeats'],
-                },
-              ],
-            },
-          },
-          { $set: { ...input } },
-          { new: true, runValidators: true },
-        )
-        .exec();
-
-      if (!updated) {
-        throw new ConflictException(
-          'Seat count cannot be reduced below booked plus held seats',
-        );
+  async updateCabin(moderatorId: string, flightId: string, cabinId: string, input: UpdateCabinDto): Promise<CabinInventory> {
+    if (!hasDefinedField(input)) throw new BadRequestException('Supply at least one cabin field');
+    const flight = await this.getOwnedScheduledFlight(moderatorId, flightId);
+    const cabinObjectId = this.objectId(cabinId, 'Cabin');
+    return this.connection.transaction(async (session) => {
+      const gate = await this.flights.updateOne({ _id: flight._id, status: FlightStatus.SCHEDULED,
+        departureAt: { $gt: new Date() }, $expr: incrementableVersion('bookingVersion') },
+        advanceBookingVersion(), { session, updatePipeline: true, timestamps: false }).exec();
+      if (gate.modifiedCount !== 1) throw new ConflictException('Flight is no longer editable');
+      if (!await this.cabins.exists({ _id: cabinObjectId, flightId: flight._id }).session(session)) throw new NotFoundException('Cabin not found for this flight');
+      if (input.totalSeats !== undefined && input.totalSeats < await this.seatAssignments.highestSeat(cabinId, session)) {
+        throw new ConflictException('Seat count cannot remove an assigned seat number');
       }
-
+      const updated = await this.cabins.findOneAndUpdate({ _id: cabinObjectId, flightId: flight._id,
+        ...(input.totalSeats === undefined ? {} : { $expr: { $gte: [input.totalSeats, { $add: ['$bookedSeats', '$heldSeats'] }] } }) },
+        { $set: input }, { returnDocument: 'after', runValidators: true, session }).exec();
+      if (!updated) throw new ConflictException('Seat count cannot be reduced below booked plus held seats');
       return updated;
-    }
-
-    const updated = await this.cabins
-      .findOneAndUpdate(
-        {
-          _id: cabinObjectId,
-          flightId: flight._id,
-        },
-        { $set: input },
-        { new: true, runValidators: true },
-      )
-      .exec();
-
-    if (!updated) {
-      throw new NotFoundException('Cabin not found');
-    }
-
-    return updated;
+    });
   }
 
   // FLT-06: Cancel flight
@@ -582,7 +558,7 @@ async onModuleInit(): Promise<void> {
 
     return {
       message:
-        'Flight cancelled. Booking cleanup was requested; payment refunds and notifications depend on their shared module integrations.',
+        'Flight cancelled. Its Confirmed bookings are cancelled with a 100% refund, pending holds are released and passengers are notified.',
       flightId,
       status: FlightStatus.CANCELLED,
     };
@@ -677,7 +653,12 @@ async onModuleInit(): Promise<void> {
       departureAirportCode: from, arrivalAirportCode: criteria.departureAirportCode, departureDate: criteria.returnDate!, roundTrip: false,
       adults, children, infants, cabinClass,
     } as FlightSearchDto)))).flat().sort(byDeparture);
-    const validReturn = returning.filter((ret) => outbound.some((out) => Date.parse(ret.departureAtUtc) > Date.parse(out.arrivalAtUtc)));
+    // ITN-26 R2: keep a return leg only if some outbound lands where it departs, departs where it lands,
+    // and arrives before the return leaves. Every suggested pair then satisfies the booking rule.
+    const validReturn = returning.filter((ret) => outbound.some((out) =>
+      out.arrivalAirport.code === ret.departureAirport.code
+      && out.departureAirport.code === ret.arrivalAirport.code
+      && Date.parse(ret.departureAtUtc) > Date.parse(out.arrivalAtUtc)));
     return { outbound: this.paginate(outbound, criteria.page), return: this.paginate(validReturn, criteria.page) };
   }
 

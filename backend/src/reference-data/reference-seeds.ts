@@ -22,3 +22,16 @@ export const CITY_SEEDS = [
   { cityId: 'riyadh', name: 'Riyadh', countryCode: 'SA' },
   { cityId: 'frankfurt', name: 'Frankfurt', countryCode: 'DE' },
 ] as const;
+
+// Attractions.csv from the same official workbook, read 2026-11-10.
+// attraction_id -> attractionId; city_id -> cityId; values remain unchanged.
+export const ATTRACTION_SEEDS = [
+  { attractionId: 'att-1', name: 'Giza Pyramids and Sphinx', cityId: 'cairo' },
+  { attractionId: 'att-2', name: 'Burj Khalifa Observation Deck', cityId: 'dubai' },
+  { attractionId: 'att-3', name: 'British Museum', cityId: 'london' },
+  { attractionId: 'att-4', name: 'Central Park', cityId: 'new_york' },
+  { attractionId: 'att-5', name: 'Louvre Museum', cityId: 'paris' },
+  { attractionId: 'att-6', name: 'Senso-ji Temple', cityId: 'tokyo' },
+  { attractionId: 'att-7', name: 'Kingdom Centre Tower (Sky Bridge)', cityId: 'riyadh' },
+  { attractionId: 'att-8', name: 'Römerberg', cityId: 'frankfurt' },
+] as const;

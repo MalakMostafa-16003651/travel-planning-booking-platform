@@ -1,3 +1,4 @@
+import { hideBookingVersion } from '../../common/booking-gate';
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Schema as MongooseSchema, Types } from 'mongoose';
 
@@ -13,6 +14,12 @@ export class Room {
   @Prop({ type: String, required: true, trim: true, minlength: 1, maxlength: 120 })
   name!: string;
 
+  @Prop({ type: String, trim: true, minlength: 1, maxlength: 80 })
+  type?: string;
+
+  @Prop({ type: Number, min: 1, validate: Number.isSafeInteger })
+  beds?: number;
+
   @Prop({ type: Number, required: true, min: 1, validate: Number.isSafeInteger })
   capacity!: number;
 
@@ -24,9 +31,16 @@ export class Room {
   @Prop({ type: Boolean, required: true, default: true })
   isActive!: boolean;
 
+  /** Private concurrency gate shared with booking transactions. Never part of an API DTO. */
+  @Prop({ type: Number, default: 0, select: false, min: 0, max: Number.MAX_SAFE_INTEGER, validate: Number.isSafeInteger })
+  bookingVersion!: number;
+
   declare createdAt: Date;
   declare updatedAt: Date;
 }
 
 export const RoomSchema = SchemaFactory.createForClass(Room);
-RoomSchema.index({ hotelId: 1 });
+RoomSchema.set('toJSON', { transform: hideBookingVersion });
+RoomSchema.set('toObject', { transform: hideBookingVersion });
+// Legacy records are preserved; API transaction checks also protect names against legacy rows.
+RoomSchema.index({ hotelId: 1, name: 1 }, { unique: true, collation: { locale: 'en', strength: 2 }, partialFilterExpression: { type: { $exists: true }, beds: { $exists: true } }, name: 'rooms_hotel_name_unique' });

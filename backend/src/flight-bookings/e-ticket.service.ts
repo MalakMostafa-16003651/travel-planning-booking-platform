@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import PDFDocument from 'pdfkit';
+import { FlightSeatSelectionDto } from './dto/select-flight-seats.dto';
 import { FlightBooking } from './schemas/flight-booking.schema';
 
 function localTime(date: Date, timeZone: string): string {
@@ -13,7 +14,7 @@ function maskedDocument(documentNumber: string): string {
 /** FLT-23 e-ticket. Times use each airport's local zone (GEN-06). */
 @Injectable()
 export class ETicketService {
-  generate(booking: FlightBooking): Promise<Buffer> {
+  generate(booking: FlightBooking, seats: FlightSeatSelectionDto[] = []): Promise<Buffer> {
     return new Promise((resolve, reject) => {
       const document = new PDFDocument({ size: 'A4', margin: 50 });
       const chunks: Buffer[] = [];
@@ -38,6 +39,14 @@ export class ETicketService {
         document.moveDown(0.5).fontSize(12).text(`${passenger.fullName} (${passenger.type}), ID ${maskedDocument(passenger.documentNumber)}${bags}`);
       }
 
+      if (seats.length) {
+        document.moveDown().fontSize(14).text('Selected seats');
+        for (const seat of seats) {
+          const segment = booking.segments.find(row => row.flightId.toString() === seat.flightId);
+          const passenger = booking.passengers.find(row => row._id.toString() === seat.passengerId);
+          if (segment && passenger) document.fontSize(12).text(segment.flightNumber + ' - ' + passenger.fullName + ': seat ' + seat.seatNumber);
+        }
+      }
       document.moveDown().fontSize(12).text(`Total paid: ${(booking.totalAmount / 100).toFixed(2)} ${booking.currency}`);
       document.end();
     });

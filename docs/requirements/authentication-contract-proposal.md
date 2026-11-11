@@ -1,10 +1,6 @@
 # Authentication and Users: shared contract
 
-Status: accepted baseline for ACC-01 implementation. On 2026-11-01, after
-reviewing PR #1, the team leader confirmed agreement with the shared User fields
-and naming and authorized implementation one requirement at a time. Session
-settings and cross-module details listed below are deferred to their respective
-features; they do not block registration.
+Status: implemented M1 authentication/user backend through merged PR102 (2026-11-11). The twelve Person1 mandatory IDs have their backend support; ACC-02/ACC-07 mail demonstrations are recorded and GEN-01-B is merged. Role navigation, verification/reset/profile screens and client-storage checks remain M2. The original shared User/naming agreement was accepted after PR1 on2026-11-01; dated implementation notes below describe their own source snapshots.
 
 Scope: Person 1, Authentication and Users, for Milestone 1. The official reviewed
 requirements workbook defines functional rules; the project PDF defines the
@@ -300,7 +296,7 @@ The team leader approved ReferenceDataModule with Country {code,name,currency} a
 
 ## ACC-07 bonus: emailed forgotten-password reset (approved 2026-11-08)
 
-Malak requested the bonus and approved: **"Approve these names and design"** for SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM and PASSWORD_RESET_URL, private hashed reset records, 30-minute single-use links, newer-request invalidation and fresh login after completion. No User schema, role or account-status change is needed. Person1 owns this auth flow; the exported MailModule/MailService is available for future coordinated reuse, but GEN-01-B notification emails and ACC-02 verification are not implemented here.
+Malak requested the bonus and approved: **"Approve these names and design"** for SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM and PASSWORD_RESET_URL, private hashed reset records, 30-minute single-use links, newer-request invalidation and fresh login after completion. No User schema, role or account-status change is needed. Person1 owns this auth flow; the exported MailModule/MailService is available for future coordinated reuse, but ACC-02 verification is merged and GEN-01-B now reuses MailService through its separate durable notification outbox (PR102).
 
 - POST /api/auth/forgot-password accepts only normalized email. Returns202 with the same message for active, unknown, suspended, deactivated and silently limited addresses. Known/unknown requests perform the same indexed persistence before response; user lookup and SMTP delivery run afterward on a bounded in-process queue (four workers; at most30 pending/reserved/active jobs). A request never changes passwords, lockout state, roles or account status.
 - POST /api/auth/reset-password accepts only token and newPassword in JSON; success204 clears authentication cookies and requires fresh login. Existing CompliantPassword and PasswordService are reused. No login cookie/token is issued. Invalid/expired/used/superseded/ineligible proofs return the same400 invalid-link message; invalid DTO fields retain shared field errors.
@@ -315,7 +311,7 @@ Configure secrets only in ignored .env; commit only .env.example. Keep password-
 
 References checked for this implementation: [OWASP Forgot Password Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Forgot_Password_Cheat_Sheet.html), [Nodemailer SMTP](https://nodemailer.com/smtp), [Mongoose transactions](https://mongoosejs.com/docs/transactions.html). Final executed test evidence is recorded in the single student log. Feature is prepared on the existing session branch, awaiting review/merge.
 
-Final ACC-07 check: production build/test compilation PASS; complete isolated suite527/527 PASS,60 suites (847929.7181ms), source c6410b0. Real inbox delivery remains a separate manual setup check. The future reset page must follow the already-agreed same-origin frontend/API deployment and CSRF policy.
+Final ACC-07 check: production build/test compilation PASS; complete isolated suite527/527 PASS,60 suites (847929.7181ms), source c6410b0. That automated run did not prove inbox delivery; the real Mailtrap verification/reset demonstration was completed on2026-11-10 and is recorded in the student log. The future reset page must follow the already-agreed same-origin frontend/API deployment and CSRF policy.
 
 
 Session publication (2026-11-08): [PR55](https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/pull/55) contains the approved ACC-11 integration and ACC-07 backend. The team leader requested merging the saved edits. Use the PR record for the final merge state; tests/setup limits remain as documented. Before merging Osama's separate fix/HTL-22-reservations-port-shape branch, reconcile its per-room roomId/guests output with this approved rooms[]/guestCount/bookingReference contract.
@@ -328,7 +324,7 @@ Malak approved User.emailVerifiedAt, EMAIL_VERIFICATION_URL and default-off EMAI
 - Current endpoints: GET /api/auth/email-verification (own booleans), POST /api/auth/resend-verification (own normal session, generic202), POST /api/auth/verify-email (proof-only204). Registration queues email when ready; failed delivery does not misreport registration failure. No automatic login.
 - New holds/payment attempts require a currently active verified account when the flag is on. Flight confirmation rechecks in its transaction before converting inventory. Hotel hold creation rechecks in its transaction. Late ineligible payment success follows the existing full-refund path; transient eligibility lookup failure propagates for retry. Confirmed history and idempotent replay remain valid.
 - SMTP configuration plus trusted verification URL are required before activation. The flag remains false in the example; private .env is not changed. Existing unverified/legacy accounts need proof too. Profiles cannot edit email; any future email-change operation must clear verification/invalidate prior proofs atomically.
-- Future paid hotel confirmation, which is not yet implemented by its owner, must reuse EmailEligibilityService.canBook(userId, session) before inventory state writes. The generic PaymentsService check already gates its booking-port confirmation calls for either type. Do not duplicate verification fields, proof storage or enums in booking modules.
+- Paid hotel confirmation is implemented and reuses EmailEligibilityService.canBook(userId, session) before inventory state writes. The generic PaymentsService check already gates its booking-port confirmation calls for either type. Do not duplicate verification fields, proof storage or enums in booking modules.
 - Full operational instructions are in backend/README.md. The single student log records executed tests and their limits; automated fake delivery does not prove a real inbox or real Stripe account. M2 client pages are outside this M1 backend change.
 
 ## ACC-12: approved account/confirmation transaction coordination (2026-11-09)
@@ -339,9 +335,9 @@ POST /api/users/me/deactivate accepts only {"confirmed":true}, uses the real nor
 
 Both NEW booking confirmation transactions write the same User gate before inventory/status conversion. A User write conflict forces retry with current data: confirmation first means the upcoming booking blocks deactivation; deactivation first means the active-account confirmation gate fails and Payments compensates the late charge. Already-confirmed same-payment replay bypasses the counter and preserves history. Flight eligibility includes a future return leg via lastDepartureAt; hotel eligibility includes ongoing stays until the UTC checkout date, without waiting for completion maintenance. Dependency errors are not treated as no bookings. This is a per-account database transaction check, not an in-memory lock, ordinary credential-version counter or replacement inventory algorithm.
 
-The gate applies to self-deactivation and the two agreed confirmation paths. Provider/room deactivation ordering is still a separate issue. Pending holds do not block account deactivation; they remain subject to existing expiry/release and payment compensation. Existing public content readers hide deactivated users' posts/public itineraries and anonymize retained comments/reviews as Deleted user. M2 account confirmation UI and operator SMTP/Stripe demonstrations are not added by this backend work. Final test evidence is in the continuous student log.
+The gate applies to self-deactivation and the two agreed confirmation paths. Provider/room deactivation ordering is connected by the separate shared write gates merged in PR82. Pending holds do not block account deactivation; they remain subject to existing expiry/release and payment compensation. Existing public content readers hide deactivated users' posts/public itineraries and anonymize retained comments/reviews as Deleted user. M2 account confirmation UI and operator SMTP/Stripe demonstrations are not added by this backend work. Final test evidence is in the continuous student log.
 
 
-## ACC-07a audit integration - 2026-11-10 (approved, pending PR review)
+## ACC-07a audit integration - 2026-11-10 (approved and merged in PR78)
 
 Malak approved the shared PASSWORD_RESET audit enum and optional persistence-session interfaces. The admin reset controller supplies request.user.userId as the actor; clients cannot supply or override it. PasswordManagementService.setTemporaryPassword now requires that adminId as its third argument. It hashes before the transaction, then joins UsersService.setTemporaryPassword and AuditLogsService.log in one commit. A failed audit rolls back the password, mustChangePassword, credential epoch and lockout reset. The append-only audit records actor/target/action only, with no password/hash/token details. Existing temporary-password delivery, restricted-change cookie and account-status rules are unchanged. Auth imports the shared audit persistence module, avoiding a dependency on guarded audit HTTP controllers.

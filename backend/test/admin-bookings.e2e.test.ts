@@ -122,8 +122,38 @@ describe('ACC-17 admin bookings view', { concurrency: false }, () => {
     // ISO date-times are reduced to the check-in calendar date Person 6 filters on.
     assert.deepEqual(await references('?type=HOTEL&from=2026-12-15T09:30:00Z'), ['H8L3N4PY']);
     assert.deepEqual(await references('?type=HOTEL&to=2026-12-10'), ['H7K2M9QX']);
-    // The default type stays FLIGHT.
-    assert.deepEqual(await references(''), ['FLIGHT1']);
+    // type=FLIGHT lists flights only.
+    assert.deepEqual(await references('?type=FLIGHT'), ['FLIGHT1']);
+  });
+
+  it('ACC-17: without a type, lists flights and hotels together, newest first, with one total and 10 per page', async () => {
+    const hotelId = new Types.ObjectId();
+    const addReservation = (reference: string, status = 'CONFIRMED', checkIn = '2026-12-10') => collection('hotelbookings').insertOne({
+      userId: new Types.ObjectId(nour.userId), hotelId, hotelName: 'Cataract Hotel',
+      rooms: [{ roomId: new Types.ObjectId(), roomName: 'Double', adults: 2, childrenAges: [] }],
+      checkIn, checkOut: '2026-12-12', nights: 2, totalPrice: 9000, currency: 'EGP', status, bookingReference: reference,
+    });
+    // Created alternately, so the newest-first order interleaves the two kinds.
+    for (let index = 0; index < 7; index += 1) {
+      await addBooking({ status: 'CONFIRMED', departureAt: '2026-12-10T08:00:00Z', reference: `F${index}` });
+      await addReservation(`H${index}`);
+    }
+
+    const first = await list().expect(200);
+    assert.equal(first.body.total, 14);
+    assert.equal(first.body.pageSize, 10);
+    assert.deepEqual(first.body.items.map((item: { bookingReference: string }) => item.bookingReference),
+      ['H6', 'F6', 'H5', 'F5', 'H4', 'F4', 'H3', 'F3', 'H2', 'F2']);
+    assert.deepEqual(first.body.items.slice(0, 2).map((item: { type: string }) => item.type), ['HOTEL', 'FLIGHT']);
+    const second = await list('?page=2').expect(200);
+    assert.deepEqual(second.body.items.map((item: { bookingReference: string }) => item.bookingReference), ['H1', 'F1', 'H0', 'F0']);
+    assert.equal((await list('?page=3').expect(200)).body.items.length, 0);
+
+    // Filters apply to both kinds, and the total follows them.
+    await addReservation('HCANCEL', 'CANCELLED', '2026-12-20');
+    const cancelled = await list('?status=CANCELLED').expect(200);
+    assert.equal(cancelled.body.total, 1);
+    assert.equal(cancelled.body.items[0].bookingReference, 'HCANCEL');
   });
 
   it('ACC-17/GEN-13: rejects invalid filters', async () => {

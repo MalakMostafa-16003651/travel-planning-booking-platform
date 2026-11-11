@@ -1,15 +1,16 @@
 import { BadRequestException, Injectable, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { CITY_SEEDS, COUNTRY_SEEDS } from './reference-seeds';
-import { City, Country } from './reference.schemas';
+import { ATTRACTION_SEEDS, CITY_SEEDS, COUNTRY_SEEDS } from './reference-seeds';
+import { Attraction, City, Country } from './reference.schemas';
 
 @Injectable()
 export class ReferenceDataService implements OnModuleInit {
   constructor(@InjectModel(Country.name) private readonly countries: Model<Country>,
-    @InjectModel(City.name) private readonly cities: Model<City>) {}
+    @InjectModel(City.name) private readonly cities: Model<City>,
+    @InjectModel(Attraction.name) private readonly attractions: Model<Attraction>) {}
 
-  async onModuleInit(): Promise<void> { await Promise.all([this.countries.init(), this.cities.init()]); }
+  async onModuleInit(): Promise<void> { await Promise.all([this.countries.init(), this.cities.init(), this.attractions.init()]); }
 
   listCountries(): Promise<Country[]> {
     return this.countries.find({ code: { $in: COUNTRY_SEEDS.map(({ code }) => code) } }).sort({ name: 1 }).lean().exec();
@@ -17,6 +18,16 @@ export class ReferenceDataService implements OnModuleInit {
 
   listCities(): Promise<City[]> {
     return this.cities.find({ cityId: { $in: CITY_SEEDS.map(({ cityId }) => cityId) } }).sort({ name: 1 }).lean().exec();
+  }
+
+  listAttractions(): Promise<Attraction[]> {
+    return this.attractions.find({ attractionId: { $in: ATTRACTION_SEEDS.map(({ attractionId }) => attractionId) } })
+      .sort({ name: 1 }).lean().exec();
+  }
+
+  findAttraction(attractionId: string): Promise<Attraction | null> {
+    if (!ATTRACTION_SEEDS.some((row) => row.attractionId === attractionId)) return Promise.resolve(null);
+    return this.attractions.findOne({ attractionId }).lean().exec();
   }
 
   async assertCountries(codes: string[]): Promise<void> {
@@ -41,7 +52,7 @@ export class ReferenceDataService implements OnModuleInit {
       row.name.toLowerCase().includes(text) || row.code.toLowerCase().includes(text)).map(({ code }) => code);
   }
 
-  async seedSupported(): Promise<{ countries: number; cities: number }> {
+  async seedSupported(): Promise<{ countries: number; cities: number; attractions: number }> {
     await this.onModuleInit();
     const insertedAt = new Date();
     for (const row of COUNTRY_SEEDS) {
@@ -56,6 +67,12 @@ export class ReferenceDataService implements OnModuleInit {
         { upsert: true, timestamps: false, runValidators: true }).exec();
       if (!result.acknowledged || (result.matchedCount !== 1 && result.upsertedCount !== 1)) throw new Error('City seed not confirmed');
     }
-    return { countries: COUNTRY_SEEDS.length, cities: CITY_SEEDS.length };
+    for (const row of ATTRACTION_SEEDS) {
+      const result = await this.attractions.updateOne({ attractionId: row.attractionId },
+        { $setOnInsert: { ...row, createdAt: insertedAt, updatedAt: insertedAt } },
+        { upsert: true, timestamps: false, runValidators: true }).exec();
+      if (!result.acknowledged || (result.matchedCount !== 1 && result.upsertedCount !== 1)) throw new Error('Attraction seed not confirmed');
+    }
+    return { countries: COUNTRY_SEEDS.length, cities: CITY_SEEDS.length, attractions: ATTRACTION_SEEDS.length };
   }
 }

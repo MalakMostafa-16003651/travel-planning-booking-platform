@@ -317,6 +317,103 @@ describe('Itineraries, activities and budgeting', { concurrency: false }, () => 
   });
 
   describe('ITN-10/ITN-12 activities and images', () => {
+    it('accepts only attractions from the shared catalog on create and update', async () => {
+      const id = await createItinerary();
+      const dayId = (await addDay(id, 'Cairo')).days[0].dayId;
+      const activities = `/api/itineraries/${id}/days/${dayId}/activities`;
+
+      const created = (await http().post(activities).set('Cookie', alice)
+        .send({ title: 'Pyramids', attractionId: 'att-1' }).expect(201)).body.days[0].activities[0];
+      assert.equal(created.attractionId, 'att-1');
+      await http().post(activities).set('Cookie', alice).send({ title: 'Activity without an attraction' }).expect(201);
+
+      const unknown = await http().post(activities).set('Cookie', alice).send({ title: 'Somewhere', attractionId: 'att-999' }).expect(400);
+      assert.match(unknown.body.errors.attractionId[0], /Unknown attraction att-999/);
+      // A MongoDB _id is not an attraction id.
+      await http().post(activities).set('Cookie', alice).send({ title: 'Somewhere', attractionId: new Types.ObjectId().toString() }).expect(400);
+      assert.equal((await http().get(`/api/itineraries/${id}`).set('Cookie', alice).expect(200)).body.days[0].activities.length, 2, 'nothing saved');
+
+      const activityPath = `/api/activities/${created.activityId}`;
+      const otherActivity = (await http().get(`/api/itineraries/${id}`).set('Cookie', alice).expect(200)).body.days[0].activities[1];
+      const updated = (await http().patch(`/api/activities/${otherActivity.activityId}`).set('Cookie', alice)
+        .send({ attractionId: 'att-1' }).expect(200)).body;
+      assert.equal(updated.days[0].activities[1].attractionId, 'att-1');
+      await http().patch(activityPath).set('Cookie', alice).send({ attractionId: 'nope' }).expect(400);
+      const after = (await http().get(`/api/itineraries/${id}`).set('Cookie', alice).expect(200)).body;
+      assert.equal(after.days[0].activities[0].attractionId, 'att-1', 'a rejected update changes nothing');
+      // Updating other fields of an activity keeps working.
+      await http().patch(activityPath).set('Cookie', alice).send({ title: 'Pyramids at sunrise' }).expect(200);
+      // Another user's activity is still "not found", before the attraction is checked.
+      await http().patch(activityPath).set('Cookie', bob).send({ attractionId: 'nope' }).expect(404);
+    });
+
+
+    it('requires an activity attraction to be in its day\'s city, including when the day\'s city changes', async () => {
+      const id = await createItinerary();
+      const itinerary = await addDay(id, 'Cairo');
+      const cairoDay = itinerary.days[0].dayId;
+      const londonDay = (await addDay(id, 'London')).days[1].dayId;
+
+      // att-3 is the British Museum (london): rejected on a Cairo day, accepted on a London day.
+      const wrongCity = await http().post(`/api/itineraries/${id}/days/${cairoDay}/activities`).set('Cookie', alice)
+        .send({ title: 'Museum', attractionId: 'att-3' }).expect(400);
+      assert.match(wrongCity.body.errors.attractionId[0], /British Museum is not in Cairo/);
+      const inLondon = (await http().post(`/api/itineraries/${id}/days/${londonDay}/activities`).set('Cookie', alice)
+        .send({ title: 'Museum', attractionId: 'att-3' }).expect(201)).body.days[1].activities[0];
+
+      // The same rule on update: a Cairo attraction cannot be moved onto the London day's activity.
+      const cairo = (await http().post(`/api/itineraries/${id}/days/${cairoDay}/activities`).set('Cookie', alice)
+        .send({ title: 'Pyramids', attractionId: 'att-1' }).expect(201)).body.days[0].activities[0];
+      await http().patch(`/api/activities/${inLondon.activityId}`).set('Cookie', alice).send({ attractionId: 'att-1' }).expect(400);
+
+      // Changing the Cairo day to Dubai would orphan its Giza Pyramids activity: rejected, nothing changes.
+      const blocked = await http().patch(`/api/itineraries/${id}/days/${cairoDay}`).set('Cookie', alice).send({ city: 'Dubai' }).expect(400);
+      assert.match(blocked.body.errors.city[0], /Giza Pyramids and Sphinx/);
+      let stored = (await http().get(`/api/itineraries/${id}`).set('Cookie', alice).expect(200)).body;
+      assert.equal(stored.days[0].city, 'Cairo');
+      assert.equal(stored.days[0].activities[0].attractionId, 'att-1');
+      assert.equal(stored.days[1].activities[0].attractionId, 'att-3');
+
+      // Notes-only edits and a "change" to the same city are unaffected.
+      await http().patch(`/api/itineraries/${id}/days/${cairoDay}`).set('Cookie', alice).send({ notes: 'early start' }).expect(200);
+      await http().patch(`/api/itineraries/${id}/days/${cairoDay}`).set('Cookie', alice).send({ city: 'Cairo' }).expect(200);
+
+      // Once the attraction is cleared, the city can change.
+      await http().patch(`/api/activities/${cairo.activityId}`).set('Cookie', alice).send({ attractionId: null }).expect(200);
+      await http().patch(`/api/itineraries/${id}/days/${cairoDay}`).set('Cookie', alice).send({ city: 'Dubai' }).expect(200);
+      stored = (await http().get(`/api/itineraries/${id}`).set('Cookie', alice).expect(200)).body;
+      assert.equal(stored.days[0].city, 'Dubai');
+    });
+
+    it('removes an activity\'s attraction with attractionId null and keeps the rest of the activity', async () => {
+      const id = await createItinerary();
+      const dayId = (await addDay(id, 'Cairo')).days[0].dayId;
+      const created = (await http().post(`/api/itineraries/${id}/days/${dayId}/activities`).set('Cookie', alice)
+        .send({ title: 'Pyramids', description: 'Guided tour', attractionId: 'att-1', cost: 50, currency: 'USD' }).expect(201))
+        .body.days[0].activities[0];
+      const path = `/api/activities/${created.activityId}`;
+
+      // An empty string is not a way to clear it: 400 and nothing changes.
+      await http().patch(path).set('Cookie', alice).send({ attractionId: '' }).expect(400);
+      assert.equal((await http().get(`/api/itineraries/${id}`).set('Cookie', alice).expect(200)).body.days[0].activities[0].attractionId, 'att-1');
+
+      const cleared = (await http().patch(path).set('Cookie', alice).send({ attractionId: null }).expect(200)).body.days[0].activities[0];
+      assert.equal('attractionId' in cleared, false, 'the response no longer carries an attraction');
+      assert.equal(cleared.title, 'Pyramids');
+      assert.equal(cleared.description, 'Guided tour');
+      assert.equal(cleared.cost, 50);
+
+      const stored = await connection.collection('itineraries').findOne({ _id: new Types.ObjectId(id) });
+      const storedActivity = stored!.days[0].activities[0];
+      assert.ok(storedActivity.attractionId === null || storedActivity.attractionId === undefined, 'nothing is stored');
+      const reread = (await http().get(`/api/itineraries/${id}`).set('Cookie', alice).expect(200)).body.days[0].activities[0];
+      assert.equal('attractionId' in reread, false);
+
+      // Clearing again is harmless, and an attraction can be set again afterwards.
+      await http().patch(path).set('Cookie', alice).send({ attractionId: null }).expect(200);
+      const again = (await http().patch(path).set('Cookie', alice).send({ attractionId: 'att-1' }).expect(200)).body.days[0].activities[0];
+      assert.equal(again.attractionId, 'att-1');
+    });
     it('adds, updates and deletes activities with time validation', async () => {
       const id = await createItinerary();
       const dayId = (await addDay(id, 'Cairo')).days[0].dayId;
@@ -727,6 +824,22 @@ describe('Itineraries, activities and budgeting', { concurrency: false }, () => 
       assert.equal((await itinerariesService.listPublicByAuthor('not-an-id')).total, 0);
     });
 
+    it('treats an uppercase author or itinerary id like its lowercase form (R8)', async () => {
+      const aliceId = await userIdOf('alice@example.com');
+      const id = await createItinerary(alice, { title: 'Nile cruise', visibility: 'PUBLIC' });
+
+      const lower = await itinerariesService.listPublicByAuthor(aliceId);
+      const upper = await itinerariesService.listPublicByAuthor(aliceId.toUpperCase());
+      assert.equal(lower.total, 1);
+      assert.deepEqual(upper, lower);
+      assert.equal((await itinerariesService.getPublicSummary(id, aliceId.toUpperCase()))?.itineraryId, id);
+      assert.equal((await itinerariesService.getPublicSummary(id.toUpperCase(), aliceId))?.itineraryId, id);
+
+      // Deactivation still hides them whatever the case of the id.
+      await setStatus('alice@example.com', AccountStatus.DEACTIVATED);
+      assert.equal((await itinerariesService.listPublicByAuthor(aliceId.toUpperCase())).total, 0);
+    });
+
     it("shows a clone's deactivated original author as Deleted user", async () => {
       const sourceId = await createItinerary(bob, { title: 'Nile cruise', visibility: 'PUBLIC' });
       const clone = (await http().post(`/api/itineraries/${sourceId}/clone`).set('Cookie', alice).expect(201)).body;
@@ -986,7 +1099,7 @@ describe('Itineraries, activities and budgeting', { concurrency: false }, () => 
   it('seeds one shared reference catalog idempotently and validates official country/city membership', async () => {
     const references = app.get(ReferenceDataService);
     const before = await connection.collection('cities').findOne({ cityId: 'cairo' });
-    assert.deepEqual(await references.seedSupported(), { countries: 8, cities: 8 });
+    assert.deepEqual(await references.seedSupported(), { countries: 8, cities: 8, attractions: 8 });
     const after = await connection.collection('cities').findOne({ cityId: 'cairo' });
     assert.equal(after!._id.toString(), before!._id.toString());
     assert.equal(after!.updatedAt.getTime(), before!.updatedAt.getTime());

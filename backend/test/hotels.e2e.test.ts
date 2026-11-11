@@ -1,3 +1,4 @@
+import { configureTestBookableRoom } from './hotel-test-data';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { resolve } from 'node:path';
@@ -23,6 +24,9 @@ function cookiesFrom(response: Response): string {
   return header.map((cookie) => cookie.split(';')[0]).join('; ');
 }
 
+const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(32)]);
+const JPG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(32)]);
+
 describe('Hotels E2E', { concurrency: false }, () => {
   let replicaSet: MongoMemoryReplSet;
   let app: INestApplication;
@@ -35,6 +39,7 @@ describe('Hotels E2E', { concurrency: false }, () => {
   let moderatorCookie: string;
   let moderatorId: Types.ObjectId;
   let hotelId: string;
+  let roomSequence = 0;
 
   async function login(email: string, role = UserRole.USER): Promise<string> {
     await request(app.getHttpServer())
@@ -89,10 +94,11 @@ describe('Hotels E2E', { concurrency: false }, () => {
   }, { timeout: 30 * 60_000 });
 
   beforeEach(async () => {
+    roomSequence = 0;
     await Promise.all([
       users.deleteMany({}).exec(),
       sessions.deleteMany({}).exec(),
-      ...['hotels', 'rooms', 'roomavailabilities', 'moderatorassignments', 'hotelbookings'].map((name) => connection.collection(name).deleteMany({})),
+      ...['hotels', 'rooms', 'roomavailabilities', 'moderatorassignments', 'hotelbookings', 'auditlogs'].map((name) => connection.collection(name).deleteMany({})),
     ]);
 
     adminCookie = await login('admin@example.com', UserRole.ADMIN);
@@ -103,7 +109,7 @@ describe('Hotels E2E', { concurrency: false }, () => {
     const created = await http()
       .post('/api/hotels')
       .set('Cookie', adminCookie)
-      .send({ name: 'Nile Grand Hotel', city: 'Cairo', address: '12 Nile Corniche' })
+      .send({ starClass: 4, amenities: [], name: 'Nile Grand Hotel', city: 'Cairo', address: '12 Nile Corniche' })
       .expect(201);
     hotelId = created.body._id;
 
@@ -133,20 +139,29 @@ describe('Hotels E2E', { concurrency: false }, () => {
       assert.equal(hotel!.checkOutTime, '11:00');
     });
 
+    it('records a GEN-07 audit log entry for the admin who created the hotel', async () => {
+      const admin = await users.findOne({ email: 'admin@example.com' }).orFail().exec();
+      const entry = await connection.collection('auditlogs').findOne({ targetId: new Types.ObjectId(hotelId) });
+      assert.ok(entry, 'an audit log entry was written for this hotel');
+      assert.equal(entry!.action, 'HOTEL_CREATED');
+      assert.equal(entry!.targetType, 'HOTEL');
+      assert.equal(entry!.adminId.toString(), admin._id.toString());
+    });
+
     it('rejects a city outside the official reference catalog', async () => {
       await http()
         .post('/api/hotels')
         .set('Cookie', adminCookie)
-        .send({ name: 'Nowhere Hotel', city: 'Atlantis', address: 'Unknown' })
+        .send({ starClass: 4, amenities: [], name: 'Nowhere Hotel', city: 'Atlantis', address: 'Unknown' })
         .expect(400);
     });
 
     it('requires an admin session', async () => {
-      await http().post('/api/hotels').send({ name: 'x', city: 'Cairo', address: 'y' }).expect(401);
+      await http().post('/api/hotels').send({ starClass: 4, amenities: [], name: 'x', city: 'Cairo', address: 'y' }).expect(401);
       await http()
         .post('/api/hotels')
         .set('Cookie', moderatorCookie)
-        .send({ name: 'x', city: 'Cairo', address: 'y' })
+        .send({ starClass: 4, amenities: [], name: 'x', city: 'Cairo', address: 'y' })
         .expect(403);
     });
   });
@@ -227,8 +242,9 @@ describe('Hotels E2E', { concurrency: false }, () => {
       const response = await http()
         .post(`/api/hotels/${hotelId}/rooms`)
         .set('Cookie', moderatorCookie)
-        .send({ name: 'Deluxe King', capacity: 2, pricePerNight: 15000, ...overrides })
+        .send({ type: 'Standard', beds: 1, name: 'Deluxe King', capacity: 2, pricePerNight: 15000, ...overrides })
         .expect(201);
+      await configureTestBookableRoom(connection,response.body._id,hotelId);
       return response.body;
     }
 
@@ -251,17 +267,17 @@ describe('Hotels E2E', { concurrency: false }, () => {
       await http()
         .post(`/api/hotels/${hotelId}/rooms`)
         .set('Cookie', otherModerator)
-        .send({ name: 'Hijacked Room', capacity: 2, pricePerNight: 1000 })
+        .send({ type: 'Standard', beds: 1, name: 'Hijacked Room', capacity: 2, pricePerNight: 1000 })
         .expect(403);
     });
 
     it('requires an authenticated hotel moderator to create a room', async () => {
-      await http().post(`/api/hotels/${hotelId}/rooms`).send({ name: 'x', capacity: 1, pricePerNight: 1 }).expect(401);
+      await http().post(`/api/hotels/${hotelId}/rooms`).send({ type: 'Standard', beds: 1, name: 'x', capacity: 1, pricePerNight: 1 }).expect(401);
       const ordinaryUser = await login('user@example.com');
       await http()
         .post(`/api/hotels/${hotelId}/rooms`)
         .set('Cookie', ordinaryUser)
-        .send({ name: 'x', capacity: 1, pricePerNight: 1 })
+        .send({ type: 'Standard', beds: 1, name: 'x', capacity: 1, pricePerNight: 1 })
         .expect(403);
     });
 
@@ -301,13 +317,28 @@ describe('Hotels E2E', { concurrency: false }, () => {
         .expect(404);
     });
 
-    it('deactivates a room instead of deleting it', async () => {
+    it('deactivates/reactivates a room with PATCH isActive and deletes a never-reserved room (HTL-06)', async () => {
       const room = await createRoom();
-      await http().delete(`/api/hotels/${hotelId}/rooms/${room._id}`).set('Cookie', moderatorCookie).expect(204);
+      await http().patch(`/api/hotels/${hotelId}/rooms/${room._id}`).set('Cookie', moderatorCookie).send({ isActive: false }).expect(200);
+      let stored = await connection.collection('rooms').findOne({ _id: new Types.ObjectId(room._id) });
+      assert.equal(stored!.isActive, false, 'deactivated, document kept');
+      const reactivated = await http().patch(`/api/hotels/${hotelId}/rooms/${room._id}`).set('Cookie', moderatorCookie).send({ isActive: true }).expect(200);
+      assert.equal(reactivated.body.isActive, true);
 
-      const stored = await connection.collection('rooms').findOne({ _id: new Types.ObjectId(room._id) });
-      assert.ok(stored, 'the room document is kept, not removed');
-      assert.equal(stored!.isActive, false);
+      await http().delete(`/api/hotels/${hotelId}/rooms/${room._id}`).set('Cookie', moderatorCookie).expect(204);
+      stored = await connection.collection('rooms').findOne({ _id: new Types.ObjectId(room._id) });
+      assert.equal(stored, null, 'a room that was never reserved is deleted');
+      assert.equal(await connection.collection('roomavailabilities').countDocuments({ roomId: new Types.ObjectId(room._id) }), 0);
+    });
+
+    it('refuses to delete a room that was ever reserved, even after its reservation ended (HTL-06)', async () => {
+      const room = await createRoom();
+      await connection.collection('hotelbookings').insertOne({ rooms: [{ roomId: new Types.ObjectId(room._id) }], status: 'EXPIRED' });
+      const refused = await http().delete(`/api/hotels/${hotelId}/rooms/${room._id}`).set('Cookie', moderatorCookie).expect(409);
+      assert.match(refused.body.message, /deactivate it instead/);
+      assert.ok(await connection.collection('rooms').findOne({ _id: new Types.ObjectId(room._id) }), 'the room is kept');
+      // Deactivation is still allowed: the expired reservation no longer needs the room.
+      await http().patch(`/api/hotels/${hotelId}/rooms/${room._id}`).set('Cookie', moderatorCookie).send({ isActive: false }).expect(200);
     });
 
     it('refuses to deactivate a room with an active reservation (HTL-06, Osama\'s roomHasActiveReservations)', async () => {
@@ -320,8 +351,10 @@ describe('Hotels E2E', { concurrency: false }, () => {
         .expect(201);
 
       await http().delete(`/api/hotels/${hotelId}/rooms/${room._id}`).set('Cookie', moderatorCookie).expect(409);
+      await http().patch(`/api/hotels/${hotelId}/rooms/${room._id}`).set('Cookie', moderatorCookie).send({ isActive: false }).expect(409);
 
       const stored = await connection.collection('rooms').findOne({ _id: new Types.ObjectId(room._id) });
+      assert.ok(stored, 'the room is not deleted');
       assert.equal(stored!.isActive, true, 'the room is not deactivated while the hold is active');
     });
 
@@ -343,8 +376,9 @@ describe('Hotels E2E', { concurrency: false }, () => {
       const response = await http()
         .post(`/api/hotels/${hotelId}/rooms`)
         .set('Cookie', moderatorCookie)
-        .send({ name: 'Deluxe King', capacity: 2, pricePerNight: 15000 })
+        .send({ type: 'Standard', beds: 1, name: 'Deluxe King', capacity: 2, pricePerNight: 15000 })
         .expect(201);
+      await configureTestBookableRoom(connection,response.body._id,hotelId);
       return response.body._id as string;
     }
 
@@ -502,7 +536,7 @@ describe('Hotels E2E', { concurrency: false }, () => {
       const freeRoomResponse = await http()
         .post(`/api/hotels/${hotelId}/rooms`)
         .set('Cookie', moderatorCookie)
-        .send({ name: 'Standard Twin', capacity: 2, pricePerNight: 9000 })
+        .send({ type: 'Standard', beds: 1, name: 'Standard Twin', capacity: 2, pricePerNight: 9000 })
         .expect(201);
       const freeRoomId = freeRoomResponse.body._id as string;
 
@@ -512,10 +546,10 @@ describe('Hotels E2E', { concurrency: false }, () => {
         .send({ startDate: '2026-12-20', endDate: '2026-12-27' })
         .expect(201);
 
-      const full = await http().get(`/api/hotels/${hotelId}/availability`).set('Cookie', moderatorCookie).expect(200);
-      assert.equal(full.body.length, 2);
-      const blockedEntry = full.body.find((entry: { roomId: string }) => entry.roomId === blockedRoomId);
-      const freeEntry = full.body.find((entry: { roomId: string }) => entry.roomId === freeRoomId);
+      const full = await http().get(`/api/hotels/${hotelId}/availability?from=2026-12-20&to=2026-12-27`).set('Cookie', moderatorCookie).expect(200);
+      assert.equal(full.body.items.length, 2);
+      const blockedEntry = full.body.items.find((entry: { roomId: string }) => entry.roomId === blockedRoomId);
+      const freeEntry = full.body.items.find((entry: { roomId: string }) => entry.roomId === freeRoomId);
       assert.equal(blockedEntry.blockedRanges.length, 1);
       assert.equal(freeEntry.blockedRanges.length, 0);
 
@@ -523,14 +557,14 @@ describe('Hotels E2E', { concurrency: false }, () => {
         .get(`/api/hotels/${hotelId}/availability?from=2027-01-01&to=2027-01-10`)
         .set('Cookie', moderatorCookie)
         .expect(200);
-      const blockedEntryOutside = outsideWindow.body.find((entry: { roomId: string }) => entry.roomId === blockedRoomId);
+      const blockedEntryOutside = outsideWindow.body.items.find((entry: { roomId: string }) => entry.roomId === blockedRoomId);
       assert.equal(blockedEntryOutside.blockedRanges.length, 0);
 
       const insideWindow = await http()
         .get(`/api/hotels/${hotelId}/availability?from=2026-12-22&to=2026-12-23`)
         .set('Cookie', moderatorCookie)
         .expect(200);
-      const blockedEntryInside = insideWindow.body.find((entry: { roomId: string }) => entry.roomId === blockedRoomId);
+      const blockedEntryInside = insideWindow.body.items.find((entry: { roomId: string }) => entry.roomId === blockedRoomId);
       assert.equal(blockedEntryInside.blockedRanges.length, 1);
     });
 
@@ -621,7 +655,7 @@ describe('Hotels E2E', { concurrency: false }, () => {
       const created = await http()
         .post('/api/hotels')
         .set('Cookie', adminCookie)
-        .send({ name: 'Second Hotel', city: 'Cairo', address: 'Zamalek', ...overrides })
+        .send({ starClass: 4, amenities: [], name: 'Second Hotel', city: 'Cairo', address: 'Zamalek', ...overrides })
         .expect(201);
       const cookie = await login(moderatorEmail, UserRole.HOTEL_MODERATOR);
       const moderator = await users.findOne({ email: moderatorEmail }).orFail().exec();
@@ -633,8 +667,9 @@ describe('Hotels E2E', { concurrency: false }, () => {
       const response = await http()
         .post(`/api/hotels/${forHotelId}/rooms`)
         .set('Cookie', cookie)
-        .send({ name: 'Room', capacity: 2, pricePerNight: 10000, ...overrides })
+        .send({ type: 'Standard', beds: 1, name: 'Room ' + (++roomSequence), capacity: 2, pricePerNight: 10000, ...overrides })
         .expect(201);
+      await configureTestBookableRoom(connection,response.body._id,forHotelId);
       return response.body._id as string;
     }
 
@@ -757,25 +792,27 @@ describe('Hotels E2E', { concurrency: false }, () => {
   describe('Available rooms - HTL-15', () => {
     it('lists only free rooms meeting the guest capacity, cheapest first', async () => {
       const small = (await http().post(`/api/hotels/${hotelId}/rooms`).set('Cookie', moderatorCookie)
-        .send({ name: 'Small', capacity: 1, pricePerNight: 9000 }).expect(201)).body;
+        .send({ type: 'Standard', beds: 1, name: 'Small', capacity: 1, pricePerNight: 9000 }).expect(201)).body;
       const large = (await http().post(`/api/hotels/${hotelId}/rooms`).set('Cookie', moderatorCookie)
-        .send({ name: 'Large', capacity: 4, pricePerNight: 20000 }).expect(201)).body;
+        .send({ type: 'Standard', beds: 1, name: 'Large', capacity: 4, pricePerNight: 20000 }).expect(201)).body;
       const largeCheap = (await http().post(`/api/hotels/${hotelId}/rooms`).set('Cookie', moderatorCookie)
-        .send({ name: 'Large Cheap', capacity: 4, pricePerNight: 15000 }).expect(201)).body;
+        .send({ type: 'Standard', beds: 1, name: 'Large Cheap', capacity: 4, pricePerNight: 15000 }).expect(201)).body;
 
+      for(const r of [small,large,largeCheap])await configureTestBookableRoom(connection,r._id,hotelId);
       const response = await http()
         .get(`/api/hotels/${hotelId}/rooms/available`)
         .query({ checkIn: '2026-12-20', checkOut: '2026-12-27', guests: 3 })
         .expect(200);
 
-      const ids = response.body.map((room: { _id: string }) => room._id);
+      const ids = response.body.items.map((room: { _id: string }) => room._id);
       assert.ok(!ids.includes(small._id), 'too-small room excluded');
       assert.deepEqual(ids, [largeCheap._id, large._id], 'cheapest first');
     });
 
     it('excludes a room blocked for the requested dates', async () => {
       const room = (await http().post(`/api/hotels/${hotelId}/rooms`).set('Cookie', moderatorCookie)
-        .send({ name: 'Room', capacity: 2, pricePerNight: 9000 }).expect(201)).body;
+        .send({ type: 'Standard', beds: 1, name: 'Room', capacity: 2, pricePerNight: 9000 }).expect(201)).body;
+      await configureTestBookableRoom(connection,room._id,hotelId);
       await http()
         .post(`/api/hotels/${hotelId}/rooms/${room._id}/availability`)
         .set('Cookie', moderatorCookie)
@@ -786,7 +823,7 @@ describe('Hotels E2E', { concurrency: false }, () => {
         .get(`/api/hotels/${hotelId}/rooms/available`)
         .query({ checkIn: '2026-12-22', checkOut: '2026-12-24' })
         .expect(200);
-      assert.equal(response.body.length, 0);
+      assert.equal(response.body.items.length, 0);
     });
 
     it('returns 404 for a deactivated or unknown hotel', async () => {
@@ -825,6 +862,78 @@ describe('Hotels E2E', { concurrency: false }, () => {
       await http().get(`/api/hotels/${hotelId}/reservations`).expect(401);
       const ordinaryUser = await login('user@example.com');
       await http().get(`/api/hotels/${hotelId}/reservations`).set('Cookie', ordinaryUser).expect(403);
+    });
+  });
+
+  describe('Hotel photos - HTL-01, HTL-02, GEN-08', () => {
+    const upload = (cookie: string | undefined, file: Buffer | undefined, name = 'photo.png') => {
+      const call = http().post(`/api/hotels/${hotelId}/photos`);
+      if (cookie) call.set('Cookie', cookie);
+      if (file) call.attach('photo', file, name);
+      return call;
+    };
+
+    it('stores a photo and serves it by URL, up to the 5-photo limit', async () => {
+      const created = await upload(moderatorCookie, PNG).expect(201);
+      assert.equal(created.body.photos.length, 1);
+      const photoId = created.body.photos[0]._id;
+      assert.equal(created.body.photos[0].contentType, 'image/png');
+      const url = `/api/hotels/${hotelId}/photos/${photoId}`;
+
+      const image = await http().get(url).expect(200);
+      assert.match(image.headers['content-type'], /image\/png/);
+
+      await upload(moderatorCookie, JPG, 'photo.jpg').expect(201);
+      for (let i = 0; i < 3; i++) await upload(moderatorCookie, PNG).expect(201);
+      const full = await upload(moderatorCookie, PNG).expect(400);
+      assert.match(full.body.message, /at most 5 photos/);
+
+      const doc = (await http().get('/api/docs-json').expect(200)).body;
+      assert.ok(doc.paths['/api/hotels/{id}/photos'].post);
+      assert.ok(doc.paths['/api/hotels/{id}/photos/{photoId}'].get);
+      assert.ok(doc.paths['/api/hotels/{id}/photos/{photoId}'].delete);
+    });
+
+    it('rejects non-images even when named .png, a missing file, and files over 5 MB', async () => {
+      await upload(moderatorCookie, Buffer.from('not an image'), 'photo.png').expect(400);
+      await upload(moderatorCookie, undefined).expect(400);
+      await upload(moderatorCookie, Buffer.concat([PNG, Buffer.alloc(5 * 1024 * 1024)])).expect(413);
+    });
+
+    it('rejects uploads without a session (401) and from a normal user (403)', async () => {
+      await upload(undefined, PNG).expect(401);
+      const ordinaryUser = await login('user@example.com');
+      await upload(ordinaryUser, PNG).expect(403);
+    });
+
+    it('rejects uploading to, and deleting from, a hotel that is not the caller\'s own', async () => {
+      const otherModerator = await login('other-photo-moderator@example.com', UserRole.HOTEL_MODERATOR);
+      await upload(otherModerator, PNG).expect(403);
+
+      const other = await users.findOne({ email: 'other-photo-moderator@example.com' }).orFail().exec();
+      await connection.collection('moderatorassignments').insertOne({ moderatorId: other._id, hotelId: new Types.ObjectId() });
+      await upload(otherModerator, PNG).expect(404);
+    });
+
+    it('removes a photo, which then 404s', async () => {
+      const created = await upload(moderatorCookie, PNG).expect(201);
+      const photoId = created.body.photos[0]._id;
+      const url = `/api/hotels/${hotelId}/photos/${photoId}`;
+
+      await http().delete(url).set('Cookie', moderatorCookie).expect(200);
+      await http().get(url).expect(404);
+      await http().delete(url).set('Cookie', moderatorCookie).expect(404);
+    });
+
+    it('hides a deactivated hotel\'s photos from guests, but not from its own moderator or an admin', async () => {
+      const created = await upload(moderatorCookie, PNG).expect(201);
+      const photoId = created.body.photos[0]._id;
+      const url = `/api/hotels/${hotelId}/photos/${photoId}`;
+
+      await connection.collection('hotels').updateOne({ _id: new Types.ObjectId(hotelId) }, { $set: { isActive: false } });
+      await http().get(url).expect(404);
+      await http().get(url).set('Cookie', moderatorCookie).expect(200);
+      await http().get(url).set('Cookie', adminCookie).expect(200);
     });
   });
 });

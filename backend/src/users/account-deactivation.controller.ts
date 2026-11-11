@@ -1,4 +1,4 @@
-import { Body, Controller, Header, HttpCode, Post, Req, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Header, HttpCode, Post, Req, Res, UseGuards } from '@nestjs/common';
 import { ApiBadRequestResponse, ApiConflictResponse, ApiCookieAuth, ApiForbiddenResponse, ApiInternalServerErrorResponse, ApiNoContentResponse, ApiOperation, ApiTags, ApiUnauthorizedResponse } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { clearAuthenticationCookies } from '../auth/auth-cookies';
@@ -33,5 +33,18 @@ export class AccountDeactivationController {
     @Res({ passthrough: true }) response: Response): Promise<void> {
     await this.deactivation.deactivate(request.user!.userId, request.authenticatedCredentialVersion!);
     clearAuthenticationCookies(response);
+  }
+
+  @Delete()
+  @HttpCode(204)
+  @Header('Cache-Control', 'no-store')
+  @ApiOperation({ summary: 'ACC-12: deactivate your own account (PDF path for POST /api/users/me/deactivate)',
+    description: 'Same body ({ "confirmed": true }), rules and result as POST /api/users/me/deactivate. The account is deactivated, not erased.' })
+  @ApiNoContentResponse({ description: 'Account deactivated, old sessions unusable, authentication cookies expired.' })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'Confirmation missing/false or unknown fields.' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'An upcoming Confirmed booking blocks deactivation.' })
+  async remove(@Body() input: DeactivateAccountDto, @Req() request: AuthenticatedRequest,
+    @Res({ passthrough: true }) response: Response): Promise<void> {
+    await this.deactivate(input, request, response);
   }
 }

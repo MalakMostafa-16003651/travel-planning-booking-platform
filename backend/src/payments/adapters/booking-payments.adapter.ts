@@ -1,3 +1,4 @@
+import { PoliciesService } from '../policies.service';
 import { Injectable } from '@nestjs/common';
 import { BookingPaymentsPort } from '../../flight-bookings/ports/booking-payments.port';
 import { BookingType } from '../bookings-port';
@@ -7,7 +8,7 @@ import { PaymentsService } from '../payments.service';
 import { RefundsService } from '../refunds.service';
 
 /** The booking modules name their type in capitals: Person 4 sends 'FLIGHT', Person 6 sends 'HOTEL'. */
-export type BookingModuleType = 'FLIGHT' | 'HOTEL';
+export type BookingModuleType = 'FLIGHT' | 'HOTEL' | 'FLIGHT_CHANGE';
 
 export interface BookingRefundRequest {
   bookingType: BookingModuleType;
@@ -25,7 +26,7 @@ export interface BookingRefundStatus {
 }
 
 function toBookingType(type: BookingModuleType): BookingType {
-  return type === 'FLIGHT' ? 'flight' : 'hotel';
+  return type === 'FLIGHT' ? 'flight' : type === 'FLIGHT_CHANGE' ? 'flight-change' : 'hotel';
 }
 
 /**
@@ -34,7 +35,16 @@ function toBookingType(type: BookingModuleType): BookingType {
  */
 @Injectable()
 export class BookingPaymentsAdapter implements BookingPaymentsPort {
-  constructor(private readonly payments: PaymentsService, private readonly refunds: RefundsService) {}
+  constructor(private readonly payments: PaymentsService, private readonly refunds: RefundsService, private readonly policies?: PoliciesService) {}
+
+  async getChangeRefundStatus(id: string, bookingId: string): Promise<BookingRefundStatus | null> {
+    const refund = await this.refunds.findLatestForBooking('flight', bookingId, 'Flight fare decrease ' + id);
+    return refund ? { refundId: refund._id.toString(), status: refund.status, amount: toMinorUnits(refund.amount), currency: refund.currency } : null;
+  }
+
+  hasAcceptedChangePolicies(id: string, userId: string, policies: unknown): Promise<boolean> {
+    return this.policies!.hasAccepted(userId, 'flight-change', id, policies);
+  }
 
   /**
    * PAY-01: called when a hold expires. Cancels the open PaymentIntent so it can no longer be paid.
@@ -48,9 +58,9 @@ export class BookingPaymentsAdapter implements BookingPaymentsPort {
    * PAY-03: called after a cancellation with a positive refund. Idempotent per booking and reason,
    * so a failed request can be retried safely.
    */
-  async createRefund({ bookingType, bookingId, amount, reason }: BookingRefundRequest): Promise<{ refundId: string }> {
+  async createRefund({ bookingType, bookingId, amount, reason }: BookingRefundRequest): Promise<{ refundId: string; status?: RefundStatus }> {
     const refund = await this.refunds.refundCancelledBooking({ bookingType: toBookingType(bookingType), bookingId, amount: amount / 100, reason });
-    return { refundId: refund._id.toString() };
+    return { refundId: refund._id.toString(), ...(refund.status ? { status: refund.status } : {}) };
   }
 
   /**

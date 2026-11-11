@@ -1,3 +1,5 @@
+import { FlightBookingChangesStore } from '../flight-bookings/flight-booking-changes.store';
+import { BookingStatus } from '../common/enums/booking-status.enum';
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { createHash } from 'node:crypto';
@@ -43,6 +45,7 @@ export class RefundsService {
     @InjectModel(Payment.name) private readonly payments: Model<Payment>,
     private readonly stripe: StripeService,
     private readonly notifications: NotificationsService,
+    private readonly changes: FlightBookingChangesStore,
   ) {}
 
   /** PAY-03: reads a refund (owner or ADMIN). A PENDING one is checked with Stripe first. */
@@ -68,6 +71,18 @@ export class RefundsService {
    * because Person 4 retries failed requests: a repeated call returns the refund already created.
    */
   async refundCancelledBooking(input: CreateRefundInput) {
+    if (input.bookingType === 'flight' && await this.changes.changes.exists({ flightBookingId: new Types.ObjectId(input.bookingId), status: BookingStatus.CONFIRMED })) {
+      // Finish older fare reductions before cancellation refunds.
+      if (!input.reason.startsWith('Flight fare decrease ')) {
+        const due = await this.changes.changes.find({ flightBookingId: new Types.ObjectId(input.bookingId), status: BookingStatus.CONFIRMED, refundDue: true }).sort({ appliedAt: 1, _id: 1 }).exec();
+        for (const change of due) {
+          const refund = await this.refundFlightLedger({ bookingType: 'flight', bookingId: input.bookingId, amount: -change.differenceAmount / 100, reason: 'Flight fare decrease ' + change._id.toString() });
+          if (refund.status === RefundStatus.FAILED) throw new BadRequestException('Fare decrease refund failed; retry is due');
+          await this.changes.changes.updateOne({ _id: change._id }, { $set: { refundDue: false } }).exec();
+        }
+      }
+      return this.refundFlightLedger(input);
+    }
     const existing = await this.refunds.findOne({
       ...bookingRef(input.bookingType, input.bookingId),
       reason: input.reason,
@@ -80,17 +95,52 @@ export class RefundsService {
    * PAY-03 for the booking details pages (Persons 4 and 6): the booking's latest refund. A PENDING one
    * is checked with Stripe first; if Stripe is unreachable the stored status is returned.
    */
-  async findLatestForBooking(bookingType: BookingType, bookingId: string) {
+  async findLatestForBooking(bookingType: BookingType, bookingId: string, reason?: string) {
     if (!isValidObjectId(bookingId)) return null;
-    const refund = await this.refunds.findOne(bookingRef(bookingType, bookingId)).sort({ createdAt: -1, _id: -1 }).exec();
-    if (!refund || refund.status !== RefundStatus.PENDING) return refund;
+    const refund = await this.refunds.findOne({ ...bookingRef(bookingType, bookingId), ...(reason ? { reason } : {}) }).sort({ createdAt: -1, _id: -1 }).exec();
+    if (!refund || refund.status !== RefundStatus.PENDING) return refund && bookingType === 'flight' ? this.aggregateReason(refund) : refund;
     try {
       await this.syncStripeRefund(await this.stripe.retrieveRefund(refund.stripeRefundId));
     } catch {
       this.logger.error(`Could not check refund ${refund._id.toString()} with Stripe`);
-      return refund;
+      return bookingType === 'flight' ? this.aggregateReason(refund) : refund;
     }
-    return this.refunds.findById(refund._id).exec();
+    const latest = await this.refunds.findById(refund._id).orFail().exec();
+    return bookingType === 'flight' ? this.aggregateReason(latest) : latest;
+  }
+
+  private async aggregateReason(latest: RefundDocument) {
+    const group = await this.refunds.find({ flightBookingId: latest.flightBookingId, reason: latest.reason }).sort({ createdAt: -1, _id: -1 }).exec();
+    const byPayment = new Map<string, RefundDocument>();
+    for (const row of group) { const key = row.paymentId.toString(); const old = byPayment.get(key); if (!old || (old.status === RefundStatus.FAILED && row.status !== RefundStatus.FAILED)) byPayment.set(key,row); }
+    const rows = [...byPayment.values()];
+    return { ...latest.toObject(), amount: rows.reduce((sum,r)=>sum+toMinorUnits(r.amount),0)/100,
+      status: rows.some(r=>r.status===RefundStatus.FAILED) ? RefundStatus.FAILED : rows.some(r=>r.status===RefundStatus.PENDING) ? RefundStatus.PENDING : RefundStatus.REFUNDED };
+  }
+
+  /** One deterministic allocation per reason across the original capture and applied changes. */
+  private async refundFlightLedger(input: CreateRefundInput): Promise<RefundDocument> {
+    const applied = await this.changes.changes.find({ flightBookingId: new Types.ObjectId(input.bookingId), status: BookingStatus.CONFIRMED }).select('_id').lean().exec();
+    const receipts = await this.payments.find({ status: { $in: [PaymentStatus.SUCCEEDED, PaymentStatus.REFUNDED] },
+      $or: [{ flightBookingId: new Types.ObjectId(input.bookingId) }, { flightBookingChangeId: { $in: applied.map(c=>c._id) } }] }).sort({ createdAt: 1, _id: 1 }).exec();
+    let remaining = toMinorUnits(input.amount);
+    if (!Number.isSafeInteger(remaining) || remaining <= 0) throw new BadRequestException('Refund amount must be positive minor units');
+    let result: RefundDocument | undefined;
+    for (const payment of receipts) {
+      const previous = await this.refunds.find({ ...this.ownRefunds(payment), status: { $in: [RefundStatus.PENDING, RefundStatus.REFUNDED] } }).exec();
+      const forReason = previous.filter(r=>r.reason===input.reason);
+      const elsewhere = previous.filter(r=>r.reason!==input.reason).reduce((sum,r)=>sum+toMinorUnits(r.amount),0);
+      const target = Math.min(remaining, Math.max(0,toMinorUnits(payment.amount)-elsewhere));
+      if (!target) continue;
+      const already = forReason.reduce((sum,r)=>sum+toMinorUnits(r.amount),0);
+      if (already && already !== target) throw new BadRequestException('Refund allocation needs reconciliation');
+      if (already) result = forReason[0];
+      else result = await this.refundReceipt(payment, { ...input, amount: target/100 }, true);
+      remaining -= target;
+      if (!remaining) break;
+    }
+    if (remaining || !result) throw new BadRequestException('Captured receipts do not cover the refund');
+    return result;
   }
 
   /** Refunds part or all of a booking's successful payment. */
@@ -98,6 +148,15 @@ export class RefundsService {
     const { bookingType, bookingId, amount, reason } = input;
     const payment = await this.payments.findOne({ ...bookingRef(bookingType, bookingId), status: PaymentStatus.SUCCEEDED }).exec();
     if (!payment) throw new NotFoundException('No successful payment for this booking');
+    return this.refundReceipt(payment, input);
+  }
+
+  private async refundReceipt(payment: PaymentDocument, input: CreateRefundInput, ledger = false) {
+    const { bookingType, bookingId, amount, reason } = input;
+    if (ledger) {
+      const prior = await this.refunds.findOne({ ...this.ownRefunds(payment), reason, status: { $in: [RefundStatus.PENDING, RefundStatus.REFUNDED] } }).exec();
+      if (prior) { if (toMinorUnits(prior.amount) !== toMinorUnits(amount)) throw new BadRequestException('Refund allocation needs reconciliation'); return prior; }
+    }
     if (!Number.isFinite(amount)) throw new BadRequestException('Refund amount must be a number');
 
     // Minor units, so 0.1 + 0.2 style float errors cannot matter.
@@ -110,8 +169,10 @@ export class RefundsService {
 
     // Same payment + same number of earlier attempts (failed ones too) + same amount = same key:
     // a duplicated call cannot refund twice, but a new try after a FAILED refund gets a fresh key.
-    const attempts = await this.refunds.countDocuments({ paymentId: payment._id }).exec();
-    const idempotencyKey = `refund-${payment._id.toString()}-${attempts}-${amountMinor}`;
+    const attempts = await this.refunds.countDocuments({ paymentId: payment._id, ...(ledger ? { reason, status: RefundStatus.FAILED } : {}) }).exec();
+    const idempotencyKey = ledger
+      ? 'refund-ledger-' + payment._id.toString() + '-' + createHash('sha256').update(reason).digest('hex').slice(0,16) + '-' + attempts + '-' + amountMinor
+      : `refund-${payment._id.toString()}-${attempts}-${amountMinor}`;
     const refundId = refundIdForKey(idempotencyKey);
     const stripeRefund = await this.stripe.createRefund(
       {
@@ -128,6 +189,7 @@ export class RefundsService {
       paymentId: payment._id,
       bookingType,
       ...bookingRef(bookingType, bookingId),
+      ...(payment.flightBookingChangeId ? { flightBookingChangeId: payment.flightBookingChangeId } : {}),
       amount: amountMinor / 100,
       currency: payment.currency,
       status: toRefundStatus(stripeRefund.status),
@@ -143,7 +205,7 @@ export class RefundsService {
 
   /** Refunds of the payment itself, not of an extra, double-paid intent. */
   async hasRefunds(payment: PaymentDocument): Promise<boolean> {
-    return await this.refunds.countDocuments(this.ownRefunds(payment)).exec() > 0;
+    return await this.refunds.countDocuments({ ...this.ownRefunds(payment), status: { $in: [RefundStatus.PENDING, RefundStatus.REFUNDED] } }).exec() > 0;
   }
 
   /** A booking paid twice: an older intent succeeded after the payment was already SUCCEEDED. Refunded in full, once. */
@@ -163,6 +225,7 @@ export class RefundsService {
       bookingType: payment.bookingType,
       flightBookingId: payment.flightBookingId,
       hotelBookingId: payment.hotelBookingId,
+      flightBookingChangeId: payment.flightBookingChangeId,
       amount: intent.amount_received / 100,
       currency: intent.currency.toUpperCase(),
       status: toRefundStatus(stripeRefund.status),
@@ -208,12 +271,30 @@ export class RefundsService {
 
   /** Webhook `refund.updated`. Only a PENDING refund changes, so old or repeated events cannot undo a final status. */
   async syncStripeRefund(stripeRefund: Stripe.Refund) {
-    const refund = await this.refunds.findOneAndUpdate(
+    const refund = await this.payments.db.transaction(async session => {
+      const refund = await this.refunds.findOneAndUpdate(
       { stripeRefundId: stripeRefund.id, status: RefundStatus.PENDING },
       { status: toRefundStatus(stripeRefund.status) },
-      { returnDocument: 'after' },
+      { returnDocument: 'after', session },
     ).exec();
-    if (!refund) return;
+    if (!refund) return null;
+    if (refund.status === RefundStatus.FAILED) {
+      // Reopen durable obligations; a failed gateway refund is not money returned.
+      await this.payments.updateOne({ _id: refund.paymentId, bookingConfirmedAt: null, stripePaymentIntentId: refund.stripePaymentIntentId }, { $unset: { autoRefundedAt: 1 } }, { session }).exec();
+      if (refund.reason?.startsWith('Flight fare decrease ')) {
+        const id = refund.reason.slice('Flight fare decrease '.length);
+        if (isValidObjectId(id)) await this.changes.changes.updateOne({ _id: new Types.ObjectId(id), status: BookingStatus.CONFIRMED }, { $set: { refundDue: true } }, { session }).exec();
+      } else if (refund.flightBookingId && ['Flight cancelled by the airline', 'Booking cancelled by the user'].includes(refund.reason ?? '')) {
+        await this.payments.db.collection('flightbookings').updateOne({ _id: refund.flightBookingId, status: BookingStatus.CANCELLED }, { $set: { refundDue: true } }, { session });
+      }
+    }
+    return refund;
+    });
+    if (!refund) {
+      const existing = await this.refunds.findOne({ stripeRefundId: stripeRefund.id }).exec();
+      if (existing) await this.markPaymentRefundedIfComplete(existing.paymentId);
+      return;
+    }
     // The status filter above lets exactly one delivery make this change, so the user is notified once.
     await this.notifyIfFinal(refund);
     await this.markPaymentRefundedIfComplete(refund.paymentId);

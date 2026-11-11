@@ -21,6 +21,7 @@ import {
   MAX_BUDGETS_PER_DAY, MAX_DAYS, MAX_IMAGES_PER_ACTIVITY, MAX_LINKED_BOOKINGS, MAX_TRANSPORT_COSTS, minorToMajor, parseDateOnly, roundMoney,
 } from './itinerary.rules';
 import { AccountStatus } from '../common/enums/account-status.enum';
+import { detectImageExtension } from '../common/files/image-type';
 import {
   ITINERARY_ACCOUNT_STATUSES, ITINERARY_AUTHOR_NAMES, ItineraryAccountStatusesPort, ItineraryAuthorNamesPort, isVisibleStatus,
 } from './ports/itinerary-authors.port';
@@ -168,6 +169,7 @@ export class ItinerariesService {
     if (input.city !== undefined || input.countryCode !== undefined) {
       const city = await this.references.resolveCity(input.city ?? day.city, input.countryCode ?? (input.city ? undefined : day.countryCode));
       if (!itinerary.countries.includes(city.countryCode)) throw fieldError('city', 'The city must be in a selected itinerary country');
+      if (city.name !== day.city || city.countryCode !== day.countryCode) await this.assertDayAttractionsIn(day, city.cityId);
       day.city = city.name;
       day.countryCode = city.countryCode;
     }
@@ -205,6 +207,7 @@ export class ItinerariesService {
     assertTimes(input.startTime, input.endTime);
     const itinerary = await this.findOwned(itineraryId, userId);
     const day = findDay(itinerary, dayId);
+    if (input.attractionId) await this.assertAttraction(input.attractionId, day);
     const cost = await this.activityCost(input, itinerary.currency);
     if (day.activities.length >= MAX_ACTIVITIES_PER_DAY) {
       throw new ConflictException(`A day can have at most ${MAX_ACTIVITIES_PER_DAY} activities`);
@@ -214,7 +217,8 @@ export class ItinerariesService {
   }
 
   async updateActivity(activityId: string, userId: string, input: UpdateActivityDto): Promise<ItineraryDto> {
-    const { itinerary, activity } = await this.findOwnedActivity(activityId, userId);
+    const { itinerary, day, activity } = await this.findOwnedActivity(activityId, userId);
+    if (input.attractionId) await this.assertAttraction(input.attractionId, day);
     const cost = await this.activityCost({ cost: input.cost ?? activity.cost, currency: input.currency ?? activity.currency }, itinerary.currency);
     const next = { startTime: activity.startTime, endTime: activity.endTime, ...definedOnly(input) };
     assertTimes(next.startTime, next.endTime);
@@ -596,6 +600,7 @@ export class ItinerariesService {
    */
   async listPublicByAuthor(authorId: string, page = 1): Promise<ItineraryPageDto> {
     if (!Types.ObjectId.isValid(authorId)) return pageOf([], page, 0);
+    authorId = new Types.ObjectId(authorId).toString();
     const statuses = await this.accountStatuses.getAccountStatuses([authorId]);
     if (!isVisibleStatus(statuses.get(authorId))) return pageOf([], page, 0);
     const filter: QueryFilter<Itinerary> = { userId: new Types.ObjectId(authorId), visibility: ItineraryVisibility.PUBLIC, isHidden: { $ne: true } };
@@ -879,6 +884,41 @@ export class ItinerariesService {
     return new Map(ids.map((id) => [id, names.get(id) ?? DELETED_USER_NAME]));
   }
 
+  /**
+   * PDF 5.1: an activity may reference only an attraction from the shared seeded catalog (Malak, PR #97),
+   * and that attraction must be in the city of the activity's day (e.g. no Louvre on a Cairo day).
+   */
+  private async assertAttraction(attractionId: string, day: ItineraryDay): Promise<void> {
+    const attraction = await this.references.findAttraction(attractionId);
+    if (!attraction) {
+      throw fieldError('attractionId', `Unknown attraction ${attractionId}. Choose one from GET /api/attractions`);
+    }
+    const dayCityId = await this.dayCityId(day);
+    if (attraction.cityId !== dayCityId) {
+      throw fieldError('attractionId', `${attraction.name} is not in ${day.city}. Choose an attraction in this day's city`);
+    }
+  }
+
+  /** The catalog cityId of a day; null if the stored city no longer resolves (then no attraction can match). */
+  private async dayCityId(day: Pick<ItineraryDay, 'city' | 'countryCode'>): Promise<string | null> {
+    try {
+      return (await this.references.resolveCity(day.city, day.countryCode)).cityId;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Changing a day's city must not leave its activities pointing at attractions in the old city. */
+  private async assertDayAttractionsIn(day: ItineraryDay, cityId: string): Promise<void> {
+    const attractionIds = [...new Set(day.activities.map((activity) => activity.attractionId).filter((id): id is string => !!id))];
+    for (const attractionId of attractionIds) {
+      const attraction = await this.references.findAttraction(attractionId);
+      if (attraction && attraction.cityId !== cityId) {
+        throw fieldError('city', `This day has an activity at ${attraction.name}, which is not in the new city. Remove or change that attraction first`);
+      }
+    }
+  }
+
   private async assertCurrency(code: string, field: string): Promise<string> {
     const normalized = code.trim().toUpperCase();
     if (!(await this.currencies.isSupported(normalized))) {
@@ -971,11 +1011,12 @@ function roundCategories(categories: CategoryTotalsDto): CategoryTotalsDto {
   };
 }
 
-/** GEN-08: trust the file's bytes, not the client-supplied MIME type or extension. */
-export function detectImageType(buffer: Buffer): string | null {
-  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'image/jpeg';
-  if (buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
-  return null;
+/** GEN-08: the shared byte check decides the type; the file name and declared type are ignored. */
+const IMAGE_CONTENT_TYPES = { jpg: 'image/jpeg', png: 'image/png' } as const;
+
+function detectImageType(buffer: Buffer): string | null {
+  const extension = detectImageExtension(buffer);
+  return extension ? IMAGE_CONTENT_TYPES[extension] : null;
 }
 
 /** ITN-27: only bookings that are actually booked count (and can be linked). */

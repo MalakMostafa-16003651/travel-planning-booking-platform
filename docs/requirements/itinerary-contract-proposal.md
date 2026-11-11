@@ -104,8 +104,18 @@ PDF section 5.1 lists **attractions** among the official reference datasets. Agr
   `null`.
 - **Person 7, after that PR is merged and the catalog is seeded:** validate `Activity.attractionId`
   on create and update with `findAttraction`, returning 400 for an unknown id.
-- No separate attractions catalog is added in the itinerary module. Until the handoff,
-  `attractionId` stays optional free text (1 to 64 characters) and is not validated.
+- No separate attractions catalog is added in the itinerary module.
+- **Done (2026-11-10):** Malak's catalog is merged (PR #97) and seeded on Atlas, with official ids
+  `att-1` to `att-8`. `addActivity` and `updateActivity` now check `attractionId` with
+  `ReferenceDataService.findAttraction` (the `references` instance the module already injects)
+  and return 400 for an unknown id. `attractionId` stays optional. Existing activity records are
+  not rewritten.
+- **Added (2026-11-11):** the attraction's `cityId` must match the activity's day city (resolved
+  through `ReferenceDataService.resolveCity`), on activity create/update; a day's city change is
+  rejected (400 on `city`) while one of its activities points at an attraction elsewhere.
+  `PATCH /api/activities/{activityId}` with `"attractionId": null` removes the attraction.
+  Activities saved earlier with a mismatched attraction are not rewritten; they are checked only
+  when their attraction or their day's city is changed.
 
 ## Moderation hooks for administrators (GEN-09, GEN-10, with Arwa)
 
@@ -129,9 +139,24 @@ adminDeleteItinerary(itineraryId: string): Promise<void>                 // 404 
   can. Admins get 404 like everyone else (ACC-11 keeps admins out of itinerary content); they act
   on the reported id.
 - **Delete:** removes the itinerary and its activity images.
-- **Arwa's side:** call these from `ContentModerationService` and remove the "not supported yet"
-  rejection for `ITINERARY`. No reports code was edited.
-- **Blog (Omar/Hicham):** the blog still reads the `itineraries` collection directly and does not
-  check `isHidden`. Until it switches to `listPublicByAuthor` / `getPublicSummary`, a hidden
-  itinerary can still appear on author pages and posts.
+- **Arwa's side: done (PR #90, merged).** `ContentModerationService` calls these three methods for
+  reports and direct moderation, and the "not supported yet" rejection for `ITINERARY` is gone.
+  Direct moderation first checks `itineraryExists`, so admins only act on public itineraries.
+- **Blog:** since commit `c10898b` (Malak, merged with PR #82) the blog uses `listPublicByAuthor` (author page)
+  and `getPublicSummary` (validating and showing a post's itinerary) instead of reading the
+  `itineraries` collection, so hidden itineraries are hidden there too.
+
+
+### Session consumer adoption - 2026-11-10
+
+The current GEN-13/BON-01 session branch imports ItinerariesModule into BlogModule and uses listPublicByAuthor/getPublicSummary for author pages, attachment validation and attachment responses. After synchronizing PR81, those calls automatically respect isHidden. A real HTTP integration regression covers hide/unhide through Kiki's service and checks public, owner and admin blog reads plus rejection of a new hidden attachment. This closes the blog-reader follow-up on this feature branch; Arwa's report-routing/atomic audit integration remains separate. No changes to Kiki's moderation methods or private-image rules were made.
+
+## ITN-26 R2: return legs must reverse an outbound route (2026-11-10)
+
+Gamila implemented option A in `FlightsService.searchForItinerary` (branch
+`fix/ITN-26-return-leg-matching-airports`): a return leg is kept only if some outbound flight
+lands at its departure airport, departed from its arrival airport, and lands before the return
+leaves. Every suggested round-trip pair therefore satisfies Ismail's booking rule ("the return
+flight must reverse the outbound route"), which is unchanged. Person 7 updated the two ITN-26 e2e
+tests that assumed returns from any city airport (`itinerary-flight-search.e2e.test.ts`).
 

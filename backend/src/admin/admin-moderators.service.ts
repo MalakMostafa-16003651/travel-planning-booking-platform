@@ -4,6 +4,7 @@ import { Connection, Model, Types } from 'mongoose';
 import { Airline, AirlineDocument } from '../airlines/schemas/airline.schema';
 import { AuditAction, AuditTargetType } from '../audit-logs/audit-log.enums';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { NotificationEmailOutboxService } from '../notifications/notification-email-outbox.service';
 import { PasswordService } from '../auth/password.service';
 import { AccountStatus } from '../common/enums/account-status.enum';
 import { UserRole } from '../common/enums/user-role.enum';
@@ -27,6 +28,7 @@ export class AdminModeratorsService {
     @InjectConnection() private readonly connection: Connection,
     private readonly passwords: PasswordService,
     private readonly auditLogs: AuditLogsService,
+    private readonly emailOutbox: NotificationEmailOutboxService,
   ) {}
 
   /**
@@ -76,6 +78,7 @@ export class AdminModeratorsService {
           targetId: created._id.toString(),
           details: `${input.role} for ${airline ? 'airline' : 'hotel'} ${provider.name} (${input.providerId})`,
         }, session);
+        await this.emailOutbox.enqueueModeratorInvitation(created._id.toString(), provider.name, session);
         return created;
       });
     } catch (error: unknown) {

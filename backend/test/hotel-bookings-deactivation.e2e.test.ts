@@ -1,3 +1,4 @@
+import { configureTestBookableRoom } from './hotel-test-data';
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import { getConnectionToken, getModelToken } from '@nestjs/mongoose';
@@ -49,6 +50,7 @@ describe('Deactivation safety for hotel holds (ACC-15, HTL-06, HTL-18)', { concu
 
   async function createRoom(forHotel: string, name: string): Promise<string> {
     const [room] = await rooms.create([{ hotelId: new Types.ObjectId(forHotel), name, capacity: 3, pricePerNight: 10000 }]);
+    await configureTestBookableRoom(fixture.connection,room._id,forHotel);
     return room._id.toString();
   }
 

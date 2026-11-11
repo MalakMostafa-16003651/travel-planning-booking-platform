@@ -1,3 +1,5 @@
+import { ReviewRatingsService, RatingStats } from './review-ratings.service';
+export type { RatingStats } from './review-ratings.service';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, QueryFilter, Types, isValidObjectId } from 'mongoose';
@@ -21,15 +23,6 @@ export interface Viewer {
   role: UserRole;
 }
 
-export interface RatingStats {
-  averageRating: number;
-  ratingCount: number;
-}
-
-function roundRating(value: number): number {
-  return Math.round(value * 100) / 100;
-}
-
 @Injectable()
 export class ReviewsService {
   constructor(
@@ -37,6 +30,7 @@ export class ReviewsService {
     private readonly hotelBookings: HotelBookingsService,
     private readonly hotels: HotelsService,
     private readonly users: UsersService,
+    private readonly ratings: ReviewRatingsService,
   ) {}
 
   /** HTL-23: one review per Completed reservation of the caller. Another user's reservation is 404. */
@@ -157,15 +151,7 @@ export class ReviewsService {
   // HTL-02/HTL-12 (Person 5 connects this): calculated on read, never stored on Hotel.
 
   /** Visible reviews only. Hotels without visible ratings are absent from the map. */
-  async getRatingStats(hotelIds: string[]): Promise<Map<string, RatingStats>> {
-    const ids = [...new Set(hotelIds.filter((id) => isValidObjectId(id)).map((id) => id.toLowerCase()))].map((id) => new Types.ObjectId(id));
-    if (ids.length === 0) return new Map();
-    const rows: { _id: Types.ObjectId; average: number; count: number }[] = await this.reviews.aggregate([
-      { $match: { hotelId: { $in: ids }, isHidden: false } },
-      { $group: { _id: '$hotelId', average: { $avg: '$rating' }, count: { $sum: 1 } } },
-    ]).exec();
-    return new Map(rows.map((row) => [row._id.toString(), { averageRating: roundRating(row.average), ratingCount: row.count }]));
-  }
+  getRatingStats(hotelIds: string[]): Promise<Map<string, RatingStats>> { return this.ratings.getRatingStats(hotelIds); }
 
   // GEN-09/GEN-10 (Person 2 connects these in ContentModerationService). No HTTP routes here.
 

@@ -1,7 +1,6 @@
-# Backend: registration and login
+# Backend API (Milestone 1)
 
-This NestJS 12 backend implements registration, login/lockout, logout/inactivity, administrator-assisted reset, password changes and ACC-09 own-profile viewing/updating using TypeScript, Mongoose and MongoDB Atlas. It also provides the shared currency catalog for profiles and budgeting. Registration creates a normal account without logging it in; `/api/auth/me` returns the authenticated identity. Optional token renewal remains later work.
-
+This NestJS 12 backend implements the Milestone 1 API for every module: accounts and administration, airlines/flights and flight bookings, hotels/rooms and hotel bookings with reviews, Stripe test-mode payments and refunds, itineraries with budgets and exchange rates, the blog, reports/moderation, notifications and audit logs. It uses TypeScript, Mongoose and the team's shared MongoDB Atlas database. The repository [README](../README.md) has the setup checklist (environment, seeding, running, tests). The sections below document individual features in the order they were built; the newest notes are at the end.
 ## Run locally
 
 Install Node.js 24 LTS with npm. Create the repository-root `.env` using the root `.env.example`, and enter the team's private connection string locally. Keep `.env` out of Git.
@@ -293,17 +292,27 @@ integration; itinerary Flights/Hotels search adapters remain pending.
 | GET | `/api/flight-bookings/:id` | One of your bookings, with `refund` (`PENDING`, `REFUNDED` or `FAILED`, from Payments) once a refund exists. |
 | GET | `/api/flight-bookings/:id/cancellation-quote` | The refund you would receive. Changes nothing. |
 | POST | `/api/flight-bookings/:id/cancel` | Cancels a Confirmed booking and requests its refund. |
-| GET | `/api/flight-bookings/:id/e-ticket` | PDF e-ticket for a Confirmed booking. |
+| GET | `/api/flight-bookings/:id/e-ticket` | PDF e-ticket for a Confirmed booking, including selected seats. |
+| GET | `/api/flight-bookings/:id/seat-map` | Own booking: capacity, occupied numbers and own selections. |
+| PUT | `/api/flight-bookings/:id/seats` | Replace future-segment selections atomically; `selections: []` clears them. |
 
 All routes need a login and role `USER` (shared `AuthGuard` and `RolesGuard`). Another user's booking returns **404**. Amounts are integer minor units of USD.
 
 **Cancellation deadline (FLT-26):** the refund is quoted inside the cancellation transaction, and the write only matches while the outbound departure is still in the future by database time (`$$NOW`). A slow airline-policy lookup therefore can never commit a cancellation after departure.
+
+**Seat selection (FLT-28):** adults/children may choose free numbered seats1..cabin capacity during an unexpired hold or before a Confirmed flight departs; infants have no seat. Send `{ "selections": [{ "flightId": "...", "passengerId": "...", "seatNumber": 3 }] }`. It is free, owner-only and transactional. A conflict returns409 without losing earlier selections. Confirmation retains seats; expiry and cancellation release them. Cabin capacity cannot shrink below an assigned seat. FLT-27 flight changes use the separate flow below.
 
 **Overselling** is prevented by one conditional cabin write: `heldSeats` only increases if `totalSeats - bookedSeats - heldSeats` still covers the request. Hold, confirm, cancel and expiry run in MongoDB transactions, so a round trip reserves both cabins or neither. Transactions need a replica set: Atlas always has one, and the tests start one.
 
 **Expiry** runs every minute, as does retrying failed refund requests and completing departed bookings. Payment checks `holdExpiresAt` directly, so a late sweep cannot extend a hold.
 
 **Integration:** `ports/` defines what this module needs from Flights, Payments and Notifications. The inventory adapter reads Person 3's `flights`, `cabininventories`, `airports` and `airlines` collections. `BOOKING_PAYMENTS` is bound to Person 8's `BookingPaymentsAdapter` (hold-expiry PaymentIntent cancellation, refunds, refund status), and `BOOKING_NOTIFICATIONS` to Person 2's `NotificationsService` (booking confirmed and cancelled). `test/flight-bookings-integration.e2e.test.ts` runs these real services together, with only Stripe's network calls faked.
+
+
+
+**Flight changes (FLT-27):** POST /api/flight-bookings/:id/changes with replacement flightId/cabinId segments for the same airport pairs, cabin classes and leg count. The owner gets a10-minute quote/hold; the original remains Confirmed. Read/accept /api/bookings/flight-change/:changeId/policies (POST accept-policies with accepted:true). Positive differences use POST /api/payments with bookingType:flight-change and bookingId:changeId; signed Stripe success alone applies them. Equal/lower fares use POST /api/flight-booking-changes/:changeId/confirm after acceptance. GET that change URL for status/lower-fare refund; POST its cancel route to abandon a pending proposal. Booking ID/reference and passenger IDs are preserved. Changed-leg seats are cleared; unchanged seats remain.
+
+Changes/booking responses use integer USD minor units; payment/policy amounts use major units. Lower-fare and cancellation refunds span actual original/change receipts and remain retryable on failure. No new env setting. The approved policy-index migration builds the replacement unique index before retiring the exact known legacy one. See the shared flight contract for lifecycle, recovery, compatibility and owner handoffs. This feature is in draft PR103 until reviewed/merged.
 
 ## Itineraries, activities and budgeting
 
@@ -352,16 +361,18 @@ All routes need a login and role `USER` (shared `AuthGuard` and `RolesGuard`). A
 
 **Read-only views for the blog (BLG-12, BLG-13).** `ItinerariesService.listPublicByAuthor(authorId, page)` and `getPublicSummary(itineraryId, authorId?)` return public itinerary summaries with the same visibility rules as public search (PUBLIC only, deactivated or missing authors hidden, summary fields only). See the [itinerary contract](../docs/requirements/itinerary-contract-proposal.md).
 
+**Attractions.** An activity's optional `attractionId` must be one of the shared catalog's ids (`GET /api/attractions`, `att-1` to `att-8`), and that attraction must be in the city of the activity's day; otherwise create and update return 400. Changing a day's city is rejected with 400 while one of its activities points at an attraction in the old city. Send `"attractionId": null` in `PATCH /api/activities/{activityId}` to remove an attraction (an empty string is rejected).
+
 **Moderation hooks (GEN-09, GEN-10).** `ItinerariesService.itineraryExists`, `setItineraryHidden` and `adminDeleteItinerary` are for the reports module. Only PUBLIC itineraries can be reported. A hidden itinerary is shown only to its owner (flagged `isHidden`), and only an administrator can unhide it.
 
 For a manual Swagger check: log in, create an itinerary, add days in Cairo, Cairo and London, then reorder them and confirm day numbers, dates and `cityGroups` follow. Add budget entries in EGP and USD and call `budget-summary?currency=EUR`. Make the itinerary PUBLIC, log in as a second user, then search for it and clone it.
 
 ## Hotel profiles
 
-`backend/src/hotels` implements HTL-01/HTL-02 (hotel profiles), HTL-03/
-HTL-05/HTL-06 (rooms), HTL-04/HTL-05/HTL-06/HTL-08 (room availability),
-HTL-09/HTL-10 (policies), HTL-11/HTL-12/HTL-15 (search), and HTL-22
-(moderator reservations connected through ACC-11), per the
+`backend/src/hotels` implements HTL-01/HTL-02 (hotel profiles and photos,
+GEN-08), HTL-03/HTL-05/HTL-06 (rooms), HTL-04/HTL-05/HTL-06/HTL-08 (room
+availability), HTL-09/HTL-10 (policies), HTL-11/HTL-12/HTL-15 (search), and
+HTL-22 (moderator reservations connected through ACC-11), per the
 [hotel contract proposal](../docs/requirements/hotel-contract-proposal.md).
 The reservations endpoint reuses Person 6's HotelBookingsService through
 HotelBookingsReservationsAdapter. Assignment checks run before the read query;
@@ -371,7 +382,7 @@ payment confirmation, cancellation or account-deactivation eligibility.
 
 | Method | Endpoint | Who | Result |
 | --- | --- | --- | --- |
-| POST | `/api/hotels` | ADMIN | Create a hotel profile. `city`/`countryCode` are resolved through the shared `ReferenceDataService`, the same catalog Itineraries uses. |
+| POST | `/api/hotels` | ADMIN | Create a hotel profile. `city`/`countryCode` are resolved through the shared `ReferenceDataService`, the same catalog Itineraries uses. Commits the hotel and GEN-07 `HOTEL_CREATED` audit entry in the same transaction, using Arwa's existing audit service. |
 | GET | `/api/hotels/:id` | anyone | View a hotel. A deactivated hotel (`isActive: false`) returns 404 for everyone except its assigned moderator and admins, so ACC-15 deactivation hides it without revealing its existence. |
 | PATCH | `/api/hotels/:id` | assigned HOTEL_MODERATOR | Edit the moderator's own hotel. `:id` must match their `moderatorassignments` record, the same adapter pattern `AirlinesService.getAssignedAirlineId` uses, with `hotelId` in place of `airlineId`. A mismatched or missing assignment returns 404/403 the same way `FlightsService.getOwnedScheduledFlight` hides another airline's flight. |
 | POST | `/api/hotels/:id/rooms` | assigned HOTEL_MODERATOR | Add a room (name, capacity, `pricePerNight` in integer minor units) to the moderator's own hotel. |
@@ -384,8 +395,13 @@ payment confirmation, cancellation or account-deactivation eligibility.
 | GET | `/api/hotels/search` | anyone | `city` (resolved through `ReferenceDataService`), optional `countryCode`, `checkIn`/`checkOut`, `guests`, optional `rooms`/`minPrice`/`maxPrice`/`sort`/`page`. Field names match `ItineraryHotelSearch` in `itineraries/ports/travel-search.port.ts` exactly, so Person 7's eventual adapter is a direct pass-through. Only active hotels with at least `rooms` unblocked rooms whose combined capacity (best `rooms` by capacity) covers `guests` are returned, page size 10. Exact room assignment stays a booking-time concern. |
 | GET | `/api/hotels/:id/rooms/available` | anyone | `checkIn`/`checkOut`, optional `guests`. Individual rooms (not a hotel-level summary) with no blocked/booked overlap for the stay and (if `guests` given) enough capacity, cheapest first. |
 | GET | `/api/hotels/:id/reservations` | assigned HOTEL_MODERATOR | Ownership is checked before the real HotelBookingsService query (404/403 for another/missing assignment). Returns guest name when available, rooms[], guestCount, bookingReference, dates, status and frozen totalAmount in minor units; ten per page. Payment/policy/private profile details are excluded. |
+| POST | `/api/hotels/:id/photos` | assigned HOTEL_MODERATOR | Add a photo (multipart field `photo`): JPG or PNG decided by the file's own bytes via the shared `detectImageExtension` (`common/files/image-type.ts`, the same sniffer airlines' logo upload uses), at most 5 MB, at most 5 per hotel. Returns the hotel with its photo URLs. |
+| GET | `/api/hotels/:id/photos/:photoId` | anyone | Photo bytes. Same visibility as the hotel itself: 404 if the hotel is deactivated, except to its own moderator or an admin. |
+| DELETE | `/api/hotels/:id/photos/:photoId` | assigned HOTEL_MODERATOR | Removes one photo from the moderator's own hotel. |
 
 Both search endpoints use the same half-open overlap check as `RoomAvailability`: a block/booking ending on a date does not conflict with a stay starting that same date.
+
+Photos are stored as binary documents in their own `hotelphotos` collection (kept out of the hotel document, same pattern as blog post images and itinerary activity images), not on disk — unlike the airline logo upload, which is one file per airline on the filesystem. A hotel needed up to 5 photos, so the multi-document Mongo pattern fit better; only the byte-sniffing helper is shared with airlines.
 
 New hotels default to `isActive: true`, `checkInTime: '14:00'`, `checkOutTime: '11:00'` and no cancellation tiers. Changing `city` re-resolves the country from the reference catalog from scratch; changing only `countryCode` re-resolves against the existing city. Rooms carry no inventory count of their own (HTL-03 "individually bookable rooms"); each room's `RoomAvailability` document instead holds `blockedRanges` (written here) and `bookedRanges` (reserved for the not-yet-built hotel-bookings module — see the contract's section 3 for the overlap-array design and why a hold is a single conditional write).
 
@@ -405,7 +421,9 @@ Coverage includes registration, credentials, protected cookies, logout/inactivit
 
 ## Corrected itinerary integration and reference setup (2026-11-06)
 
-From backend run npm.cmd run seed:references to initialize the official eight countries/eight cities after review. The command reads the root ignored .env, starts no HTTP server or booking maintenance, and preserves existing rows. GET /api/countries and /api/cities list the canonical records; reuse ReferenceDataModule/ReferenceDataService instead of private catalogs. No Atlas seed/migration was performed by the implementation tests.
+From backend run `npm.cmd run seed:references` after review to initialize the official eight countries, eight cities and eight attractions. The command reads the root ignored `.env`, starts no HTTP server or booking maintenance, and preserves existing rows, document IDs and timestamps on repeat runs. Application startup initializes indexes but does not seed the catalog. `GET /api/countries`, `/api/cities` and `/api/attractions` return the canonical records; reuse `ReferenceDataModule` / `ReferenceDataService` instead of private catalogs. Implementation tests use isolated local MongoDB, not Atlas.
+
+For Person 7 (Kiki): import `ReferenceDataModule` into the consuming module and inject `ReferenceDataService`. Call `await references.findAttraction(attractionId)`: it returns the official seeded attraction or `null` for an unknown/unseeded ID. Fields are `attractionId`, `name`, `cityId`, plus internal `_id` and timestamps; the public list returns only the first three. Preserve original IDs `att-1` through `att-8` and city IDs (including `new_york`); do not use MongoDB `_id` as `Activity.attractionId`. Kiki owns activity validation and should reject unknown references with 400 in both `addActivity` and `updateActivity` after this catalog PR is merged and the shared database is seeded. `ItinerariesService` already injects the shared service as `references`; reuse that instance. Existing activity records are not rewritten by this change. The source is `Attractions.csv` in the same official workbook linked in `reference-seeds.ts`, mapping `attraction_id` / `city_id` to the agreed camelCase names.
 
 Itinerary titles are limited to 100 characters and itineraries to 60 days. Countries/cities must be in the official catalog and days must belong to selected countries. Activity cost/currency are optional, with non-negative two-decimal cost; they contribute to Activities totals and survive cloning. Transport creation requires an owned dayId; deleting that day removes its transport entries. Day/city totals include transport without adding it twice to the grand total. Legacy unlinked transport rows are preserved; updating an unlinked entry requires an explicit owned dayId. Parent reads/edits continue to work without a destructive migration.
 
@@ -420,7 +438,7 @@ ITN-25 hotel criteria now include guests and rooms. ITN-26 takes departureAirpor
 
 GET `/api/flights/:flightId/bookings` reuses FlightBookingsService.listBookingsForFlight after checking the authenticated AIRLINE_MODERATOR's assigned airline. Returns safe booking references, passenger names, cabin, seat count and status, ten per page. Reads are available for past/cancelled flights without changing flight status. Passport/document numbers, birth dates and payment details are excluded. Remaining seats per category and CSV export are still separate FLT-29 work.
 
-Both provider routes use the shared cookie AuthGuard and RolesGuard, authoritative ModeratorAssignment records, validated pagination and Cache-Control: no-store. Ordinary users keep their own /api/flight-bookings and /api/hotel-bookings views. Admins inspect bookings through /api/admin/bookings?type=FLIGHT or type=HOTEL. Private itineraries remain owner-only, including against admins/moderators. Cross-module regressions are in test/acc11-booking-access.e2e.test.ts.
+Both provider routes use the shared cookie AuthGuard and RolesGuard, authoritative ModeratorAssignment records, validated pagination and Cache-Control: no-store. Ordinary users keep their own /api/flight-bookings and /api/hotel-bookings views. Admins inspect bookings through /api/admin/bookings?type=FLIGHT or type=hotel. Private itineraries remain owner-only, including against admins/moderators. Cross-module regressions are in test/acc11-booking-access.e2e.test.ts.
 
 
 ## ACC-07 bonus: forgotten-password recovery
@@ -504,6 +522,54 @@ Public posts/itineraries hide their deactivated author; comments/reviews retain 
 
 ### Administrator action/audit consistency
 
-Admin temporary-password resets record PASSWORD_RESET with the authenticated admin and target IDs. Credentials and audit commit together; failed persistence returns the generic500 without changing the target password or invalidating old sessions. Passwords/hashes are never copied into audit details. Account/provider status changes commit their audit and stored inbox entries in the same MongoDB transaction; moderator creation also commits its audit with the account/assignment. A failed required write rolls back the action so retry is safe. These transactions require a replica set (Atlas or the isolated test replica set).
+Admin temporary-password resets record PASSWORD_RESET with the authenticated admin and target IDs. Credentials and audit commit together; failed persistence returns the generic500 without changing the target password or invalidating old sessions. Passwords/hashes are never copied into audit details. Account/provider status changes commit their audit and stored inbox entries in the same MongoDB transaction; moderator creation also commits its audit with the account/assignment. A failed required write rolls back the action so retry is safe. Hotel and airline creation also commit the provider and its HOTEL_CREATED/AIRLINE_CREATED audit together. A failure before or after the audit insert rolls back both records, so retry does not leave a provider from the failed request. Duplicate airline codes still return409. These transactions require a replica set (Atlas or the isolated test replica set).
 
 Hotel deactivation invokes the existing pending-hold cleanup after commit and preserves confirmed stays. If cleanup fails, the provider remains deactivated and normal hold expiry provides fallback. Full concurrent provider/room deactivation ordering remains a separate integration task.
+
+### BON-01 admin analytics backend
+
+`GET /api/admin/analytics?from=2026-11-01&to=2026-11-20&type=hotel&page=1` requires an active ADMIN session. `type` is optional (`airline`/`hotel`); dates are inclusive UTC dates with a maximum 366-day span. Results contain ten providers per page, sorted by net receipts, with `bookings`, `grossRevenueMinor`, `refundedMinor`, `netRevenueMinor`, `currency`, provider ID/name and an explicit report basis. All money is USD cents.
+
+The period selects successful booking confirmations (`Payment.bookingConfirmedAt`), including later-cancelled/completed history. Unpaid holds, failed payments and late-success compensation without a confirmed booking are excluded. Completed refunds against each original receipt are included through report generation, even if they occurred after the selected confirmation period; failed/pending and extra-payment-compensation refunds are excluded. This is a confirmation-cohort receipts report, not cash movement by refund date or a provider payout ledger. A booking involving multiple airlines counts once per participating airline, so counts across airlines are not additive. Gross flight receipts are allocated by stored segment fare weights; refunds use those allocated gross weights. Largest-remainder cent allocation preserves totals and keeps gross attribution stable; all-zero fares use equal provider weights.
+
+The module reads existing schemas in one MongoDB snapshot and never mutates bookings, inventory, payments, refunds or provider records, and never calls Stripe. Missing/inconsistent financial references fail instead of returning partial totals. Passenger details, user IDs, payment-intent IDs and secrets are not included. The M2 visual dashboard is not implemented by this API. No new environment setting or collection is required.
+
+
+## GEN-01-B: notification emails and moderator invitations
+
+The existing GEN-01 notification producers now queue an SMTP copy automatically. `NotificationsService.notify/notifyMany` retain their interfaces and store the in-app notification plus a private email job in one transaction (joining the caller's transaction when supplied). Admin moderator creation queues an invitation in the existing account/assignment/audit transaction. A rolled-back action cannot produce an email. SMTP failure after commit does not undo a booking, account or inbox entry.
+
+Reuse the existing `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` and `SMTP_FROM` in the ignored root `.env`. No new environment variable or public endpoint is needed. With SMTP unset, new jobs remain pending and the in-app inbox works; configure SMTP and restart to deliver them. Older notifications are not backfilled.
+
+Each API process checks the private `notificationemailjobs` collection every 15 seconds and claims one job per tick, avoiding SMTP bursts in the development sandbox. Mailtrap documents [short-window sandbox rate limits](https://docs.mailtrap.io/email-sandbox/help/features-and-limits). Atomic claims use two-minute leases and fencing tokens so another worker does not normally deliver the same job. Failed sends retry up to five attempts with 30/60/120/240-second backoff; exhausted jobs stay FAILED for operator review. Expired leases are recoverable after restart. The outbox deduplicates each notification and each moderator-account invitation.
+
+Delivery is **at least once**: a crash after SMTP accepts a message but before SENT is recorded can cause a duplicate. SENT means SMTP acceptance, not proof that a recipient read the message. SMTP diagnostics/recipient/message contents are not logged. Jobs contain no passwords, password hashes, reset tokens or SMTP credentials. Moderator invitations tell the moderator to obtain the admin-set temporary password separately and change it at first login.
+
+Development checks: use Mailtrap Email Sandbox, create a moderator as an authenticated admin, and inspect its invitation after a worker tick. New booking/refund/status/schedule notices use the same path as their existing in-app notifications. Keep temporary passwords private. `notification-emails.e2e.test.ts` uses isolated MongoDB and a fake transport for rollback, pending setup, retry, lease and invitation tests; other domain suites cover the existing notification producers. No email job/recipient/retry state is exposed by the inbox API.
+
+## PDF endpoint paths and audit fixes (2026-11-11)
+
+Every endpoint in the project description's section 8 tables now exists at its PDF path; `test/pdf-api-coverage.e2e.test.ts` checks this against Swagger. Where a route already existed under another path, the PDF path calls the same service. No business logic is copied, and the original paths keep working:
+
+| PDF path | Same as |
+| --- | --- |
+| `DELETE /api/users/me` (body `{ "confirmed": true }`) | `POST /api/users/me/deactivate` (ACC-12; the account is deactivated, not erased) |
+| `PATCH /api/airlines/:id` | `PATCH /api/airlines/me` (FLT-01); `:id` must be the moderator's own airline, otherwise 404 |
+| `PUT /api/airlines/:id/baggage-policy` | baggage part of `PATCH /api/airlines/me/policies` (FLT-08) |
+| `PUT /api/airlines/:id/cancellation-policy` | tier part of `PATCH /api/airlines/me/policies` (FLT-09) |
+| `GET /api/flights/:id/passengers/export` | `GET /api/flights/:id/bookings/export.csv` (FLT-29) |
+| `PATCH /api/flight-bookings/:id/change-flight` | `POST /api/flight-bookings/:id/changes` (FLT-27 bonus) |
+| `PATCH /api/flight-bookings/:id/seat` | `PUT /api/flight-bookings/:id/seats` (FLT-28 bonus) |
+| `PATCH /api/posts/:id/itinerary` (body `{ "itineraryId": "..." }` or `null`) | `itineraryId` in `PATCH /api/posts/:id` (BLG-13 bonus) |
+
+The optional ACC-02 `GET /api/auth/verify-email` is deliberately `POST /api/auth/verify-email`: the single-use token travels in the JSON body rather than a URL, where it could leak into logs and browser history.
+
+Behaviour fixed in the same audit:
+
+- **GEN-02:** an empty `PATCH` of a flight, cabin or airline profile is a 400 validation error. It used to return 200 without changing anything: with this TypeScript target, every declared optional DTO field exists as an `undefined` key, so `Object.keys()` was never empty. `common/validation/defined-fields.ts` checks for supplied values instead.
+- **HTL-02:** `GET /api/hotels/:id` adds `reviews` (newest first, first page of 10) next to `averageRating`/`ratingCount`. With `checkIn` and `checkOut` (and optional `guests`) it also returns `availableRooms` for that stay; without dates, `availableRooms` is null. Only one date is a 400.
+- **HTL-06:** `DELETE /api/hotels/:id/rooms/:roomId` permanently deletes a room only if no reservation of any status ever referenced it; otherwise it returns 409. `PATCH /api/hotels/:id/rooms/:roomId` with `{ "isActive": false }` deactivates a room (409 while it has a Confirmed or unexpired Pending Payment reservation) and `{ "isActive": true }` reactivates it. Deletion takes the room's booking gate, so it cannot race a new hold.
+- **FLT-05:** `PATCH /api/flights/:id` accepts `departureAirportCode`/`arrivalAirportCode` while the flight has no booking and no flight-change hold. The check and the write share one transaction with the flight's booking gate; once any booking exists, it returns 409.
+- **FLT-11/FLT-12:** flight search accepts a same-day round trip (`returnDate` equal to `departureDate`); only return flights that leave after the outbound lands are offered. Impossible dates such as `2027-02-30` are rejected with 400.
+- The flight-cancellation response and the Swagger description no longer describe integrations as missing.
+

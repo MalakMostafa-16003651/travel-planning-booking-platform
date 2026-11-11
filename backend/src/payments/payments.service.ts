@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { EmailEligibilityService } from '../auth/email-eligibility.service';
 import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
@@ -41,9 +42,11 @@ export class PaymentsService {
   /** PAY-01: starts paying for a booking. Returns the clientSecret for Stripe.js. */
   async create(dto: CreatePaymentDto, user: AuthUser) {
     await this.emailEligibility.assertCanBook(user.userId);
-    const { bookingType, bookingId } = dto;
+    const { bookingType } = dto;
+    const bookingId = dto.bookingId.toLowerCase();
     const booking = await this.policies.getOwnedBooking(bookingType, bookingId, user.userId);
     this.assertPayable(booking);
+    if (bookingType === 'flight-change' && booking.totalPrice <= 0) throw new ConflictException('Confirm an equal/lower fare through the flight booking change endpoint');
 
     const existing = await this.payments.findOne(bookingRef(bookingType, bookingId)).exec();
     // A paid or failed payment answers 409 whatever the policies; a PENDING one is reused only while the
@@ -54,13 +57,13 @@ export class PaymentsService {
     if (existing) return this.reuseExisting(existing);
 
     // The id comes first so it can go into the PaymentIntent metadata.
-    const paymentId = new Types.ObjectId();
+    const paymentId = bookingType === 'flight-change' ? changePaymentId(bookingId) : new Types.ObjectId();
     const amount = roundMoney(booking.totalPrice);
     const intent = await this.stripe.createPaymentIntent({
       amount: toMinorUnits(amount),
       currency: booking.currency,
       metadata: { paymentId: paymentId.toString(), bookingType, bookingId, userId: user.userId },
-    });
+    }, bookingType === 'flight-change' ? 'flight-change-create-' + bookingId : undefined);
 
     try {
       const payment = await this.payments.create({
@@ -70,13 +73,16 @@ export class PaymentsService {
         ...bookingRef(bookingType, bookingId),
         amount,
         currency: booking.currency,
-        status: PaymentStatus.PENDING,
+        status: intent.status === 'canceled' ? PaymentStatus.FAILED : PaymentStatus.PENDING,
         stripePaymentIntentId: intent.id,
       });
       // The clientSecret is returned once and never stored.
       return { payment, clientSecret: intent.client_secret };
     } catch (error) {
-      if ((error as { code?: number }).code === DUPLICATE_KEY) throw new ConflictException('A payment for this booking is already in progress');
+      if ((error as { code?: number }).code === DUPLICATE_KEY) {
+        if (bookingType === 'flight-change') { const winner = await this.payments.findOne(bookingRef(bookingType, bookingId)).exec(); if (winner) return this.reuseExisting(winner); }
+        throw new ConflictException('A payment for this booking is already in progress');
+      }
       throw error;
     }
   }
@@ -116,7 +122,7 @@ export class PaymentsService {
       amount: toMinorUnits(payment.amount),
       currency: payment.currency,
       metadata: { paymentId: payment._id.toString(), bookingType, bookingId, userId: payment.userId.toString() },
-    });
+    }, bookingType === 'flight-change' ? 'flight-change-retry-' + payment._id.toString() + '-' + payment.stripePaymentIntentId : undefined);
     const updated = await this.payments.findOneAndUpdate(
       { _id: payment._id, status: PaymentStatus.FAILED },
       { $set: { status: PaymentStatus.PENDING, stripePaymentIntentId: intent.id }, $unset: { failureReason: 1 } },
@@ -270,12 +276,13 @@ export class PaymentsService {
     if (!await this.refunds.hasRefunds(payment)) {
       const bookingId = readBookingId(payment);
       this.logger.warn(`Payment ${payment._id.toString()} succeeded but booking ${bookingId} is no longer payable: refunding`);
-      await this.refunds.createRefund({
+      const refund = await this.refunds.createRefund({
         bookingType: payment.bookingType,
         bookingId,
         amount: payment.amount,
         reason: 'Automatic refund: booking was no longer payable when the payment succeeded',
       });
+      if (refund.status === 'FAILED') throw new ServiceUnavailableException('Automatic refund failed; recovery remains due');
     }
     await this.payments.updateOne({ _id: payment._id }, { autoRefundedAt: new Date() }).exec();
   }
@@ -290,7 +297,19 @@ export class PaymentsService {
     const payment = await this.payments.findOne({ stripePaymentIntentId: intent.id }).exec();
     const paymentId = intent.metadata?.paymentId;
     if (payment || !paymentId || !isValidObjectId(paymentId)) return payment;
-    return this.payments.findById(paymentId).exec();
+    const stored = await this.payments.findById(paymentId).exec();
+    if (stored || intent.metadata.bookingType !== 'flight-change') return stored;
+    // A signed success can recover a failed initial DB insert. Values remain server-owned.
+    const changeId = intent.metadata.bookingId, owner = intent.metadata.userId;
+    if (!isValidObjectId(changeId) || !isValidObjectId(owner) || changePaymentId(changeId.toLowerCase()).toString() !== paymentId) return null;
+    const change = await this.bookingsPort.getBooking('flight-change', changeId, owner);
+    if (!change || change.totalPrice <= 0) return null;
+    try {
+      return await this.payments.findOneAndUpdate({ _id: new Types.ObjectId(paymentId) }, { $setOnInsert: {
+        userId: new Types.ObjectId(owner), bookingType: 'flight-change', ...bookingRef('flight-change', changeId),
+        amount: change.totalPrice, currency: change.currency, status: PaymentStatus.PENDING, stripePaymentIntentId: intent.id,
+      } }, { upsert: true, returnDocument: 'after', runValidators: true }).exec();
+    } catch (error) { if ((error as { code?: number }).code !== DUPLICATE_KEY) throw error; return this.payments.findById(paymentId).exec(); }
   }
 
   // True when the booking is (now) confirmed. There is one Payment per booking, so a CONFIRMED booking
@@ -300,14 +319,14 @@ export class PaymentsService {
     const bookingId = readBookingId(payment);
     const userId = payment.userId.toString();
     const booking = await this.bookingsPort.getBooking(bookingType, bookingId, userId);
-    if (booking?.status === BookingStatus.CONFIRMED) return true;
+    if (booking?.status === BookingStatus.CONFIRMED || booking?.status === BookingStatus.COMPLETED) return true;
     if (!booking || !this.isPayable(booking)) return false;
     // ACC-02: keep historical confirmations; a newly ineligible paid hold follows the existing full-refund path.
     if (!await this.emailEligibility.canBook(userId)) return false;
     if (await this.bookingsPort.markConfirmed(bookingType, bookingId, payment._id.toString())) return true;
     // The booking changed meanwhile. If a parallel delivery of this success confirmed it, that is a success too.
     const latest = await this.bookingsPort.getBooking(bookingType, bookingId, userId);
-    return latest?.status === BookingStatus.CONFIRMED;
+    return latest?.status === BookingStatus.CONFIRMED || latest?.status === BookingStatus.COMPLETED;
   }
 
   private async handleIntentFailed(intent: Stripe.PaymentIntent, reason?: string) {
@@ -364,4 +383,8 @@ export class PaymentsService {
     if (!this.isPayable(booking)) throw new ConflictException('The booking hold has expired');
     if (booking.checkoutReady === false) throw new ServiceUnavailableException('Hotel checkout is temporarily unavailable');
   }
+}
+
+function changePaymentId(id: string): Types.ObjectId {
+  return new Types.ObjectId(createHash('sha256').update('flight-change:' + id).digest('hex').slice(0,24));
 }

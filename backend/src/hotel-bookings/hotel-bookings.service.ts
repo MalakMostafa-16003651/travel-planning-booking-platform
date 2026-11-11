@@ -1,9 +1,9 @@
+import { expiredBookingPaymentPipeline } from '../payments/expired-booking-payments';
 import { HotelCancellationQuotesService } from './hotel-cancellation-quotes.service';
 import { HotelCancellationQuoteDto } from './dto/cancel-hotel-booking.dto';
 import { HotelBookingCancelledBy } from './schemas/hotel-booking.schema';
 import { RefundStatus } from '../payments/payment-status.enum';
 import { BookingPaymentsAdapter } from '../payments/adapters/booking-payments.adapter';
-import { HOLD_EXPIRED_REASON } from '../payments/payments.service';
 import { randomBytes } from 'node:crypto';
 import { UsersService } from '../users/users.service';
 import { AccountStatus } from '../common/enums/account-status.enum';
@@ -118,7 +118,7 @@ export class HotelBookingsService {
     if (Object.keys(errors).length > 0) throw new BadRequestException({ message: 'Validation failed', errors });
 
     // 404 for what cannot be booked (see loadBookable); real input errors above and below stay 400.
-    const { hotel, found } = await this.loadBookable(input.hotelId, roomIds);
+    const { found } = await this.loadBookable(input.hotelId, roomIds);
     const selected = input.rooms.map((request, index) => {
       const room = found.get(request.roomId.toLowerCase())!;
       const guests = request.adults + request.childrenAges.length;
@@ -128,33 +128,27 @@ export class HotelBookingsService {
     if (Object.keys(errors).length > 0) throw new BadRequestException({ message: 'Validation failed', errors });
 
     const nights = Math.round((Date.parse(`${input.checkOut}T00:00:00Z`) - Date.parse(`${input.checkIn}T00:00:00Z`)) / 86_400_000);
-    // HTL-16/HTL-05: name and price are copied now, so later room edits never change this reservation.
-    const rooms = selected.map((entry) => {
-      const { room, request } = entry;
-      return {
-        roomId: room._id,
-        roomName: room.name,
-        pricePerNight: room.pricePerNight,
-        adults: request.adults,
-        childrenAges: request.childrenAges,
-        subtotal: nights * room.pricePerNight,
-      };
-    });
-
     await this.inventory.ensureAvailability(selected.map((entry) => entry.room));
     const hotelBookingId = new Types.ObjectId();
-    const now = new Date();
-    const holdExpiresAt = new Date(now.getTime() + HOTEL_BOOKING_HOLD_MS);
     const booking = await this.connection.transaction(async (session) => {
       await this.emailEligibility.assertCanBook(userId, session);
-      // Deactivation safety (ACC-15, HTL-06): re-read the hotel and every room with this transaction's
-      // session, so a hotel or room deactivated after the check above aborts the whole hold with 404 and
-      // nothing stays held. Lama's and Arwa's deactivations connect roomHasActiveReservations and
-      // releasePendingHoldsForHotel for the opposite order.
-      await this.loadBookable(input.hotelId, roomIds, session);
-      for (const { room } of selected) {
-        const held = await this.inventory.holdRoom(room._id, input, { hotelBookingId, holdExpiresAt, now }, session);
-        if (!held) throw new ConflictException(`${room.name} is not available for these dates`);
+      await this.inventory.acquireBookingGate(input.hotelId, roomIds, session);
+      if (input.checkIn < this.clock.today()) throw new BadRequestException({ message: 'Validation failed', errors: { checkIn: ['Check-in cannot be in the past'] } });
+      const now = new Date();
+      const holdExpiresAt = new Date(now.getTime() + HOTEL_BOOKING_HOLD_MS);
+      const { hotel, found } = await this.loadBookable(input.hotelId, roomIds, session);
+      // Freeze prices/capacity/policy from the gated transaction snapshot, not a stale preflight read.
+      const rooms = input.rooms.map((request, index) => {
+        const room = found.get(request.roomId.toLowerCase())!;
+        if (request.adults + request.childrenAges.length > room.capacity) throw new BadRequestException({
+          message: 'Validation failed', errors: { ['rooms.' + index]: [room.name + ' holds at most ' + room.capacity + ' guests'] },
+        });
+        return { roomId: room._id, roomName: room.name, pricePerNight: room.pricePerNight,
+          adults: request.adults, childrenAges: request.childrenAges, subtotal: nights * room.pricePerNight };
+      });
+      for (const room of rooms) {
+        const held = await this.inventory.holdRoom(room.roomId, input, { hotelBookingId, holdExpiresAt, now }, session);
+        if (!held) throw new ConflictException(room.roomName + ' is not available for these dates');
       }
       const [created] = await this.bookings.create([{
         _id: hotelBookingId,
@@ -286,6 +280,12 @@ export class HotelBookingsService {
           if (!owner || owner.status !== AccountStatus.ACTIVE || owner.role !== UserRole.USER
             || !await this.emailEligibility.canBook(booking.userId.toString(), session))
             throw new ConflictException('The booking account is no longer eligible');
+          try { await this.inventory.acquireBookingGate(booking.hotelId.toString(), booking.rooms.map(room => room.roomId.toString()), session); }
+          catch (error) {
+            // New holds use 404; an existing paid reservation losing eligibility is a conflict.
+            if (error instanceof NotFoundException) throw new ConflictException('The reserved hotel or rooms are no longer available');
+            throw error;
+          }
           const hotel = await this.inventory.getHotel(booking.hotelId.toString(), session);
           const rooms = await this.inventory.getRooms(booking.rooms.map(room => room.roomId.toString()), session);
           if (!hotel?.isActive || booking.checkIn < this.clock.today() || rooms.length !== booking.rooms.length
@@ -429,6 +429,21 @@ export class HotelBookingsService {
     return found !== null;
   }
 
+  /** Shared HTL-04/05 protection: no caller can remove a Confirmed or live Pending stay. */
+  async protectedRoomStays(roomId: string, session: ClientSession): Promise<{ startDate: string; endDate: string }[]> {
+    const rows = await this.bookings.find({ 'rooms.roomId': new Types.ObjectId(roomId), $or: [
+      { status: BookingStatus.CONFIRMED }, { status: BookingStatus.PENDING, holdExpiresAt: { $gt: new Date() } },
+    ] }).select('checkIn checkOut').session(session).lean().exec();
+    return rows.map(r=>({startDate:r.checkIn,endDate:r.checkOut}));
+  }
+
+  /** Only the assigned hotel's references; no guest/user details cross this interface. */
+  async availabilityReferences(hotelId: string, ids: string[]): Promise<Map<string, { bookingReference?: string; status: BookingStatus }>> {
+    if (!ids.length) return new Map();
+    const rows = await this.bookings.find({ _id: { $in: [...new Set(ids)].map(id=>new Types.ObjectId(id)) }, hotelId: new Types.ObjectId(hotelId) }).select('bookingReference status').lean().exec();
+    return new Map(rows.map(r=>[r._id.toString(),{bookingReference:r.bookingReference,status:r.status}]));
+  }
+
   /**
    * ACC-15 (Person 2 connects this right after deactivating a hotel): every PENDING hold of that hotel becomes
    * EXPIRED (the only GEN-11 exit from PENDING) and its HELD ranges are removed, one transaction per
@@ -489,18 +504,7 @@ export class HotelBookingsService {
 
   /** Recover cancellation failures after expiry committed, including a process restart. */
   private async cancelExpiredPayments(): Promise<void> {
-    const pending = await this.payments.aggregate<{ hotelBookingId: Types.ObjectId }>([
-      { $match: { bookingType: 'hotel', $or: [
-        { status: PaymentStatus.PENDING },
-        { status: PaymentStatus.FAILED, failureReason: { $ne: HOLD_EXPIRED_REASON } },
-        { status: PaymentStatus.SUCCEEDED, bookingConfirmedAt: null, autoRefundedAt: null },
-      ] } },
-      { $lookup: { from: this.bookings.collection.name, localField: 'hotelBookingId', foreignField: '_id', as: 'booking' } },
-      { $match: { 'booking.status': BookingStatus.EXPIRED } },
-      { $sort: { updatedAt: 1, _id: 1 } },
-      { $limit: SWEEP_BATCH_SIZE },
-      { $project: { hotelBookingId: 1 } },
-    ]).exec();
+    const pending = await this.payments.aggregate<{ hotelBookingId: Types.ObjectId }>(expiredBookingPaymentPipeline('hotel', this.bookings.collection.name, SWEEP_BATCH_SIZE)).exec();
     for (const payment of pending) {
       try {
         await this.bookingPayments.cancelPendingPayment({ bookingType: 'HOTEL', bookingId: payment.hotelBookingId.toString() });

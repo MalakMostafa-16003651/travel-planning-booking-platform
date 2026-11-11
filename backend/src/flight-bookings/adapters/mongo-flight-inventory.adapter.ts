@@ -1,3 +1,4 @@
+import { advanceBookingVersion, incrementableVersion } from '../../common/booking-gate';
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectConnection } from '@nestjs/mongoose';
 import { ClientSession, Connection, Types } from 'mongoose';
@@ -18,6 +19,14 @@ export class MongoFlightInventoryAdapter implements FlightInventoryPort {
 
   private collection(name: string) {
     return this.connection.collection<Stored>(name);
+  }
+
+  async acquireBookingGate(flightId: string, session: ClientSession): Promise<BookableFlight | null> {
+    const result = await this.collection('flights').updateOne(
+      { _id: new Types.ObjectId(flightId), $expr: incrementableVersion('bookingVersion') },
+      advanceBookingVersion(), { session },
+    );
+    return result.modifiedCount === 1 ? this.getFlight(flightId, session) : null;
   }
 
   async getFlight(flightId: string, session?: ClientSession): Promise<BookableFlight | null> {
@@ -51,8 +60,17 @@ export class MongoFlightInventoryAdapter implements FlightInventoryPort {
       cabinClass: cabin.cabinClass,
       price: cabin.price,
       baggageMaxWeightKg: cabin.baggageMaxWeightKg,
+      totalSeats: cabin.totalSeats,
       availableSeats: cabin.totalSeats - cabin.bookedSeats - cabin.heldSeats,
     };
+  }
+
+  async acquireAirlineBookingGate(airlineId: string, session: ClientSession): Promise<AirlineBookingPolicy | null> {
+    const result = await this.collection('airlines').updateOne(
+      { _id: new Types.ObjectId(airlineId), isActive: true, $expr: incrementableVersion('bookingVersion') },
+      advanceBookingVersion(), { session },
+    );
+    return result.modifiedCount === 1 ? this.getAirlinePolicy(airlineId, session) : null;
   }
 
   async getAirlinePolicy(airlineId: string, session?: ClientSession): Promise<AirlineBookingPolicy | null> {
