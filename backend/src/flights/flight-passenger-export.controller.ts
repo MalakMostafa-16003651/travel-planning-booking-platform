@@ -20,6 +20,15 @@ export class FlightPassengerExportController {
   constructor(private readonly exports: FlightPassengerExportService) {}
 
   // FLT-29: the passenger list of one flight of the moderator's own airline, as a CSV file.
+  @Get(':flightId/passengers/export')
+  @Header('Cache-Control', 'no-store')
+  @ApiOperation({ summary: 'Export the passenger list of your flight as CSV (FLT-29)', description: 'The PDF path for GET /api/flights/{flightId}/bookings/export.csv; same file.' })
+  @ApiProduces('text/csv')
+  @ApiOkResponse({ description: 'CSV file', schema: { type: 'string', format: 'binary' } })
+  exportPassengers(@Req() req: AuthenticatedRequest, @Param('flightId') flightId: string): Promise<StreamableFile> {
+    return this.exportCsv(req, flightId);
+  }
+
   @Get(':flightId/bookings/export.csv')
   @Header('Cache-Control', 'no-store')
   @ApiOperation({

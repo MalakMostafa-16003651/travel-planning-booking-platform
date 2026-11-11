@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Header, Param, Put, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Header, Param, Put, Req, UseGuards, Patch } from '@nestjs/common';
 import { ApiBadRequestResponse, ApiConflictResponse, ApiCookieAuth, ApiForbiddenResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags, ApiUnauthorizedResponse } from '@nestjs/swagger';
 import { AuthenticatedRequest, AuthGuard } from '../auth/auth.guard';
 import { Roles } from '../auth/roles.decorator';
@@ -30,6 +30,13 @@ export class FlightSeatsController {
   @ApiBadRequestResponse({ type: ApiErrorDto })
   @ApiOkResponse({ type: FlightSeatMapDto })
   select(@Param('id') id: string, @Body() input: SelectFlightSeatsDto, @Req() request: AuthenticatedRequest): Promise<FlightSeatMapDto> {
+    return this.seats.select(id, request.user!.userId, input);
+  }
+  @Patch('seat') @Header('Cache-Control', 'no-store')
+  @ApiOperation({ summary: 'FLT-28: select seats (PDF path for PUT /api/flight-bookings/{id}/seats)', description: 'Same request, rules and result as PUT .../seats.' })
+  @ApiBadRequestResponse({ type: ApiErrorDto })
+  @ApiOkResponse({ type: FlightSeatMapDto })
+  selectSeat(@Param('id') id: string, @Body() input: SelectFlightSeatsDto, @Req() request: AuthenticatedRequest): Promise<FlightSeatMapDto> {
     return this.seats.select(id, request.user!.userId, input);
   }
 }

@@ -83,6 +83,14 @@ export class UpdateBlogPostDto {
   itineraryId?: string | null;
 }
 
+/** BLG-13 (bonus) via PATCH /api/posts/:id/itinerary: attach one of your own public itineraries, or null to remove it. */
+export class AttachPostItineraryDto {
+  @ApiProperty({ type: String, nullable: true, example: '665f1f77bcf86cd799439011', description: 'Your own PUBLIC itinerary id, or null to detach.' })
+  @ValidateIf((_object, value: unknown) => value !== null)
+  @IsMongoId({ message: 'itineraryId must be a valid id, or null to detach' })
+  itineraryId!: string | null;
+}
+
 /** GEN-05: page size is fixed at 10. */
 export class PageQueryDto {
   @ApiPropertyOptional({ default: 1, minimum: 1 })

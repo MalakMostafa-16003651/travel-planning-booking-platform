@@ -31,3 +31,10 @@ export class UpdateAirlinePoliciesDto {
   @ValidateIf((_object, value) => value !== undefined) @IsArray() @ValidateNested({ each: true }) @Type(() => CancellationTierDto)
   cancellationTiers?: CancellationTierDto[];
 }
+
+/** FLT-09 via PUT /api/airlines/:id/cancellation-policy: replaces the whole tier list. */
+export class CancellationPolicyDto {
+  @ApiProperty({ type: [CancellationTierDto], description: 'Each tier has a unique daysBeforeDeparture. An empty list means no refund (0%).' })
+  @IsArray() @ValidateNested({ each: true }) @Type(() => CancellationTierDto)
+  cancellationTiers!: CancellationTierDto[];
+}
