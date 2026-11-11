@@ -94,3 +94,8 @@ Changes, all with tests (test/pdf-api-coverage.e2e.test.ts):
   - Added this file.
 The output was reviewed against the requirement text and the existing tests before use.
 ================================================
+
+2026-11-11 — Codex final backend recheck and fixes
+Prompt: "fix whatever needs fixing you are now working alone and can write"; "check again".
+Use: refreshed develop through PR #105, crosschecked all 115 workbook criteria, fixed the remaining repository defects and tested rollback/concurrency/recovery paths. Final full regression: 936/936 PASS.
+Details and limits: docs/work-logs/16003651.md and docs/audits/2026-11-11-backend-recheck.md. Shared Atlas remained read-only; live external checks and student review remain separate.

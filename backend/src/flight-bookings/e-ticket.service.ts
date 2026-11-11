@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import PDFDocument from 'pdfkit';
+import { registerPdfFonts, writePdfText } from '../common/pdf-text';
 import { FlightSeatSelectionDto } from './dto/select-flight-seats.dto';
 import { FlightBooking } from './schemas/flight-booking.schema';
 
@@ -21,33 +22,35 @@ export class ETicketService {
       document.on('data', (chunk: Buffer) => chunks.push(chunk));
       document.on('end', () => resolve(Buffer.concat(chunks)));
       document.on('error', reject);
+      registerPdfFonts(document);
+      const text = (value: string, size = 12) => { document.fontSize(size); writePdfText(document, value); };
 
-      document.fontSize(20).text('Flight e-ticket');
-      document.moveDown(0.5).fontSize(12).text(`Booking reference: ${booking.bookingReference}`);
-      document.text(`Status: ${booking.status}`);
+      text('Flight e-ticket', 20);
+      document.moveDown(0.5); text(`Booking reference: ${booking.bookingReference}`);
+      text(`Status: ${booking.status}`);
 
-      document.moveDown().fontSize(14).text('Flights');
+      document.moveDown(); text('Flights', 14);
       for (const segment of booking.segments) {
-        document.moveDown(0.5).fontSize(12).text(`${segment.flightNumber}: ${segment.departureAirportCode} to ${segment.arrivalAirportCode} (${segment.cabinClass})`);
-        document.text(`Departs: ${localTime(segment.departureAt, segment.departureTimeZone)}`);
-        document.text(`Arrives: ${localTime(segment.arrivalAt, segment.arrivalTimeZone)}`);
+        document.moveDown(0.5); text(`${segment.flightNumber}: ${segment.departureAirportCode} to ${segment.arrivalAirportCode} (${segment.cabinClass})`);
+        text(`Departs: ${localTime(segment.departureAt, segment.departureTimeZone)}`);
+        text(`Arrives: ${localTime(segment.arrivalAt, segment.arrivalTimeZone)}`);
       }
 
-      document.moveDown().fontSize(14).text('Passengers');
+      document.moveDown(); text('Passengers', 14);
       for (const passenger of booking.passengers) {
         const bags = passenger.extraBags > 0 ? `, ${passenger.extraBags} extra bag(s)` : '';
-        document.moveDown(0.5).fontSize(12).text(`${passenger.fullName} (${passenger.type}), ID ${maskedDocument(passenger.documentNumber)}${bags}`);
+        document.moveDown(0.5); text(`${passenger.fullName} (${passenger.type}), ID ${maskedDocument(passenger.documentNumber)}${bags}`);
       }
 
       if (seats.length) {
-        document.moveDown().fontSize(14).text('Selected seats');
+        document.moveDown(); text('Selected seats', 14);
         for (const seat of seats) {
           const segment = booking.segments.find(row => row.flightId.toString() === seat.flightId);
           const passenger = booking.passengers.find(row => row._id.toString() === seat.passengerId);
-          if (segment && passenger) document.fontSize(12).text(segment.flightNumber + ' - ' + passenger.fullName + ': seat ' + seat.seatNumber);
+          if (segment && passenger) text(segment.flightNumber + ' - ' + passenger.fullName + ': seat ' + seat.seatNumber);
         }
       }
-      document.moveDown().fontSize(12).text(`Total paid: ${(booking.totalAmount / 100).toFixed(2)} ${booking.currency}`);
+      document.moveDown(); text(`Total paid: ${(booking.totalAmount / 100).toFixed(2)} ${booking.currency}`);
       document.end();
     });
   }

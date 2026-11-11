@@ -1,1 +1,3 @@
 Noto Sans Regular/Bold and Noto Sans Arabic Regular are bundled for itinerary PDF text. Source: https://github.com/notofonts/noto-fonts/tree/main/hinted/ttf . The unmodified font files are redistributed under the SIL Open Font License in LICENSE-Noto.txt. Keep these assets with the backend when deploying. No font is downloaded at request time.
+
+Noto Sans CJK SC Regular supplies Chinese, Japanese and Korean glyphs for both PDF exports. Source: https://github.com/notofonts/noto-cjk/tree/main/Sans/OTF/SimplifiedChinese . Its SIL Open Font License is included in LICENSE-NotoCJK.txt. Latin and Arabic fonts are shared by e-tickets and itinerary exports.

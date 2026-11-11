@@ -465,7 +465,7 @@ GET /api/itineraries/:itineraryId/pdf downloads an A4 PDF for a logged-in user. 
 
 The printable document includes attribution, derived dates/day order, activities, recorded budget entries and intercity transport. Amounts retain their original currencies; this export does not recalculate FX or confirm bookings. Photos are referenced by count rather than fetched or embedded. No external image/URL request is made. Cache-Control is no-store and the download filename uses only the validated itineraryId.
 
-Keep backend/assets/fonts with the deployed backend. The bundled Noto Latin/Arabic fonts use the included SIL Open Font License; no system-font installation or runtime download is required. Tests cover actual PDF bytes/headers, owner/public/privacy rules, missing/invalid IDs and unchanged stored data. A synthetic two-page sample was rendered and inspected for font alignment, page breaks and footer placement. Frontend download/print controls remain M2.
+Keep backend/assets/fonts with the deployed backend. E-tickets and itinerary exports share the bundled Noto Latin, Arabic and CJK fonts, with their included SIL Open Font Licenses; no system-font installation or runtime download is required. Tests cover actual PDF bytes/headers, Unicode text, owner/public/privacy rules, missing/invalid IDs and unchanged stored data. Synthetic samples were rendered and inspected for font alignment, page breaks and footer placement. Frontend download/print controls remain M2.
 
 
 ## ACC-02 bonus: account email verification

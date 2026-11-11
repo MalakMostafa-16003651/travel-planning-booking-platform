@@ -57,13 +57,13 @@ export class PaymentsService {
     if (existing) return this.reuseExisting(existing);
 
     // The id comes first so it can go into the PaymentIntent metadata.
-    const paymentId = bookingType === 'flight-change' ? changePaymentId(bookingId) : new Types.ObjectId();
+    const paymentId = bookingPaymentId(bookingType, bookingId);
     const amount = roundMoney(booking.totalPrice);
     const intent = await this.stripe.createPaymentIntent({
       amount: toMinorUnits(amount),
       currency: booking.currency,
       metadata: { paymentId: paymentId.toString(), bookingType, bookingId, userId: user.userId },
-    }, bookingType === 'flight-change' ? 'flight-change-create-' + bookingId : undefined);
+    }, bookingType + '-create-' + bookingId);
 
     try {
       const payment = await this.payments.create({
@@ -80,7 +80,8 @@ export class PaymentsService {
       return { payment, clientSecret: intent.client_secret };
     } catch (error) {
       if ((error as { code?: number }).code === DUPLICATE_KEY) {
-        if (bookingType === 'flight-change') { const winner = await this.payments.findOne(bookingRef(bookingType, bookingId)).exec(); if (winner) return this.reuseExisting(winner); }
+        const winner = await this.payments.findOne(bookingRef(bookingType, bookingId)).exec();
+        if (winner) return this.reuseExisting(winner);
         throw new ConflictException('A payment for this booking is already in progress');
       }
       throw error;
@@ -122,9 +123,9 @@ export class PaymentsService {
       amount: toMinorUnits(payment.amount),
       currency: payment.currency,
       metadata: { paymentId: payment._id.toString(), bookingType, bookingId, userId: payment.userId.toString() },
-    }, bookingType === 'flight-change' ? 'flight-change-retry-' + payment._id.toString() + '-' + payment.stripePaymentIntentId : undefined);
+    }, bookingType + '-retry-' + payment._id.toString() + '-' + payment.stripePaymentIntentId);
     const updated = await this.payments.findOneAndUpdate(
-      { _id: payment._id, status: PaymentStatus.FAILED },
+      { _id: payment._id, status: PaymentStatus.FAILED, stripePaymentIntentId: payment.stripePaymentIntentId },
       { $set: { status: PaymentStatus.PENDING, stripePaymentIntentId: intent.id }, $unset: { failureReason: 1 } },
       { returnDocument: 'after' },
     ).exec();
@@ -298,16 +299,18 @@ export class PaymentsService {
     const paymentId = intent.metadata?.paymentId;
     if (payment || !paymentId || !isValidObjectId(paymentId)) return payment;
     const stored = await this.payments.findById(paymentId).exec();
-    if (stored || intent.metadata.bookingType !== 'flight-change') return stored;
+    if (stored) return stored;
     // A signed success can recover a failed initial DB insert. Values remain server-owned.
-    const changeId = intent.metadata.bookingId, owner = intent.metadata.userId;
-    if (!isValidObjectId(changeId) || !isValidObjectId(owner) || changePaymentId(changeId.toLowerCase()).toString() !== paymentId) return null;
-    const change = await this.bookingsPort.getBooking('flight-change', changeId, owner);
-    if (!change || change.totalPrice <= 0) return null;
+    const bookingId = intent.metadata.bookingId, owner = intent.metadata.userId;
+    const type = intent.metadata.bookingType;
+    if (type !== 'flight' && type !== 'hotel' && type !== 'flight-change') return null;
+    if (!isValidObjectId(bookingId) || !isValidObjectId(owner) || bookingPaymentId(type, bookingId.toLowerCase()).toString() !== paymentId) return null;
+    const booking = await this.bookingsPort.getBooking(type, bookingId, owner);
+    if (!booking || booking.userId !== owner || booking.totalPrice <= 0) return null;
     try {
       return await this.payments.findOneAndUpdate({ _id: new Types.ObjectId(paymentId) }, { $setOnInsert: {
-        userId: new Types.ObjectId(owner), bookingType: 'flight-change', ...bookingRef('flight-change', changeId),
-        amount: change.totalPrice, currency: change.currency, status: PaymentStatus.PENDING, stripePaymentIntentId: intent.id,
+        userId: new Types.ObjectId(owner), bookingType: type, ...bookingRef(type, bookingId),
+        amount: roundMoney(booking.totalPrice), currency: booking.currency, status: PaymentStatus.PENDING, stripePaymentIntentId: intent.id,
       } }, { upsert: true, returnDocument: 'after', runValidators: true }).exec();
     } catch (error) { if ((error as { code?: number }).code !== DUPLICATE_KEY) throw error; return this.payments.findById(paymentId).exec(); }
   }
@@ -385,6 +388,6 @@ export class PaymentsService {
   }
 }
 
-function changePaymentId(id: string): Types.ObjectId {
-  return new Types.ObjectId(createHash('sha256').update('flight-change:' + id).digest('hex').slice(0,24));
+function bookingPaymentId(type: BookingType, id: string): Types.ObjectId {
+  return new Types.ObjectId(createHash('sha256').update(type + ':' + id).digest('hex').slice(0,24));
 }

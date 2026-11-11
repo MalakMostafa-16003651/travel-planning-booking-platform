@@ -1,10 +1,11 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { ClientSession, Connection, Model, QueryFilter, Types } from 'mongoose';
 import { MarkAllReadDto, NotificationDto, NotificationPageDto } from './dto/notification-response.dto';
 import { NotificationEmailOutboxService } from './notification-email-outbox.service';
 import { NotificationType } from './notification-type.enum';
 import { Notification, NotificationDocument } from './schemas/notification.schema';
+import { NotificationEvent, NotificationEventDocument } from './schemas/notification-event.schema';
 
 /** GEN-05: every list uses page size 10. */
 export const NOTIFICATIONS_PAGE_SIZE = 10;
@@ -22,10 +23,34 @@ export interface NotificationInput {
 }
 
 @Injectable()
-export class NotificationsService {
+export class NotificationsService implements OnModuleInit {
   constructor(@InjectModel(Notification.name) private readonly notifications: Model<NotificationDocument>,
     @InjectConnection() private readonly connection: Connection,
-    private readonly emailOutbox: NotificationEmailOutboxService) {}
+    private readonly emailOutbox: NotificationEmailOutboxService,
+    @InjectModel(NotificationEvent.name) private readonly events: Model<NotificationEventDocument>) {}
+
+  async onModuleInit(): Promise<void> { await this.events.init(); }
+
+  /** No external delivery here: this row commits with the booking/refund/schedule mutation. */
+  async stage(input: NotificationInput, key: string, session: ClientSession): Promise<void> {
+    await this.events.updateOne({ key }, { $setOnInsert: {
+      key, userId: new Types.ObjectId(input.userId), type: input.type, message: input.message,
+    } }, { upsert: true, session, runValidators: true }).exec();
+  }
+
+  /** Inbox, SMTP job and event consumption commit together; failure leaves the event retryable. */
+  async deliver(key: string): Promise<void> {
+    await this.connection.transaction(async (session) => {
+      const event = await this.events.findOneAndDelete({ key }, { session }).exec();
+      if (!event) return;
+      await this.notify({ userId: event.userId.toString(), type: event.type, message: event.message }, session);
+    });
+  }
+
+  async processEvents(limit = 25): Promise<void> {
+    const events = await this.events.find().sort({ createdAt: 1, _id: 1 }).limit(limit).exec();
+    for (const event of events) await this.deliver(event.key);
+  }
 
   /** GEN-01: optional session joins an atomic action; other callers retain their failure policy. */
   async notify(input: NotificationInput, session?: ClientSession): Promise<void> {

@@ -1,7 +1,7 @@
 import { ItinerariesService } from '../itineraries/itineraries.service';
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { isValidObjectId, Model, PipelineStage, Types } from 'mongoose';
+import { ClientSession, isValidObjectId, Model, PipelineStage, Types } from 'mongoose';
 import { AccountStatus } from '../common/enums/account-status.enum';
 import { UserRole } from '../common/enums/user-role.enum';
 
@@ -170,17 +170,18 @@ export class BlogService {
 
   // GEN-10: for Person 2's moderation. No HTTP routes here; Person 2 owns /api/admin.
 
-  async setPostHidden(postId: string, hidden: boolean) {
+  async setPostHidden(postId: string, hidden: boolean, session?: ClientSession) {
     if (!isValidObjectId(postId)) throw new NotFoundException('Post not found');
-    const post = await this.posts.findByIdAndUpdate(postId, { isHidden: hidden }, { returnDocument: 'after' }).exec();
+    const post = await this.posts.findByIdAndUpdate(postId, { isHidden: hidden }, { returnDocument: 'after', session }).exec();
     if (!post) throw new NotFoundException('Post not found');
     return this.toResponse(post);
   }
 
-  async adminDeletePost(postId: string): Promise<void> {
-    const post = isValidObjectId(postId) ? await this.posts.findById(postId).exec() : null;
+  async adminDeletePost(postId: string, session?: ClientSession): Promise<void> {
+    if (!session) return this.posts.db.transaction((active) => this.adminDeletePost(postId, active));
+    const post = isValidObjectId(postId) ? await this.posts.findById(postId).session(session).exec() : null;
     if (!post) throw new NotFoundException('Post not found');
-    await this.deletePost(post);
+    await this.deletePost(post, session);
   }
 
   /** For reports (GEN-09): false for unknown or invalid ids. */
@@ -201,9 +202,9 @@ export class BlogService {
   }
 
   /** Published, not hidden, by an author who exists and is not deactivated. */
-  async getPublicPost(postId: string): Promise<BlogPostDocument> {
-    const post = await this.posts.findById(postId).exec();
-    if (!post || !await this.isPublic(post)) throw new NotFoundException('Post not found');
+  async getPublicPost(postId: string, session?: ClientSession): Promise<BlogPostDocument> {
+    const post = await this.posts.findById(postId).session(session ?? null).exec();
+    if (!post || !await this.isPublic(post, session)) throw new NotFoundException('Post not found');
     return post;
   }
 
@@ -214,9 +215,9 @@ export class BlogService {
     return post;
   }
 
-  async isPublic(post: BlogPostDocument): Promise<boolean> {
+  async isPublic(post: BlogPostDocument, session?: ClientSession): Promise<boolean> {
     if (post.status !== PostStatus.PUBLISHED || post.isHidden) return false;
-    const author = await this.users.findById(post.userId, { status: 1 }).exec();
+    const author = await this.users.findById(post.userId, { status: 1 }).session(session ?? null).exec();
     return !!author && author.status !== AccountStatus.DEACTIVATED;
   }
 
@@ -251,11 +252,12 @@ export class BlogService {
 
   // Deleting a post also deletes its comments, likes and images. The post goes first: a comment, like
   // or image written after that finds no post and removes itself, and one written before is removed here.
-  private async deletePost(post: BlogPostDocument): Promise<void> {
-    await this.posts.deleteOne({ _id: post._id }).exec();
-    await this.comments.deleteMany({ postId: post._id }).exec();
-    await this.likes.deleteMany({ postId: post._id }).exec();
-    await this.images.deleteMany({ postId: post._id }).exec();
+  private async deletePost(post: BlogPostDocument, session?: ClientSession): Promise<void> {
+    if (!session) return this.posts.db.transaction((active) => this.deletePost(post, active));
+    await this.posts.deleteOne({ _id: post._id }, { session }).exec();
+    await this.comments.deleteMany({ postId: post._id }, { session }).exec();
+    await this.likes.deleteMany({ postId: post._id }, { session }).exec();
+    await this.images.deleteMany({ postId: post._id }, { session }).exec();
   }
 
   // Author visibility is checked at read time with a $lookup, so deactivating a user hides their

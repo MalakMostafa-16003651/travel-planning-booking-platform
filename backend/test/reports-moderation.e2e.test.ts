@@ -230,7 +230,7 @@ describe('GEN-09/GEN-10 reports and moderation', { concurrency: false }, () => {
     assert.equal(await collection('reports').countDocuments({ status: { $in: ['OPEN', 'RESOLVING'] } }), 0);
   });
 
-  it('GEN-07: a delete whose audit failed is recorded on retry, even though the content is already gone', async () => {
+  it('GEN-07: failed deletion audit rolls back content and retry records the complete action', async () => {
     const audit = fixture.app.get(AuditLogsService);
     const realLog = audit.log.bind(audit);
     const reportId = (await report(reporter, { targetType: 'COMMENT', targetId: commentId, reason: 'Insulting reply' }).expect(201)).body.reportId;
@@ -240,13 +240,50 @@ describe('GEN-09/GEN-10 reports and moderation', { concurrency: false }, () => {
     } finally {
       audit.log = realLog;
     }
-    assert.equal(await collection('comments').countDocuments({ _id: new Types.ObjectId(commentId) }), 0);
+    assert.equal(await collection('comments').countDocuments({ _id: new Types.ObjectId(commentId) }), 1);
     assert.equal((await collection('reports').findOne({ _id: new Types.ObjectId(reportId) }))!.status, 'OPEN');
 
     assert.equal((await resolve(reportId, 'DELETE').expect(200)).body.status, 'CONTENT_DELETED');
     const [entry] = await collection('auditlogs').find().toArray();
     assert.equal(entry.action, 'CONTENT_DELETED');
-    assert.match(entry.details, /already removed/);
+    assert.match(entry.details, new RegExp(reportId));
+  });
+
+  it('resolves maximum-length reasons without losing the full stored reason', async () => {
+    for (const action of ['DISMISS', 'HIDE', 'DELETE']) {
+      const targetId = (await fixture.http().post('/api/posts').set('Cookie', author.cookie)
+        .send({ title: 'Maximum reason ' + action, content: 'Example', status: 'PUBLISHED' }).expect(201)).body.postId;
+      const created = await report(reporter, { targetType: 'POST', targetId, reason: 'x'.repeat(500) }).expect(201);
+      const result = await resolve(created.body.reportId, action).expect(200);
+      assert.equal(result.body.reason, 'x'.repeat(500));
+    }
+    const entries = await collection('auditlogs').find().toArray();
+    assert.equal(entries.length, 3);
+    assert.ok(entries.every((entry) => entry.details.length <= 500));
+  });
+
+  it('direct deletion and its audit roll back together, including the comment count', async () => {
+    const reportId = (await report(reporter, { targetType: 'COMMENT', targetId: commentId, reason: 'Offensive reply' }).expect(201)).body.reportId;
+    const audit = fixture.app.get(AuditLogsService), original = audit.log.bind(audit);
+    audit.log = async () => { throw new Error('controlled audit failure'); };
+    try { await moderate('delete', `comment/${commentId}`).expect(500); }
+    finally { audit.log = original; }
+    assert.equal(await collection('comments').countDocuments({ _id: new Types.ObjectId(commentId) }), 1);
+    assert.equal((await collection('blogposts').findOne({ _id: new Types.ObjectId(postId) }))!.commentsCount, 1);
+    assert.equal((await collection('reports').findOne({ _id: new Types.ObjectId(reportId) }))!.status, 'OPEN');
+    assert.equal(await collection('auditlogs').countDocuments(), 0);
+    await moderate('delete', `comment/${commentId}`).expect(200);
+    assert.equal((await collection('blogposts').findOne({ _id: new Types.ObjectId(postId) }))!.commentsCount, 0);
+    assert.equal(await collection('auditlogs').countDocuments(), 1);
+  });
+
+  it('recovers an interrupted legacy RESOLVING report without manual database repair', async () => {
+    const reportId = (await reportPost(reporter).expect(201)).body.reportId;
+    await collection('reports').updateOne({ _id: new Types.ObjectId(reportId) }, { $set: { status: 'RESOLVING' } });
+    assert.equal((await fixture.http().get('/api/admin/reports').set('Cookie', admin.cookie).expect(200)).body.total, 1);
+    assert.equal((await resolve(reportId, 'HIDE').expect(200)).body.status, 'CONTENT_HIDDEN');
+    await viewPost().expect(404);
+    assert.equal(await collection('auditlogs').countDocuments(), 1);
   });
 
   it('GEN-10: two admins resolving the same report at once act once', async () => {

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, it } from 'node:test';
-import { Types } from 'mongoose';
+import { Model, Types } from 'mongoose';
+import { BlogPost } from '../src/blog/schemas/blog-post.schema';
 import { BlogService } from '../src/blog/blog.service';
 import { LikesService } from '../src/blog/likes.service';
 import { CommentsService } from '../src/blog/comments.service';
@@ -34,23 +35,34 @@ describe('BLG-04/05/06/10 counters and child rows stay consistent under concurre
     postId = await fixture.post(author);
   });
 
-  it('BLG-06: an unlike between a like and its count update leaves the count equal to the likes', async () => {
-    // The like row exists but its +1 has not run yet.
-    await fixture.connection.collection('likes').insertOne({ postId: new Types.ObjectId(postId), userId: new Types.ObjectId(reader.userId), createdAt: new Date(), updatedAt: new Date() });
-    await fixture.http().delete(`/api/posts/${postId}/like`).set('Cookie', reader.cookie).expect(200);
-    // The paused +1 now runs.
-    await fixture.connection.collection('blogposts').updateOne({ _id: new Types.ObjectId(postId) }, { $inc: { likesCount: 1 } });
+  it('BLG-06: a failed counter write rolls back the like and a retry counts it once', async () => {
+    const service = fixture.app.get(LikesService);
+    const model = internals<{ posts: Model<BlogPost> }>(service).posts;
+    const original = model.findOneAndUpdate;
+    model.findOneAndUpdate = (() => ({ exec: async () => { throw new Error('Counter unavailable'); } })) as unknown as typeof original;
+    try {
+      await assert.rejects(service.like(postId, { userId: reader.userId, role: UserRole.USER }), /Counter unavailable/);
+    } finally { model.findOneAndUpdate = original; }
     assert.equal(await count('likes'), 0);
     assert.equal((await post())!.likesCount, 0);
+    await service.like(postId, { userId: reader.userId, role: UserRole.USER });
+    assert.equal(await count('likes'), 1);
+    assert.equal((await post())!.likesCount, 1);
   });
 
-  it('BLG-05: a delete between a comment and its count update leaves the count equal to the comments', async () => {
-    const commentId = new Types.ObjectId();
-    await fixture.connection.collection('comments').insertOne({ _id: commentId, postId: new Types.ObjectId(postId), userId: new Types.ObjectId(reader.userId), content: 'Paused', isHidden: false, createdAt: new Date(), updatedAt: new Date() });
-    await fixture.http().delete(`/api/comments/${commentId.toString()}`).set('Cookie', reader.cookie).expect(204);
-    await fixture.connection.collection('blogposts').updateOne({ _id: new Types.ObjectId(postId) }, { $inc: { commentsCount: 1 } });
+  it('BLG-05: a failed counter write rolls back the comment and a retry counts it once', async () => {
+    const service = fixture.app.get(CommentsService);
+    const model = internals<{ posts: Model<BlogPost> }>(service).posts;
+    const original = model.updateOne;
+    model.updateOne = (() => ({ exec: async () => { throw new Error('Counter unavailable'); } })) as unknown as typeof original;
+    try {
+      await assert.rejects(service.create(postId, { content: 'Atomic comment' }, { userId: reader.userId, role: UserRole.USER }), /Counter unavailable/);
+    } finally { model.updateOne = original; }
     assert.equal(await count('comments'), 0);
     assert.equal((await post())!.commentsCount, 0);
+    await service.create(postId, { content: 'Atomic comment' }, { userId: reader.userId, role: UserRole.USER });
+    assert.equal(await count('comments'), 1);
+    assert.equal((await post())!.commentsCount, 1);
   });
 
   it('BLG-04: a like or comment that passed the post check just before the post was deleted is not left behind', async () => {
@@ -71,33 +83,32 @@ describe('BLG-04/05/06/10 counters and child rows stay consistent under concurre
     assert.equal(await count('comments'), 0);
   });
 
-  it('BLG-10: an upload during the deletion of its post leaves no image behind', async () => {
+  it('BLG-10: an upload that checked ownership before post deletion leaves no image behind', async () => {
     const blog = fixture.app.get(BlogService);
     const images = fixture.app.get(PostImagesService);
     const captured = await blog.getOwnedPost(postId, { userId: author.userId, role: UserRole.USER });
-    const blogInternals = internals<{ images: { deleteMany: (filter: unknown) => { exec: () => Promise<unknown> } }; getOwnedPost: (id: string, viewer: unknown) => Promise<unknown> }>(blog);
-    const originalDeleteMany = blogInternals.images.deleteMany.bind(blogInternals.images);
+    const blogInternals = internals<{ getOwnedPost: (id: string, viewer: unknown) => Promise<unknown> }>(blog);
     const originalGetOwnedPost = blogInternals.getOwnedPost;
-    let uploadOutcome: unknown;
-    // Right after the deletion clears the post's images, an upload that already checked the post runs.
-    blogInternals.images.deleteMany = (filter: unknown) => ({
-      exec: async () => {
-        const result = await originalDeleteMany(filter).exec();
-        blogInternals.images.deleteMany = originalDeleteMany;
-        blogInternals.getOwnedPost = async () => captured;
-        uploadOutcome = await images.addImage(postId, { buffer: PNG, size: PNG.length }, { userId: author.userId, role: UserRole.USER }).catch((error: unknown) => error);
-        blogInternals.getOwnedPost = originalGetOwnedPost;
-        return result;
-      },
-    });
+    await fixture.http().delete(`/api/posts/${postId}`).set('Cookie', author.cookie).expect(204);
+    blogInternals.getOwnedPost = async () => captured;
     try {
-      await fixture.http().delete(`/api/posts/${postId}`).set('Cookie', author.cookie).expect(204);
+      await assert.rejects(images.addImage(postId, { buffer: PNG, size: PNG.length }, { userId: author.userId, role: UserRole.USER }), { status: 404 });
     } finally {
-      blogInternals.images.deleteMany = originalDeleteMany;
       blogInternals.getOwnedPost = originalGetOwnedPost;
     }
     assert.equal(await post(), null);
     assert.equal(await fixture.connection.collection('postimages').countDocuments(), 0);
-    assert.equal((uploadOutcome as { status?: number }).status, 404);
+  });
+
+  it('BLG-10: an image-reference write failure rolls back the image bytes', async () => {
+    const images = fixture.app.get(PostImagesService);
+    const model = internals<{ posts: Model<BlogPost> }>(images).posts;
+    const original = model.findOneAndUpdate;
+    model.findOneAndUpdate = (() => ({ exec: async () => { throw new Error('Parent update unavailable'); } })) as unknown as typeof original;
+    try {
+      await assert.rejects(images.addImage(postId, { buffer: PNG, size: PNG.length }, { userId: author.userId, role: UserRole.USER }), /Parent update unavailable/);
+    } finally { model.findOneAndUpdate = original; }
+    assert.equal(await count('postimages'), 0);
+    assert.equal((await post())!.images.length, 0);
   });
 });

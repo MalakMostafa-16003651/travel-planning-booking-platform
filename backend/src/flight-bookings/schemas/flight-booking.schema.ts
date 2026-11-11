@@ -28,6 +28,12 @@ export class FlightSegment {
   @Prop({ required: true })
   cabinClass!: string;
 
+  @Prop({ type: Number, min: 0 })
+  baggageAllowanceCount?: number;
+
+  @Prop({ type: Number, min: 0 })
+  baggageMaxWeightKg?: number;
+
   /** Adult/child fare in minor currency units. */
   @Prop({ required: true, min: 0 })
   fare!: number;

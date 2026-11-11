@@ -184,11 +184,7 @@ export class FlightBookingsService {
       try {
         const confirmed = await this.connection.transaction((session) => this.confirmInSession(_id, paymentId, session));
         if (confirmed) {
-          await this.notify({
-            userId: confirmed.userId.toString(),
-            type: 'BOOKING_CONFIRMED',
-            message: `Flight booking ${confirmed.bookingReference} is confirmed. Total paid: ${money(confirmed.totalAmount, confirmed.currency)}.`,
-          });
+          await this.notify(this.confirmedNotification(confirmed));
         }
         return;
       } catch (error) {
@@ -229,12 +225,12 @@ export class FlightBookingsService {
   }
 
   /** FLT-05: keeps stored schedules current after a time change. */
-  async syncFlightSchedule(flightId: string, departureAt: Date, arrivalAt: Date): Promise<void> {
+  async syncFlightSchedule(flightId: string, departureAt: Date, arrivalAt: Date, session?: ClientSession): Promise<void> {
     const _id = new Types.ObjectId(flightId);
     const active = await this.bookings.find({
       'segments.flightId': _id,
       status: { $in: [BookingStatus.PENDING, BookingStatus.CONFIRMED] },
-    }).exec();
+    }).session(session ?? null).exec();
     for (const booking of active) {
       for (const segment of booking.segments) {
         if (!segment.flightId.equals(_id)) continue;
@@ -242,16 +238,16 @@ export class FlightBookingsService {
         segment.arrivalAt = arrivalAt;
       }
       booking.lastDepartureAt = booking.segments[booking.segments.length - 1].departureAt;
-      await booking.save();
+      await booking.save({ session });
     }
   }
 
   /** FLT-05: who to tell about a schedule change. */
-  async findConfirmedUserIdsForFlight(flightId: string): Promise<string[]> {
+  async findConfirmedUserIdsForFlight(flightId: string, session?: ClientSession): Promise<string[]> {
     const userIds = await this.bookings.distinct('userId', {
       'segments.flightId': new Types.ObjectId(flightId),
       status: BookingStatus.CONFIRMED,
-    }).exec();
+    }).session(session ?? null).exec();
     return userIds.map(String);
   }
 
@@ -455,6 +451,8 @@ export class FlightBookingsService {
       airlineId: new Types.ObjectId(flight.airlineId),
       cabinId: new Types.ObjectId(cabin.cabinId),
       cabinClass: cabin.cabinClass,
+      baggageAllowanceCount: cabin.baggageAllowanceCount ?? 0,
+      baggageMaxWeightKg: cabin.baggageMaxWeightKg,
       fare: cabin.price,
       flightNumber: flight.flightNumber,
       departureAirportCode: flight.departureAirportCode,
@@ -522,6 +520,8 @@ export class FlightBookingsService {
       }
     }
     await this.seatAssignments.confirm(confirmed._id, session);
+    const notification = this.confirmedNotification(confirmed);
+    await this.notifications.stage?.(notification, notification.eventKey!, session);
     return confirmed;
   }
 
@@ -580,6 +580,8 @@ export class FlightBookingsService {
       }
       await this.seatAssignments.release(cancelled._id, session);
       await this.changesStore.cancelForBooking(cancelled._id, session, this.inventory);
+      const notification = this.cancelledNotification(cancelled);
+      await this.notifications.stage?.(notification, notification.eventKey!, session);
       return cancelled;
     });
   }
@@ -647,18 +649,30 @@ export class FlightBookingsService {
   }
 
   private notifyCancelled(booking: FlightBookingDocument): Promise<void> {
+    return this.notify(this.cancelledNotification(booking));
+  }
+
+  private confirmedNotification(booking: FlightBookingDocument): BookingNotification {
+    return { userId: booking.userId.toString(), type: 'BOOKING_CONFIRMED',
+      message: `Flight booking ${booking.bookingReference} is confirmed. Total paid: ${money(booking.totalAmount, booking.currency)}.`,
+      eventKey: `flight:${booking._id.toString()}:confirmed` };
+  }
+
+  private cancelledNotification(booking: FlightBookingDocument): BookingNotification {
     const refund = booking.refundAmount ? ` Refund: ${money(booking.refundAmount, booking.currency)}.` : '';
-    return this.notify({
+    return {
       userId: booking.userId.toString(),
       type: 'BOOKING_CANCELLED',
       message: `Flight booking ${booking.bookingReference} was cancelled.${refund}`,
-    });
+      eventKey: `flight:${booking._id.toString()}:cancelled`,
+    };
   }
 
   /** A failed notification must not undo a booking change that has already committed. */
   private async notify(notification: BookingNotification): Promise<void> {
     try {
-      await this.notifications.notify(notification);
+      if (notification.eventKey && this.notifications.deliver) await this.notifications.deliver(notification.eventKey);
+      else await this.notifications.notify(notification);
     } catch {
       this.logger.error(`Could not deliver a ${notification.type} notification`);
     }

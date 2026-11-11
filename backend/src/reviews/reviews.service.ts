@@ -2,7 +2,7 @@ import { ReviewRatingsService, RatingStats } from './review-ratings.service';
 export type { RatingStats } from './review-ratings.service';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, QueryFilter, Types, isValidObjectId } from 'mongoose';
+import { ClientSession, Model, QueryFilter, Types, isValidObjectId } from 'mongoose';
 import { DELETED_USER_NAME } from '../blog/blog.rules';
 import { BookingStatus } from '../common/enums/booking-status.enum';
 import { UserRole } from '../common/enums/user-role.enum';
@@ -161,16 +161,16 @@ export class ReviewsService {
   }
 
   /** 404 if the review does not exist. */
-  async setReviewHidden(reviewId: string, hidden: boolean): Promise<void> {
+  async setReviewHidden(reviewId: string, hidden: boolean, session?: ClientSession): Promise<void> {
     const updated = isValidObjectId(reviewId)
-      ? await this.reviews.findByIdAndUpdate(reviewId, { isHidden: hidden }, { returnDocument: 'after' }).exec()
+      ? await this.reviews.findByIdAndUpdate(reviewId, { isHidden: hidden }, { returnDocument: 'after', session }).exec()
       : null;
     if (!updated) throw new NotFoundException('Review not found');
   }
 
   /** 404 if the review does not exist. */
-  async adminDeleteReview(reviewId: string): Promise<void> {
-    const deleted = isValidObjectId(reviewId) ? await this.reviews.deleteOne({ _id: reviewId }).exec() : null;
+  async adminDeleteReview(reviewId: string, session?: ClientSession): Promise<void> {
+    const deleted = isValidObjectId(reviewId) ? await this.reviews.deleteOne({ _id: reviewId }, { session }).exec() : null;
     if (!deleted || deleted.deletedCount === 0) throw new NotFoundException('Review not found');
   }
 

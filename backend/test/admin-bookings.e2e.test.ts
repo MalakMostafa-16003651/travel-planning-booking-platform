@@ -68,6 +68,8 @@ describe('ACC-17 admin bookings view', { concurrency: false }, () => {
     assert.deepEqual(await references('?from=2026-12-15&to=2026-12-31T23:59:59Z'), ['BBB222']);
     assert.deepEqual(await references('?from=2027-01-01'), ['none']);
     assert.deepEqual(await references('?type=FLIGHT&status=CANCELLED&to=2026-12-31'), ['BBB222']);
+    assert.deepEqual(await references('?type=FLIGHT&from=2026-12-10&to=2026-12-10'), ['AAA111']);
+    assert.deepEqual(await references('?type=FLIGHT&to=2026-12-10T07:59:59Z'), []);
     assert.equal((await list('?status=COMPLETED').expect(200)).body.total, 0);
   });
 

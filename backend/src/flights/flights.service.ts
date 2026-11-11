@@ -267,7 +267,7 @@ async onModuleInit(): Promise<void> {
     ) {
       await this.flights
         .updateOne(
-          { _id: flight._id },
+          { _id: flight._id, status: FlightStatus.SCHEDULED, $expr: { $lte: ['$departureAt', '$$NOW'] } },
           { $set: { status: FlightStatus.DEPARTED } },
         )
         .exec();
@@ -385,73 +385,44 @@ async onModuleInit(): Promise<void> {
       updateFields.arrivalAirportId = arrivalAirport._id;
     }
 
+    const eventKeys: string[] = [];
     let updatedFlight: Flight | null;
-
     try {
-      updatedFlight = airportsChanged
-        ? await this.connection.transaction(async (session) => {
-          // Same flight gate that booking holds take, so a booking cannot slip in between this check and the write.
-          const gate = await this.flights.updateOne({ _id: flight._id, status: FlightStatus.SCHEDULED,
-            $expr: incrementableVersion('bookingVersion') },
+      updatedFlight = await this.connection.transaction(async (session) => {
+        eventKeys.length = 0;
+        // Booking admission, provider edits and propagation share one flight write gate.
+        const gate = await this.flights.updateOne({ _id: flight._id, status: FlightStatus.SCHEDULED,
+          departureAt: flight.departureAt, arrivalAt: flight.arrivalAt,
+          $expr: { $and: [incrementableVersion('bookingVersion'), { $gt: ['$departureAt', '$$NOW'] }] } },
           advanceBookingVersion(), { session, updatePipeline: true, timestamps: false }).exec();
-          if (gate.modifiedCount !== 1) throw new ConflictException('Flight is no longer available for editing');
+        if (gate.modifiedCount !== 1) throw new ConflictException('Flight was changed or is no longer available for editing');
+        if (airportsChanged) {
           const cabinIds = (await this.cabins.find({ flightId: flight._id }, { _id: 1 }).session(session).exec()).map((cabin) => cabin._id);
-          const [booked, changing] = await Promise.all([
-            this.connection.collection('flightbookings').findOne({ 'segments.flightId': flight._id }, { session, projection: { _id: 1 } }),
-            this.connection.collection('flightbookingchanges').findOne({ 'holds.cabinId': { $in: cabinIds } }, { session, projection: { _id: 1 } }),
-          ]);
+          const booked = await this.connection.collection('flightbookings').findOne({ 'segments.flightId': flight._id }, { session, projection: { _id: 1 } });
+          const changing = await this.connection.collection('flightbookingchanges').findOne({ 'holds.cabinId': { $in: cabinIds } }, { session, projection: { _id: 1 } });
           if (booked || changing) throw new ConflictException('Airports cannot be changed once the flight has any booking');
-          return this.flights.findOneAndUpdate({ _id: flight._id, status: FlightStatus.SCHEDULED },
-            { $set: updateFields }, { new: true, runValidators: true, session }).exec();
-        })
-        : await this.flights
-          .findOneAndUpdate(
-            {
-              _id: flight._id,
-              status: FlightStatus.SCHEDULED,
-            },
-            { $set: updateFields },
-            { new: true, runValidators: true },
-          )
-          .exec();
+        }
+        const updated = await this.flights.findOneAndUpdate({ _id: flight._id, status: FlightStatus.SCHEDULED },
+          { $set: updateFields }, { new: true, runValidators: true, session }).exec();
+        if (!updated) throw new ConflictException('Flight is no longer available for editing');
+        await this.bookings.syncFlightSchedule(flight._id.toString(), departureAt, arrivalAt, session);
+        const userIds = await this.bookings.findConfirmedUserIdsForFlight(flight._id.toString(), session);
+        const revision = new Types.ObjectId().toString();
+        for (const userId of userIds) {
+          const key = 'flight-schedule:' + revision + ':' + userId;
+          await this.notifications.stage({ userId, type: NotificationType.FLIGHT_SCHEDULE_CHANGED,
+            message: 'Flight ' + updated.flightNumber + ' has a new schedule: departs ' + departureAt.toISOString() + ' and arrives ' + arrivalAt.toISOString() + ' (UTC).' }, key, session);
+          eventKeys.push(key);
+        }
+        return updated;
+      });
     } catch (error) {
-      if ((error as { code?: number }).code === 11000) {
-        throw new ConflictException(
-          'This airline already has this flight number on that departure date',
-        );
-      }
-
+      if ((error as { code?: number }).code === 11000) throw new ConflictException('This airline already has this flight number on that departure date');
       throw error;
     }
-
-    if (!updatedFlight) {
-      throw new ConflictException(
-        'Flight is no longer available for editing',
-      );
-    }
-
-    await this.bookings.syncFlightSchedule(
-      flight._id.toString(),
-      departureAt,
-      arrivalAt,
-    );
-
-    const confirmedUserIds =
-      await this.bookings.findConfirmedUserIdsForFlight(
-        flight._id.toString(),
-      );
-
-     // GEN-01: tell every passenger with a Confirmed booking. A notification failure must not undo the saved change.
-    if (confirmedUserIds.length) {
-      try {
-        await this.notifications.notifyMany(
-          confirmedUserIds,
-          NotificationType.FLIGHT_SCHEDULE_CHANGED,
-          `Flight ${updatedFlight.flightNumber} has a new schedule: departs ${departureAt.toISOString()} and arrives ${arrivalAt.toISOString()} (UTC).`,
-        );
-      } catch {
-        this.logger.error(`Could not create schedule-change notifications for flight ${flight._id.toString()}`);
-      }
+    for (const key of eventKeys) {
+      try { await this.notifications.deliver(key); }
+      catch { this.logger.error('Schedule-change notification remains queued for delivery'); }
     }
 
     return updatedFlight;
@@ -514,7 +485,7 @@ async onModuleInit(): Promise<void> {
     ) {
       await this.flights
         .updateOne(
-          { _id: flight._id },
+          { _id: flight._id, status: FlightStatus.SCHEDULED, $expr: { $lte: ['$departureAt', '$$NOW'] } },
           { $set: { status: FlightStatus.DEPARTED } },
         )
         .exec();
@@ -531,17 +502,23 @@ async onModuleInit(): Promise<void> {
     }
 
     if (flight.status !== FlightStatus.CANCELLED) {
-      await this.flights
-        .updateOne(
+      const cancelled = await this.flights
+        .findOneAndUpdate(
           {
             _id: flight._id,
             status: FlightStatus.SCHEDULED,
+            $expr: { $and: [{ $gt: ['$departureAt', '$$NOW'] }, incrementableVersion('bookingVersion')] },
           },
-          {
-            $set: { status: FlightStatus.CANCELLED },
-          },
+          [...advanceBookingVersion(), { $set: { status: FlightStatus.CANCELLED } }],
+          { updatePipeline: true, returnDocument: 'after' },
         )
         .exec();
+      if (!cancelled) {
+        // A concurrent cancellation may be retried for cleanup, but a departure or edit
+        // that invalidated the conditional write must never cancel/refund bookings.
+        const latest = await this.flights.findById(flight._id).exec();
+        if (latest?.status !== FlightStatus.CANCELLED) throw new ConflictException('Flight is no longer cancellable');
+      }
     }
 
     try {

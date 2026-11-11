@@ -55,6 +55,8 @@ export class AdminBookingsService {
   async list(query: ListAdminBookingsQueryDto): Promise<AdminBookingPageDto> {
     const from = query.from ? new Date(query.from) : undefined;
     const to = query.to ? new Date(query.to) : undefined;
+    // A calendar date includes that whole UTC day; timestamps retain their exact boundary.
+    if (to && /^\d{4}-\d{2}-\d{2}$/.test(query.to!)) to.setUTCHours(23, 59, 59, 999);
     const errors: Record<string, string[]> = {};
     if (from && !Number.isFinite(from.getTime())) errors.from = ['From must be a supported ISO 8601 date'];
     if (to && !Number.isFinite(to.getTime())) errors.to = ['To must be a supported ISO 8601 date'];

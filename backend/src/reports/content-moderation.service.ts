@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { ClientSession } from 'mongoose';
 import { BlogService } from '../blog/blog.service';
 import { CommentsService } from '../blog/comments.service';
 import { ItinerariesService } from '../itineraries/itineraries.service';
@@ -36,29 +37,29 @@ export class ContentModerationService {
    * GEN-10 direct moderation (without a report). Admins have no general access to private
    * itineraries (ACC-11), so a private or unknown itinerary is reported as not found.
    */
-  async assertDirectlyModeratable(type: ReportTargetType, id: string): Promise<void> {
-    if (type === ReportTargetType.ITINERARY && !(await this.itineraries.itineraryExists(id))) {
+  async assertDirectlyModeratable(type: ReportTargetType, id: string, session?: ClientSession): Promise<void> {
+    if (type === ReportTargetType.ITINERARY && !(await this.itineraries.itineraryExists(id, session))) {
       throw new NotFoundException('Itinerary not found');
     }
   }
 
   /** Hidden content stays visible to its author and admins only (enforced by the owner). 404 if it does not exist. */
-  async setHidden(type: ReportTargetType, id: string, hidden: boolean): Promise<void> {
+  async setHidden(type: ReportTargetType, id: string, hidden: boolean, session?: ClientSession): Promise<void> {
     switch (type) {
-      case ReportTargetType.POST: return this.posts.setPostHidden(id, hidden).then(() => undefined);
-      case ReportTargetType.COMMENT: return this.comments.setCommentHidden(id, hidden).then(() => undefined);
-      case ReportTargetType.REVIEW: return this.reviews.setReviewHidden(id, hidden).then(() => undefined);
-      case ReportTargetType.ITINERARY: return this.itineraries.setItineraryHidden(id, hidden);
+      case ReportTargetType.POST: return this.posts.setPostHidden(id, hidden, session).then(() => undefined);
+      case ReportTargetType.COMMENT: return this.comments.setCommentHidden(id, hidden, session).then(() => undefined);
+      case ReportTargetType.REVIEW: return this.reviews.setReviewHidden(id, hidden, session).then(() => undefined);
+      case ReportTargetType.ITINERARY: return this.itineraries.setItineraryHidden(id, hidden, session);
     }
   }
 
   /** Deletes through the owner, so its own clean-up runs (comments, likes, images). 404 if it does not exist. */
-  async delete(type: ReportTargetType, id: string): Promise<void> {
+  async delete(type: ReportTargetType, id: string, session?: ClientSession): Promise<void> {
     switch (type) {
-      case ReportTargetType.POST: return this.posts.adminDeletePost(id).then(() => undefined);
-      case ReportTargetType.COMMENT: return this.comments.adminDeleteComment(id).then(() => undefined);
-      case ReportTargetType.REVIEW: return this.reviews.adminDeleteReview(id).then(() => undefined);
-      case ReportTargetType.ITINERARY: return this.itineraries.adminDeleteItinerary(id);
+      case ReportTargetType.POST: return this.posts.adminDeletePost(id, session).then(() => undefined);
+      case ReportTargetType.COMMENT: return this.comments.adminDeleteComment(id, session).then(() => undefined);
+      case ReportTargetType.REVIEW: return this.reviews.adminDeleteReview(id, session).then(() => undefined);
+      case ReportTargetType.ITINERARY: return this.itineraries.adminDeleteItinerary(id, session);
     }
   }
 }

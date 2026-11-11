@@ -1,8 +1,10 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import { IsString, Matches, MaxLength, MinLength } from 'class-validator';
 
 export class CreateAirlineDto {
   @ApiProperty({ example: 'EgyptAir' })
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
   @IsString() @MinLength(2) @MaxLength(120)
   name!: string;
 

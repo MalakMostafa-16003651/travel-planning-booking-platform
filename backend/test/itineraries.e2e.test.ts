@@ -6,7 +6,7 @@ import { INestApplication, NotFoundException } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { getConnectionToken, getModelToken, MongooseModule } from '@nestjs/mongoose';
 import { Test } from '@nestjs/testing';
-import { MongoMemoryServer } from 'mongodb-memory-server';
+import { MongoMemoryReplSet } from 'mongodb-memory-server';
 import { Connection, Model, Types } from 'mongoose';
 import request, { Response } from 'supertest';
 import { AuthModule } from '../src/auth/auth.module';
@@ -88,7 +88,7 @@ class FakeBookings {
 }
 
 describe('Itineraries, activities and budgeting', { concurrency: false }, () => {
-  let mongo: MongoMemoryServer;
+  let mongo: MongoMemoryReplSet;
   let app: INestApplication;
   let connection: Connection;
   let users: Model<UserDocument>;
@@ -125,7 +125,8 @@ describe('Itineraries, activities and budgeting', { concurrency: false }, () => 
   }
 
   before(async () => {
-    mongo = await MongoMemoryServer.create({
+    mongo = await MongoMemoryReplSet.create({
+      replSet: { count: 1 },
       binary: { downloadDir: resolve(process.cwd(), 'node_modules/.cache/mongodb-binaries') },
     });
     const moduleRef = await Test.createTestingModule({
@@ -465,6 +466,27 @@ describe('Itineraries, activities and budgeting', { concurrency: false }, () => 
       assert.equal(await connection.collection('activityimages').countDocuments(), 0);
     });
 
+    it('rolls back every image when a later clone image copy fails', async () => {
+      const id = await createItinerary(alice, { visibility: 'PUBLIC' });
+      const dayId = (await addDay(id, 'Cairo')).days[0].dayId;
+      const activityId = (await http().post(`/api/itineraries/${id}/days/${dayId}/activities`).set('Cookie', alice)
+        .send({ title: 'Museum' }).expect(201)).body.days[0].activities[0].activityId;
+      for (let i = 0; i < 2; i++) await http().post(`/api/activities/${activityId}/images`).set('Cookie', alice).attach('image', PNG, 'a.png').expect(201);
+      const model = connection.models.ActivityImage;
+      const original = model.create;
+      let copies = 0;
+      model.create = (async (...args: unknown[]) => {
+        if (++copies === 2) throw new Error('Second image copy failed');
+        return (original.bind(model) as (...input: unknown[]) => Promise<unknown>)(...args);
+      }) as typeof original;
+      try { await http().post(`/api/itineraries/${id}/clone`).set('Cookie', bob).expect(500); }
+      finally { model.create = original; }
+      assert.equal(await connection.collection('itineraries').countDocuments(), 1);
+      assert.equal(await connection.collection('activityimages').countDocuments(), 2);
+      await http().post(`/api/itineraries/${id}/clone`).set('Cookie', bob).expect(201);
+      assert.equal(await connection.collection('activityimages').countDocuments(), 4);
+    });
+
     it('removes images when their day or itinerary is deleted', async () => {
       const id = await createItinerary();
       const dayId = (await addDay(id, 'Cairo')).days[0].dayId;
@@ -734,7 +756,7 @@ describe('Itineraries, activities and budgeting', { concurrency: false }, () => 
       assert.equal(await itinerariesService.itineraryExists(publicId), true, 'hidden ones can still be reviewed');
     });
 
-    it('hides an itinerary from everyone but its owner, until an administrator unhides it', async () => {
+    it('hides public itineraries from ordinary viewers but keeps author and admin inspection', async () => {
       const id = await createItinerary(alice, { title: 'Nile cruise', visibility: 'PUBLIC' });
       await addDay(id, 'Cairo');
       const aliceId = await userIdOf('alice@example.com');
@@ -744,7 +766,7 @@ describe('Itineraries, activities and budgeting', { concurrency: false }, () => 
       await http().get(`/api/itineraries/public/${id}`).expect(404);
       await http().get(`/api/itineraries/${id}`).set('Cookie', bob).expect(404);
       const admin = await login('admin@example.com', { role: UserRole.ADMIN });
-      await http().get(`/api/itineraries/${id}`).set('Cookie', admin).expect(404);
+      await http().get(`/api/itineraries/${id}`).set('Cookie', admin).expect(200);
       await http().get(`/api/itineraries/${id}/budget-summary`).set('Cookie', bob).expect(404);
       await http().post(`/api/itineraries/${id}/clone`).set('Cookie', bob).expect(404);
       assert.equal((await itinerariesService.listPublicByAuthor(aliceId)).total, 0);
@@ -1207,6 +1229,43 @@ describe('Itineraries, activities and budgeting', { concurrency: false }, () => 
     await connection.collection('exchangerates').updateMany({}, { $set: { fetchedAt: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())) } });
     await http().get(`/api/itineraries/${id}/budget-summary`).set('Cookie', alice).expect(200);
     assert.equal(fx.calls, 1, 'a snapshot from earlier today still satisfies the daily cache');
+  });
+
+  it('accepts uppercase embedded IDs without false-success deletions or lost day ordering', async () => {
+    const id = await createItinerary();
+    const dayId = (await addDay(id, 'Cairo')).days[0].dayId;
+    const secondId = (await addDay(id, 'London')).days[1].dayId;
+    await http().patch(`/api/itineraries/${id}/days/${dayId.toUpperCase()}`).set('Cookie', alice).send({ notes: 'updated' }).expect(200);
+    await http().patch(`/api/itineraries/${id}/days/reorder`).set('Cookie', alice)
+      .send({ dayIds: [dayId, dayId.toUpperCase()] }).expect(400);
+    await http().patch(`/api/itineraries/${id}/days/reorder`).set('Cookie', alice)
+      .send({ dayIds: [secondId.toUpperCase(), dayId.toUpperCase()] }).expect(200);
+    const added = (await http().post(`/api/itineraries/${id}/days/${dayId.toUpperCase()}/activities`).set('Cookie', alice)
+      .send({ title: 'Activity' }).expect(201)).body;
+    const activityId = added.days[1].activities[0].activityId;
+    await http().patch(`/api/activities/${activityId.toUpperCase()}`).set('Cookie', alice).send({ title: 'Edited' }).expect(200);
+    const budget = (await http().post(`/api/itineraries/${id}/days/${dayId}/budgets`).set('Cookie', alice)
+      .send({ category: 'FOOD', amount: 10, currency: 'USD' }).expect(201)).body.days[1].budgets[0].budgetId;
+    await http().patch(`/api/budgets/${budget.toUpperCase()}`).set('Cookie', alice).send({ amount: 20 }).expect(200);
+    const deleted = (await http().delete(`/api/budgets/${budget.toUpperCase()}`).set('Cookie', alice).expect(200)).body;
+    assert.equal(deleted.days[1].budgets.length, 0);
+    const cost = (await http().post(`/api/itineraries/${id}/transport-costs`).set('Cookie', alice)
+      .send({ fromCity: 'Cairo', toCity: 'London', mode: 'BUS', amount: 10, currency: 'USD', dayId: dayId.toUpperCase() }).expect(201)).body.transportCosts[0].transportCostId;
+    await http().patch(`/api/transport-costs/${cost.toUpperCase()}`).set('Cookie', alice).send({ amount: 20 }).expect(200);
+    assert.equal((await http().delete(`/api/transport-costs/${cost.toUpperCase()}`).set('Cookie', alice).expect(200)).body.transportCosts.length, 0);
+  });
+
+  it('propagates unexpected reference-store failures instead of inventing a wrong-city error', async () => {
+    const id = await createItinerary();
+    const dayId = (await addDay(id, 'Cairo')).days[0].dayId;
+    const references = app.get(ReferenceDataService);
+    const original = references.resolveCity.bind(references);
+    references.resolveCity = async () => { throw new Error('controlled reference-store failure'); };
+    try {
+      await http().post(`/api/itineraries/${id}/days/${dayId}/activities`).set('Cookie', alice)
+        .send({ title: 'Pyramids', attractionId: 'att-1' }).expect(500);
+    } finally { references.resolveCity = original; }
+    assert.equal((await http().get(`/api/itineraries/${id}`).set('Cookie', alice).expect(200)).body.days[0].activities.length, 0);
   });
 
   it('rejects an edit based on a stale copy (optimistic concurrency)', async () => {

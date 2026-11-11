@@ -347,6 +347,33 @@ describe('Flight management E2E', { concurrency: false }, () => {
 
       assert.equal(updated!.status, 'DEPARTED');
     });
+
+    it('does not cancel bookings if departure wins after the initial flight read', async () => {
+      const flight = await seedFlight();
+      const model = connection.model('Flight');
+      const original = model.findOneAndUpdate.bind(model);
+      let raced = false;
+      model.findOneAndUpdate = ((...args: Parameters<typeof original>) => {
+        const query = original(...args);
+        const exec = query.exec.bind(query);
+        query.exec = async () => {
+          if (!raced) {
+            raced = true;
+            await connection.collection('flights').updateOne({ _id: new Types.ObjectId(flight.flightId) },
+              { $set: { status: 'DEPARTED', departureAt: new Date(Date.now() - 1000) } });
+          }
+          return exec();
+        };
+        return query;
+      }) as typeof model.findOneAndUpdate;
+      try {
+        await request(app.getHttpServer()).post(`/api/flights/${flight.flightId}/cancel`)
+          .set('Cookie', moderatorCookie).expect(409);
+        const stored = await connection.collection('flights').findOne({ _id: new Types.ObjectId(flight.flightId) });
+        assert.equal(stored!.status, 'DEPARTED');
+        assert.equal(raced, true);
+      } finally { model.findOneAndUpdate = original; }
+    });
   });
 
   describe('Automatic flight status - FLT-30', () => {

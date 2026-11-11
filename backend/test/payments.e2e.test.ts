@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, it } from 'node:test';
-import { Types } from 'mongoose';
+import { Model, Types } from 'mongoose';
+import { Payment } from '../src/payments/schemas/payment.schema';
 import { UserRole } from '../src/common/enums/user-role.enum';
 import { AMOUNT_MISMATCH_REASON, HOLD_EXPIRED_REASON, PaymentsService } from '../src/payments/payments.service';
 import { StripeService } from '../src/payments/stripe.service';
@@ -78,6 +79,35 @@ describe('PAY-01 payments and Stripe webhook', { concurrency: false }, () => {
     await pay().expect(409);
     await accept();
     await pay().expect(201);
+  });
+
+  it('reuses one Stripe intent after the initial database insert fails', async () => {
+    await accept();
+    const model = (fixture.app.get(PaymentsService) as unknown as { payments: Model<Payment> }).payments;
+    const original = model.create;
+    model.create = (async () => { throw new Error('Payment storage unavailable'); }) as unknown as typeof original;
+    try { await pay().expect(500); } finally { model.create = original; }
+    assert.equal(stripe.calls.createIntent, 1);
+    assert.equal(await payments().countDocuments(), 0);
+    const response = await pay().expect(201);
+    assert.equal(stripe.calls.createIntent, 1);
+    assert.equal(await payments().countDocuments(), 1);
+    await webhook('payment_intent.succeeded', stripe.succeed(response.body.payment.stripePaymentIntentId)).expect(200);
+    assert.equal(await fixture.bookingStatus(bookingId), 'CONFIRMED');
+  });
+
+  it('recovers a signed orphan success without another checkout request', async () => {
+    await accept();
+    const model = (fixture.app.get(PaymentsService) as unknown as { payments: Model<Payment> }).payments;
+    const original = model.create;
+    model.create = (async () => { throw new Error('Payment storage unavailable'); }) as unknown as typeof original;
+    try { await pay().expect(500); } finally { model.create = original; }
+    const intent = [...stripe.intents.values()][0];
+    await webhook('payment_intent.succeeded', stripe.succeed(intent.id)).expect(200);
+    assert.equal(await payments().countDocuments(), 1);
+    assert.equal(await fixture.bookingStatus(bookingId), 'CONFIRMED');
+    await webhook('payment_intent.succeeded', stripe.succeed(intent.id)).expect(200);
+    assert.equal(await payments().countDocuments(), 1);
   });
 
   it('creates the payment with the booking amount and returns the clientSecret once', async () => {

@@ -17,6 +17,7 @@ import { configureApplication } from '../src/configure-application';
 import { FlightBookingsService } from '../src/flight-bookings/flight-bookings.service';
 import { FlightsModule } from '../src/flights/flights.module';
 import { User, UserDocument } from '../src/users/schemas/user.schema';
+import { NotificationsService } from '../src/notifications/notifications.service';
 
 function cookiesFrom(response: Response): string {
   return (response.headers['set-cookie'] as unknown as string[]).map((cookie) => cookie.split(';')[0]).join('; ');
@@ -69,7 +70,7 @@ describe('Flight schedule-change notifications (FLT-05 / GEN-01, e2e)', { concur
     confirmedUserIds = [new Types.ObjectId().toString(), new Types.ObjectId().toString()];
     await Promise.all([
       users.deleteMany({}).exec(), sessions.deleteMany({}).exec(),
-      ...['flights', 'cabininventories', 'airports', 'airlines', 'moderatorassignments', 'notifications']
+      ...['flights', 'cabininventories', 'airports', 'airlines', 'moderatorassignments', 'notifications', 'notificationevents']
         .map((name) => connection.collection(name).deleteMany({})),
     ]);
     await connection.collection('airports').insertMany([
@@ -122,10 +123,30 @@ describe('Flight schedule-change notifications (FLT-05 / GEN-01, e2e)', { concur
   });
 
   it('still saves the new schedule when a notification cannot be created', async () => {
-    confirmedUserIds = ['not-a-valid-user-id'];
-    await edit().expect(200);
+    const service = app.get(NotificationsService);
+    const original = service.notify;
+    service.notify = async () => { throw new Error('Inbox temporarily unavailable'); };
+    try { await edit().expect(200); } finally { service.notify = original; }
     const saved = await connection.collection('flights').findOne({ _id: new Types.ObjectId(flightId) });
     assert.equal(saved?.departureLocalDate, '2027-12-10');
     assert.equal(await connection.collection('notifications').countDocuments({}), 0);
+    assert.equal(await connection.collection('notificationevents').countDocuments({}), 2);
+    await service.processEvents();
+    await service.processEvents();
+    assert.equal(await connection.collection('notificationevents').countDocuments({}), 0);
+    assert.equal(await connection.collection('notifications').countDocuments({}), 2);
+  });
+
+  it('rolls back the flight schedule if booking propagation fails and retries the same edit', async () => {
+    const service = app.get(FlightBookingsService);
+    const original = service.syncFlightSchedule;
+    const before = await connection.collection('flights').findOne({ _id: new Types.ObjectId(flightId) });
+    service.syncFlightSchedule = async () => { throw new Error('Booking propagation unavailable'); };
+    try { await edit().expect(500); } finally { service.syncFlightSchedule = original; }
+    const after = await connection.collection('flights').findOne({ _id: new Types.ObjectId(flightId) });
+    assert.deepEqual(after?.departureAt, before?.departureAt);
+    assert.equal(await connection.collection('notificationevents').countDocuments(), 0);
+    await edit().expect(200);
+    assert.equal(await connection.collection('notifications').countDocuments(), 2);
   });
 });

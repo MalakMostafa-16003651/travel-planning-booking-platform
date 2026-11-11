@@ -102,7 +102,8 @@ export class FlightBookingChangesService {
         const airlines = [];
         for (const segment of proposed.segments) airlines.push(await this.inventory.getAirlinePolicy(segment.airlineId.toString(),session));
         const policies = { cancellation:{tiers:airlines[0]?.cancellationTiers ?? []},
-          baggage:airlines.map((a,i)=>({airlineId:a!.airlineId,pricePerExtraBag:a!.pricePerExtraBag/100,maxExtraBagsPerPassenger:a!.maxExtraBagsPerPassenger,cabinClass:proposed.segments[i].cabinClass})),
+          baggage:airlines.map((a,i)=>({airlineId:a!.airlineId,pricePerExtraBag:a!.pricePerExtraBag/100,maxExtraBagsPerPassenger:a!.maxExtraBagsPerPassenger,cabinClass:proposed.segments[i].cabinClass,
+            baggageAllowanceCount:proposed.segments[i].baggageAllowanceCount,baggageMaxWeightKg:proposed.segments[i].baggageMaxWeightKg})),
           change:{previousAmount:booking.totalAmount/100,totalAmount:proposed.totalAmount/100,differenceAmount:(proposed.totalAmount-booking.totalAmount)/100,
             segments:proposed.segments.map(s=>({flightId:s.flightId.toString(),cabinId:s.cabinId.toString(),departureAt:s.departureAt}))} };
         proposed.passengers = proposed.passengers.map((p,i)=>({...p,_id:booking.passengers[i]._id}));

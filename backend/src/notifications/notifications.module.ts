@@ -9,9 +9,10 @@ import { AuthModule } from '../auth/auth.module';
 import { NotificationsController } from './notifications.controller';
 import { NotificationsService } from './notifications.service';
 import { Notification, NotificationSchema } from './schemas/notification.schema';
+import { NotificationEvent, NotificationEventSchema } from './schemas/notification-event.schema';
 
 @Module({
-  imports: [AuthModule, MailModule, MongooseModule.forFeature([{ name: Notification.name, schema: NotificationSchema }, { name: NotificationEmailJob.name, schema: NotificationEmailJobSchema }, { name: User.name, schema: UserSchema }])],
+  imports: [AuthModule, MailModule, MongooseModule.forFeature([{ name: NotificationEvent.name, schema: NotificationEventSchema }, { name: Notification.name, schema: NotificationSchema }, { name: NotificationEmailJob.name, schema: NotificationEmailJobSchema }, { name: User.name, schema: UserSchema }])],
   controllers: [NotificationsController],
   providers: [NotificationsService, NotificationEmailOutboxService, NotificationEmailWorkerService],
   // GEN-01: other modules import NotificationsModule and call NotificationsService.notify().

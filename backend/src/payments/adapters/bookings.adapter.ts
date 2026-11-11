@@ -82,6 +82,18 @@ export class BookingsAdapter implements BookingsPort {
     const airlineIds = [...new Set(booking.segments.map((segment) => segment.airlineId.toString()))];
     const airlines = await Promise.all(airlineIds.map((airlineId) => this.inventory.getAirlinePolicy(airlineId)));
     const outbound = airlines[0];
+    const baggage = [];
+    for (const segment of booking.segments) {
+      const airline = airlines.find((item) => item?.airlineId === segment.airlineId.toString());
+      const cabin = segment.baggageAllowanceCount === undefined || segment.baggageMaxWeightKg === undefined
+        ? await this.inventory.getCabin(segment.cabinId.toString()) : null;
+      baggage.push({ airlineId: segment.airlineId.toString(), flightId: segment.flightId.toString(),
+        cabinId: segment.cabinId.toString(), cabinClass: segment.cabinClass,
+        baggageAllowanceCount: segment.baggageAllowanceCount ?? cabin?.baggageAllowanceCount ?? 0,
+        baggageMaxWeightKg: segment.baggageMaxWeightKg ?? cabin?.baggageMaxWeightKg ?? null,
+        pricePerExtraBag: (airline?.pricePerExtraBag ?? 0) / 100,
+        maxExtraBagsPerPassenger: airline?.maxExtraBagsPerPassenger ?? 0 });
+    }
     return {
       bookingId: booking._id.toString(),
       userId: booking.userId.toString(),
@@ -92,11 +104,7 @@ export class BookingsAdapter implements BookingsPort {
         cancellation: {
           tiers: (outbound?.cancellationTiers ?? []).map(({ daysBeforeDeparture, refundPercentage }) => ({ daysBeforeDeparture, refundPercentage })),
         },
-        baggage: airlines.filter((airline) => airline !== null).map((airline) => ({
-          airlineId: airline.airlineId,
-          pricePerExtraBag: airline.pricePerExtraBag / 100,
-          maxExtraBagsPerPassenger: airline.maxExtraBagsPerPassenger,
-        })),
+        baggage,
       },
       holdExpiresAt: booking.holdExpiresAt,
     };

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, it } from 'node:test';
-import { inflateSync } from 'node:zlib';
+import { pdfText } from './pdf-text-reader';
 import { Types } from 'mongoose';
 import { FlightsModule } from '../src/flights/flights.module';
 import { UserRole } from '../src/common/enums/user-role.enum';
@@ -10,13 +10,6 @@ import { FlightBookingsMaintenanceService } from '../src/flight-bookings/flight-
 import { PaymentsFixture } from './payments-fixture';
 
 const adult = { fullName: 'Seat Passenger', dateOfBirth: '1990-01-01', documentNumber: 'AB12345', type: 'ADULT' };
-function pdfText(buffer: Buffer): string {
-  let text = '';
-  for (const match of buffer.toString('latin1').matchAll(/stream\r?\n([\s\S]*?)\r?\nendstream/g)) {
-    try { for (const hex of inflateSync(Buffer.from(match[1], 'latin1')).toString('latin1').matchAll(/<([a-f0-9]+)>/ig)) text += Buffer.from(hex[1], 'hex').toString('latin1'); } catch { /* Non-text streams are irrelevant. */ }
-  }
-  return text;
-}
 
 describe('FLT-28 transactional flight seat selection', { concurrency: false }, () => {
   const f = new PaymentsFixture();

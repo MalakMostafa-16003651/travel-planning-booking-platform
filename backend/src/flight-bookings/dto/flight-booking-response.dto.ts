@@ -10,6 +10,8 @@ export class FlightSegmentDto {
   @ApiProperty() airlineId!: string;
   @ApiProperty() cabinId!: string;
   @ApiProperty({ example: 'ECONOMY' }) cabinClass!: string;
+  @ApiPropertyOptional() baggageAllowanceCount?: number;
+  @ApiPropertyOptional() baggageMaxWeightKg?: number;
   @ApiProperty({ description: 'Adult/child fare in minor units.', example: 15000 }) fare!: number;
   @ApiProperty({ example: 'MS801' }) flightNumber!: string;
   @ApiProperty({ example: 'CAI' }) departureAirportCode!: string;
@@ -25,6 +27,8 @@ export class FlightSegmentDto {
       airlineId: segment.airlineId.toString(),
       cabinId: segment.cabinId.toString(),
       cabinClass: segment.cabinClass,
+      baggageAllowanceCount: segment.baggageAllowanceCount,
+      baggageMaxWeightKg: segment.baggageMaxWeightKg,
       fare: segment.fare,
       flightNumber: segment.flightNumber,
       departureAirportCode: segment.departureAirportCode,

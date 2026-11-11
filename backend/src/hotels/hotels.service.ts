@@ -588,24 +588,21 @@ export class HotelsService {
     const contentType = detectPhotoContentType(file.buffer);
     if (!contentType) throw new BadRequestException('Photo must be a JPG or PNG file');
 
-    const stored = await this.hotelPhotos.create({ hotelId: assignedId, data: file.buffer, contentType, size: file.size });
-    // The "no 5th photo yet" condition keeps the limit even when uploads race.
-    const updated = await this.hotels.findOneAndUpdate(
-      { _id: assignedId, [`photos.${MAX_HOTEL_PHOTOS - 1}`]: { $exists: false } },
-      { $push: { photos: { _id: stored._id, contentType, size: file.size, uploadedAt: stored.createdAt } } },
-      { new: true },
-    ).exec();
-    if (!updated) {
-      await this.hotelPhotos.deleteOne({ _id: stored._id }).exec();
-      throw new BadRequestException(`A hotel can have at most ${MAX_HOTEL_PHOTOS} photos`);
-    }
-    return updated;
+    return this.hotelPhotos.db.transaction(async (session) => {
+      const [stored] = await this.hotelPhotos.create([{ hotelId: assignedId, data: file.buffer, contentType, size: file.size }], { session });
+      const updated = await this.hotels.findOneAndUpdate(
+        { _id: assignedId, [`photos.${MAX_HOTEL_PHOTOS - 1}`]: { $exists: false } },
+        { $push: { photos: { _id: stored._id, contentType, size: file.size, uploadedAt: stored.createdAt } } },
+        { returnDocument: 'after', session }).exec();
+      if (!updated) throw new BadRequestException(`A hotel can have at most ${MAX_HOTEL_PHOTOS} photos`);
+      return updated;
+    });
   }
 
   /** HTL-02/GEN-08. Same visibility as the hotel itself: hidden if deactivated, except to its own moderator or an admin. */
   async getPhoto(hotelId: string, photoId: string, requester?: Requester): Promise<HotelPhoto> {
     const hotel = await this.getById(hotelId, requester);
-    if (!Types.ObjectId.isValid(photoId)) throw new NotFoundException('Photo not found');
+    if (!Types.ObjectId.isValid(photoId) || !hotel.photos.some((photo) => photo._id.equals(photoId))) throw new NotFoundException('Photo not found');
     const photo = await this.hotelPhotos.findOne({ _id: photoId, hotelId: hotel._id }).exec();
     if (!photo) throw new NotFoundException('Photo not found');
     return photo;
@@ -615,13 +612,13 @@ export class HotelsService {
   async removePhoto(moderatorId: string, hotelId: string, photoId: string): Promise<Hotel> {
     const assignedId = await this.assertOwnHotel(moderatorId, hotelId);
     if (!Types.ObjectId.isValid(photoId)) throw new NotFoundException('Photo not found');
-    const updated = await this.hotels.findOneAndUpdate(
-      { _id: assignedId, 'photos._id': new Types.ObjectId(photoId) },
-      { $pull: { photos: { _id: new Types.ObjectId(photoId) } } },
-      { new: true },
-    ).exec();
-    if (!updated) throw new NotFoundException('Photo not found');
-    await this.hotelPhotos.deleteOne({ _id: photoId, hotelId: assignedId }).exec();
-    return updated;
+    return this.hotelPhotos.db.transaction(async (session) => {
+      const updated = await this.hotels.findOneAndUpdate(
+        { _id: assignedId, 'photos._id': new Types.ObjectId(photoId) },
+        { $pull: { photos: { _id: new Types.ObjectId(photoId) } } }, { returnDocument: 'after', session }).exec();
+      if (!updated) throw new NotFoundException('Photo not found');
+      await this.hotelPhotos.deleteOne({ _id: photoId, hotelId: assignedId }, { session }).exec();
+      return updated;
+    });
   }
 }

@@ -164,6 +164,7 @@ describe('HTL-23/HTL-24 hotel reviews and ratings', { concurrency: false }, () =
     await patch('not-an-id', { rating: 1 }, alice).expect(400);
     await patch(reviewId, {}, alice).expect(400);
     await patch(reviewId, { rating: 0 }, alice).expect(400);
+    await patch(reviewId, { rating: null }, alice).expect(400);
     await patch(reviewId, { comment: 'x'.repeat(1001) }, alice).expect(400);
     await patch(reviewId, { hotelId: new Types.ObjectId().toString() }, alice).expect(400);
     assert.equal((await reviews.findById(reviewId).lean().exec())!.rating, 5);

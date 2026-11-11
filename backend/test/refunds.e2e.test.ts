@@ -243,10 +243,11 @@ describe('PAY-03 refunds', { concurrency: false }, () => {
       let release!: () => void;
       const allArrived = new Promise<void>((resolve) => { release = resolve; });
       // Both services must reach insertion, forcing the unique-index race deterministically.
-      const insert = mock.method(model, 'create', async (input: unknown) => {
+      const originalCreate = model.create.bind(model) as (...args: unknown[]) => Promise<unknown>;
+      const insert = mock.method(model, 'create', async (...args: unknown[]) => {
         if (++arrived === 2) release();
         await allArrived;
-        return new model(input).save();
+        return originalCreate(...args);
       });
       try {
         let run: () => ReturnType<RefundsService['createRefund']>;
@@ -314,6 +315,11 @@ describe('PAY-03 refunds', { concurrency: false }, () => {
       const stored = await refunds().findOne({ _id: (await booking())!.refundId });
       assert.equal(stored!.status, 'REFUNDED');
       assert.equal((await booking())!.refundDue, false);
+      assert.equal(await fixture.connection.collection('notificationevents').countDocuments(), 1);
+      await notifications.processEvents();
+      await notifications.processEvents();
+      assert.equal((await refundNotices()).length, 1);
+      assert.equal(await fixture.connection.collection('notificationevents').countDocuments(), 0);
     });
   });
 

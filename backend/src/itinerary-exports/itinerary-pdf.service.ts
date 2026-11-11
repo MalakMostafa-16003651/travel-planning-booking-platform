@@ -1,18 +1,10 @@
 import { Readable } from 'node:stream';
 import { Injectable } from '@nestjs/common';
-import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { registerPdfFonts, writePdfText } from '../common/pdf-text';
 import PDFDocument from 'pdfkit';
 import { ItineraryDto } from '../itineraries/dto/itinerary-response.dto';
-const ARABIC_RUN = /([\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff]+(?: +[\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff]+)*)/g;
 const IS_ARABIC = /[\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff]/;
 function amount(value: number, currency: string): string { return new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value) + ' ' + currency; }
-function fontDirectory(): string {
-  const candidates = [resolve(__dirname, '../../assets/fonts'), resolve(process.cwd(), 'assets/fonts'), resolve(process.cwd(), 'backend/assets/fonts')];
-  const directory = candidates.find((candidate) => existsSync(resolve(candidate, 'NotoSans-Regular.ttf')));
-  if (!directory) throw new Error('Bundled PDF fonts are missing');
-  return directory;
-}
 /** Presentation only: authorization, dates, ordering, references and values come from the exported read DTO. */
 @Injectable()
 export class ItineraryPdfService {
@@ -22,17 +14,15 @@ export class ItineraryPdfService {
       const chunks: Buffer[] = [];
       doc.on('data', (chunk: Buffer) => chunks.push(chunk)); doc.on('end', () => resolveBuffer(Buffer.concat(chunks))); doc.on('error', reject);
       try {
-        const directory = fontDirectory();
-        doc.registerFont('Body', resolve(directory, 'NotoSans-Regular.ttf')).registerFont('Strong', resolve(directory, 'NotoSans-Bold.ttf')).registerFont('Arabic', resolve(directory, 'NotoSansArabic-Regular.ttf'));
+        registerPdfFonts(doc);
         const header = () => {
           doc.font('Body').fontSize(8).fillColor('#475569').text('TRAVEL PLANNING / ITINERARY', 48, 24, { lineBreak: false });
           doc.moveTo(48, 43).lineTo(doc.page.width - 48, 43).strokeColor('#0f766e').lineWidth(1).stroke(); doc.x = 48; doc.y = 60;
         };
         doc.on('pageAdded', header); header();
         const text = (value: string, size = 10, strong = false, color = '#1e293b') => {
-          const clean = value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '');
-          const runs = clean.split(ARABIC_RUN).filter(Boolean);
-          for (let i = 0; i < runs.length; i++) doc.font(IS_ARABIC.test(runs[i]) ? 'Arabic' : strong ? 'Strong' : 'Body').fontSize(size).fillColor(color).text(runs[i], { continued: i < runs.length - 1, baseline: -size * 1.069, lineGap: 3, width: doc.page.width - 96 });
+          doc.fontSize(size).fillColor(color);
+          writePdfText(doc, value, { baseline: -size * 1.069, lineGap: 3, width: doc.page.width - 96 }, strong);
         };
         const section = (title: string) => { if (doc.y > doc.page.height - 120) doc.addPage(); doc.moveDown(0.6); text(title, 14, true, '#0f766e'); doc.moveDown(0.25); };
         text(itinerary.title, 23, true); doc.moveDown(0.3);

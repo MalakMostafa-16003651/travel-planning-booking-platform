@@ -37,7 +37,11 @@ describe('PAY-02 booking policy acceptance', { concurrency: false }, () => {
       currency: 'USD',
       policies: {
         cancellation: { tiers: [{ daysBeforeDeparture: 0, refundPercentage: 10 }, { daysBeforeDeparture: 7, refundPercentage: 50 }] },
-        baggage: [{ airlineId: fixture.airlineId.toString(), pricePerExtraBag: 30, maxExtraBagsPerPassenger: 2 }],
+        baggage: [{ airlineId: fixture.airlineId.toString(),
+          flightId: (await fixture.connection.collection('flightbookings').findOne())!.segments[0].flightId.toString(),
+          cabinId: (await fixture.connection.collection('flightbookings').findOne())!.segments[0].cabinId.toString(),
+          cabinClass: 'ECONOMY', baggageAllowanceCount: 0, baggageMaxWeightKg: 23,
+          pricePerExtraBag: 30, maxExtraBagsPerPassenger: 2 }],
       },
     });
     assert.equal(response.headers['cache-control'], 'no-store');

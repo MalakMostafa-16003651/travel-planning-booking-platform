@@ -23,6 +23,7 @@ export interface BookableCabin {
   cabinClass: string;
   price: number;
   baggageMaxWeightKg: number;
+  baggageAllowanceCount?: number;
   availableSeats: number;
   /** Additive capacity metadata used by the optional FLT-28 seat map. */
   totalSeats?: number;

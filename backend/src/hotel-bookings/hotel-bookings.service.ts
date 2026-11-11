@@ -228,13 +228,14 @@ export class HotelBookingsService {
       booking.refundAmount = quote.refundAmount;
       booking.refundDue = quote.refundAmount > 0;
       await booking.save({ session });
+      const notice = this.cancellationNotification(booking);
+      await this.notifications.stage?.(notice, `hotel:${booking._id.toString()}:cancelled`, session);
       return booking;
     });
     await this.settleCancellationRefund(cancelled);
     try {
-      await this.notifications.notify({ userId, type: 'BOOKING_CANCELLED', message: 'Hotel booking '
-        + cancelled.bookingReference + ' at ' + cancelled.hotelName + ' (' + cancelled.checkIn + ' to '
-        + cancelled.checkOut + ') is cancelled. Refund due: ' + ((cancelled.refundAmount ?? 0) / 100).toFixed(2) + ' ' + cancelled.currency + '.' });
+      if (this.notifications.deliver) await this.notifications.deliver(`hotel:${cancelled._id.toString()}:cancelled`);
+      else await this.notifications.notify(this.cancellationNotification(cancelled));
     } catch { this.logger.error('Could not deliver hotel booking cancellation notification'); }
     return this.getDetails(hotelBookingId, userId);
   }
@@ -300,14 +301,13 @@ export class HotelBookingsService {
           booking.bookingReference = 'HTL-' + randomBytes(8).toString('hex').toUpperCase();
           booking.holdExpiresAt = undefined;
           await booking.save({ session });
+          await this.notifications.stage?.(this.confirmationNotification(booking), `hotel:${booking._id.toString()}:confirmed`, session);
           return booking;
         });
         if (confirmed) {
           try {
-            await this.notifications.notify({ userId: confirmed.userId.toString(), type: 'BOOKING_CONFIRMED',
-              message: 'Hotel booking ' + confirmed.bookingReference + ' at ' + confirmed.hotelName
-                + ' (' + confirmed.checkIn + ' to ' + confirmed.checkOut + ', ' + confirmed.rooms.length
-                + ' rooms) is confirmed. Total paid: ' + (confirmed.totalPrice / 100).toFixed(2) + ' ' + confirmed.currency + '.' });
+            if (this.notifications.deliver) await this.notifications.deliver(`hotel:${confirmed._id.toString()}:confirmed`);
+            else await this.notifications.notify(this.confirmationNotification(confirmed));
           } catch { this.logger.error('Could not deliver hotel booking confirmation notification'); }
         }
         return;
@@ -316,6 +316,19 @@ export class HotelBookingsService {
         if (collision.code !== 11000 || !collision.keyPattern?.bookingReference || attempt === 2) throw error;
       }
     }
+  }
+
+  private confirmationNotification(booking: HotelBookingDocument) {
+    return { userId: booking.userId.toString(), type: 'BOOKING_CONFIRMED' as const,
+      message: 'Hotel booking ' + booking.bookingReference + ' at ' + booking.hotelName
+        + ' (' + booking.checkIn + ' to ' + booking.checkOut + ', ' + booking.rooms.length
+        + ' rooms) is confirmed. Total paid: ' + (booking.totalPrice / 100).toFixed(2) + ' ' + booking.currency + '.' };
+  }
+
+  private cancellationNotification(booking: HotelBookingDocument) {
+    return { userId: booking.userId.toString(), type: 'BOOKING_CANCELLED' as const, message: 'Hotel booking '
+      + booking.bookingReference + ' at ' + booking.hotelName + ' (' + booking.checkIn + ' to '
+      + booking.checkOut + ') is cancelled. Refund due: ' + ((booking.refundAmount ?? 0) / 100).toFixed(2) + ' ' + booking.currency + '.' };
   }
 
   /** PAY-01: a decline leaves the hold untouched; the user may retry until expiry. */

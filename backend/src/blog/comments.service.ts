@@ -1,6 +1,6 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { isValidObjectId, Model, Types } from 'mongoose';
+import { ClientSession, isValidObjectId, Model, Types } from 'mongoose';
 import { UserRole } from '../common/enums/user-role.enum';
 import { User } from '../users/schemas/user.schema';
 import { BLOG_PAGE_SIZE } from './blog.rules';
@@ -20,15 +20,14 @@ export class CommentsService {
 
   /** BLG-05: only on a published post that the public can see. */
   async create(postId: string, dto: CreateCommentDto, viewer: Viewer) {
-    const post = await this.blog.getPublicPost(postId);
-    const comment = await this.comments.create({ postId: post._id, userId: new Types.ObjectId(viewer.userId), content: dto.content });
-    const counted = await this.posts.updateOne({ _id: post._id }, { $inc: { commentsCount: 1 } }).exec();
-    if (counted.matchedCount === 0) {
-      // The post was deleted meanwhile: do not leave a comment without its post.
-      await this.comments.deleteOne({ _id: comment._id }).exec();
-      throw new NotFoundException('Post not found');
-    }
-    return this.toResponse(comment);
+    return this.comments.db.transaction(async (session) => {
+      const post = await this.blog.getPublicPost(postId, session);
+      const [comment] = await this.comments.create([{ postId: post._id, userId: new Types.ObjectId(viewer.userId), content: dto.content }], { session });
+      const commentsCount = await this.comments.countDocuments({ postId: post._id }).session(session).exec();
+      const counted = await this.posts.updateOne({ _id: post._id }, { $set: { commentsCount } }, { session }).exec();
+      if (counted.matchedCount === 0) throw new NotFoundException('Post not found');
+      return this.toResponse(comment);
+    });
   }
 
   /**
@@ -67,16 +66,17 @@ export class CommentsService {
 
   // GEN-10: for Person 2's moderation. No HTTP routes here.
 
-  async setCommentHidden(commentId: string, hidden: boolean) {
-    const comment = isValidObjectId(commentId) ? await this.comments.findByIdAndUpdate(commentId, { isHidden: hidden }, { returnDocument: 'after' }).exec() : null;
+  async setCommentHidden(commentId: string, hidden: boolean, session?: ClientSession) {
+    const comment = isValidObjectId(commentId) ? await this.comments.findByIdAndUpdate(commentId, { isHidden: hidden }, { returnDocument: 'after', session }).exec() : null;
     if (!comment) throw new NotFoundException('Comment not found');
     return this.toResponse(comment);
   }
 
-  async adminDeleteComment(commentId: string): Promise<void> {
-    const comment = isValidObjectId(commentId) ? await this.comments.findById(commentId).exec() : null;
+  async adminDeleteComment(commentId: string, session?: ClientSession): Promise<void> {
+    if (!session) return this.comments.db.transaction((active) => this.adminDeleteComment(commentId, active));
+    const comment = isValidObjectId(commentId) ? await this.comments.findById(commentId).session(session).exec() : null;
     if (!comment) throw new NotFoundException('Comment not found');
-    await this.deleteComment(comment);
+    await this.deleteComment(comment, session);
   }
 
   /** For reports (GEN-09): false for unknown or invalid ids. */
@@ -91,11 +91,12 @@ export class CommentsService {
     return comment;
   }
 
-  private async deleteComment(comment: CommentDocument): Promise<void> {
-    const deleted = await this.comments.deleteOne({ _id: comment._id }).exec();
+  private async deleteComment(comment: CommentDocument, session?: ClientSession): Promise<void> {
+    if (!session) return this.comments.db.transaction((active) => this.deleteComment(comment, active));
+    const deleted = await this.comments.deleteOne({ _id: comment._id }, { session }).exec();
     if (deleted.deletedCount === 1) {
-      // Unconditional, so every removed row cancels exactly the increment of its creation in any order.
-      await this.posts.updateOne({ _id: comment.postId }, { $inc: { commentsCount: -1 } }).exec();
+      const commentsCount = await this.comments.countDocuments({ postId: comment.postId }).session(session).exec();
+      await this.posts.updateOne({ _id: comment.postId }, { $set: { commentsCount } }, { session }).exec();
     }
   }
 

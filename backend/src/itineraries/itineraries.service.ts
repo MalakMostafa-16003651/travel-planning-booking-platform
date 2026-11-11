@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Error as MongooseError, QueryFilter, Model, Types } from 'mongoose';
+import { ClientSession, Error as MongooseError, QueryFilter, Model, Types } from 'mongoose';
 import { UserRole } from '../common/enums/user-role.enum';
 import { User } from '../users/schemas/user.schema';
 import { AirportsService } from '../airports/airports.service';
@@ -137,9 +137,11 @@ export class ItinerariesService {
   }
 
   async remove(itineraryId: string, userId: string): Promise<void> {
-    const itinerary = await this.findOwned(itineraryId, userId);
-    await this.itineraries.deleteOne({ _id: itinerary._id }).exec();
-    await this.images.deleteMany({ itineraryId: itinerary._id }).exec();
+    await this.itineraries.db.transaction(async (session) => {
+      const itinerary = await this.findOwned(itineraryId, userId, session);
+      await this.itineraries.deleteOne({ _id: itinerary._id }, { session }).exec();
+      await this.images.deleteMany({ itineraryId: itinerary._id }, { session }).exec();
+    });
   }
 
   // ---------------------------------------------------------------- days (ITN-05, ITN-07, ITN-08)
@@ -179,25 +181,28 @@ export class ItinerariesService {
 
   /** Later days move up one place, so their numbers and dates shift back a day. */
   async deleteDay(itineraryId: string, dayId: string, userId: string): Promise<ItineraryDto> {
-    const itinerary = await this.findOwned(itineraryId, userId);
-    const day = findDay(itinerary, dayId);
-    const imageIds = day.activities.flatMap((activity) => activity.images.map((image) => image._id));
-    itinerary.days = itinerary.days.filter((candidate) => !candidate._id.equals(day._id));
-    itinerary.transportCosts = itinerary.transportCosts.filter((cost) => !cost.dayId?.equals(day._id));
-    itinerary.linkedBookings = itinerary.linkedBookings.filter((link) => !link.dayId.equals(day._id));
-    const saved = await this.persist(itinerary);
-    if (imageIds.length > 0) await this.images.deleteMany({ _id: { $in: imageIds } }).exec();
-    return this.toDto(saved, userId);
+    return this.itineraries.db.transaction(async (session) => {
+      const itinerary = await this.findOwned(itineraryId, userId, session);
+      const day = findDay(itinerary, dayId);
+      const imageIds = day.activities.flatMap((activity) => activity.images.map((image) => image._id));
+      itinerary.days = itinerary.days.filter((candidate) => !candidate._id.equals(day._id));
+      itinerary.transportCosts = itinerary.transportCosts.filter((cost) => !cost.dayId?.equals(day._id));
+      itinerary.linkedBookings = itinerary.linkedBookings.filter((link) => !link.dayId.equals(day._id));
+      const saved = await this.persist(itinerary, session);
+      if (imageIds.length > 0) await this.images.deleteMany({ _id: { $in: imageIds } }, { session }).exec();
+      return this.toDto(saved, userId);
+    });
   }
 
   /** ITN-08: `dayIds` must list every day exactly once. */
   async reorderDays(itineraryId: string, userId: string, input: ReorderItineraryDaysDto): Promise<ItineraryDto> {
     const itinerary = await this.findOwned(itineraryId, userId);
     const byId = new Map(itinerary.days.map((day) => [day._id.toString(), day]));
-    if (input.dayIds.length !== byId.size || input.dayIds.some((id) => !byId.has(id))) {
+    const ids = input.dayIds.map((id) => id.toLowerCase());
+    if (ids.length !== byId.size || new Set(ids).size !== byId.size || ids.some((id) => !byId.has(id))) {
       throw fieldError('dayIds', 'dayIds must contain every day of this itinerary exactly once');
     }
-    itinerary.days = input.dayIds.map((id) => byId.get(id)!);
+    itinerary.days = ids.map((id) => byId.get(id)!);
     return this.toDto(await this.persist(itinerary), userId);
   }
 
@@ -231,12 +236,14 @@ export class ItinerariesService {
   }
 
   async deleteActivity(activityId: string, userId: string): Promise<ItineraryDto> {
-    const { itinerary, day, activity } = await this.findOwnedActivity(activityId, userId);
-    const imageIds = activity.images.map((image) => image._id);
-    day.activities = day.activities.filter((candidate) => !candidate._id.equals(activity._id));
-    const saved = await this.persist(itinerary);
-    if (imageIds.length > 0) await this.images.deleteMany({ _id: { $in: imageIds } }).exec();
-    return this.toDto(saved, userId);
+    return this.itineraries.db.transaction(async (session) => {
+      const { itinerary, day, activity } = await this.findOwnedActivity(activityId, userId, session);
+      const imageIds = activity.images.map((image) => image._id);
+      day.activities = day.activities.filter((candidate) => !candidate._id.equals(activity._id));
+      const saved = await this.persist(itinerary, session);
+      if (imageIds.length > 0) await this.images.deleteMany({ _id: { $in: imageIds } }, { session }).exec();
+      return this.toDto(saved, userId);
+    });
   }
 
   async addImage(activityId: string, userId: string, file: UploadedImage | undefined): Promise<ItineraryDto> {
@@ -244,39 +251,38 @@ export class ItinerariesService {
     const contentType = detectImageType(file.buffer);
     if (!contentType) throw fieldError('image', 'Image must be a JPEG or PNG file');
 
-    const { itinerary, activity } = await this.findOwnedActivity(activityId, userId);
-    if (activity.images.length >= MAX_IMAGES_PER_ACTIVITY) {
-      throw new ConflictException(`An activity can have at most ${MAX_IMAGES_PER_ACTIVITY} images`);
-    }
-    const stored = await this.images.create({
-      itineraryId: itinerary._id,
-      activityId: activity._id,
-      userId: itinerary.userId,
-      contentType,
-      data: file.buffer,
+    return this.itineraries.db.transaction(async (session) => {
+      const { itinerary, activity } = await this.findOwnedActivity(activityId, userId, session);
+      if (activity.images.length >= MAX_IMAGES_PER_ACTIVITY) {
+        throw new ConflictException(`An activity can have at most ${MAX_IMAGES_PER_ACTIVITY} images`);
+      }
+      const [stored] = await this.images.create([{
+        itineraryId: itinerary._id,
+        activityId: activity._id,
+        userId: itinerary.userId,
+        contentType,
+        data: file.buffer,
+      }], { session });
+      activity.images.push({
+        _id: stored._id,
+        contentType,
+        size: file.size,
+        originalName: file.originalname?.slice(0, 200),
+      } as unknown as Activity['images'][number]);
+      return this.toDto(await this.persist(itinerary, session), userId);
     });
-    activity.images.push({
-      _id: stored._id,
-      contentType,
-      size: file.size,
-      originalName: file.originalname?.slice(0, 200),
-    } as unknown as Activity['images'][number]);
-    try {
-      return this.toDto(await this.persist(itinerary), userId);
-    } catch (error) {
-      await this.images.deleteOne({ _id: stored._id }).exec();
-      throw error;
-    }
   }
 
   async deleteImage(activityId: string, imageId: string, userId: string): Promise<ItineraryDto> {
-    const { itinerary, activity } = await this.findOwnedActivity(activityId, userId);
-    const image = activity.images.find((candidate) => candidate._id.toString() === imageId);
-    if (!image) throw new NotFoundException('Image not found');
-    activity.images = activity.images.filter((candidate) => candidate !== image);
-    const saved = await this.persist(itinerary);
-    await this.images.deleteOne({ _id: image._id }).exec();
-    return this.toDto(saved, userId);
+    return this.itineraries.db.transaction(async (session) => {
+      const { itinerary, activity } = await this.findOwnedActivity(activityId, userId, session);
+      const image = activity.images.find((candidate) => candidate._id.equals(imageId));
+      if (!image) throw new NotFoundException('Image not found');
+      activity.images = activity.images.filter((candidate) => candidate !== image);
+      const saved = await this.persist(itinerary, session);
+      await this.images.deleteOne({ _id: image._id }, { session }).exec();
+      return this.toDto(saved, userId);
+    });
   }
 
   async getImage(activityId: string, imageId: string, viewer: Viewer): Promise<{ contentType: string; data: Buffer }> {
@@ -284,6 +290,8 @@ export class ItinerariesService {
     const imageOid = toObjectId(imageId, 'Image not found');
     const itinerary = await this.itineraries.findOne({ 'days.activities._id': activityOid }).exec();
     if (!itinerary || !(await this.canRead(itinerary, viewer))) throw new NotFoundException('Image not found');
+    const activity = itinerary.days.flatMap((day) => day.activities).find((item) => item._id.equals(activityOid));
+    if (!activity?.images.some((image) => image._id.equals(imageOid))) throw new NotFoundException('Image not found');
     const image = await this.images.findOne({ _id: imageOid, activityId: activityOid, itineraryId: itinerary._id }).exec();
     if (!image) throw new NotFoundException('Image not found');
     return { contentType: image.contentType, data: image.data };
@@ -306,7 +314,7 @@ export class ItinerariesService {
     const changes = definedOnly(input);
     if (changes.currency) changes.currency = await this.assertCurrency(changes.currency, 'currency');
     const itinerary = await this.findOwnedBy({ 'days.budgets._id': toObjectId(budgetId, 'Budget entry not found') }, userId, 'Budget entry not found');
-    const entry = itinerary.days.flatMap((day) => day.budgets).find((candidate) => candidate._id.toString() === budgetId)!;
+    const entry = itinerary.days.flatMap((day) => day.budgets).find((candidate) => candidate._id.equals(budgetId))!;
     for (const [key, value] of Object.entries(changes)) {
       (entry as unknown as Record<string, unknown>)[key] = value === '' ? undefined : value;
     }
@@ -315,7 +323,7 @@ export class ItinerariesService {
 
   async deleteBudget(budgetId: string, userId: string): Promise<ItineraryDto> {
     const itinerary = await this.findOwnedBy({ 'days.budgets._id': toObjectId(budgetId, 'Budget entry not found') }, userId, 'Budget entry not found');
-    for (const day of itinerary.days) day.budgets = day.budgets.filter((entry) => entry._id.toString() !== budgetId);
+    for (const day of itinerary.days) day.budgets = day.budgets.filter((entry) => !entry._id.equals(budgetId));
     return this.toDto(await this.persist(itinerary), userId);
   }
 
@@ -341,7 +349,7 @@ export class ItinerariesService {
       { 'transportCosts._id': toObjectId(transportCostId, 'Transport cost not found') }, userId, 'Transport cost not found',
     );
     if (typeof changes.dayId === 'string') changes.dayId = findDay(itinerary, changes.dayId, 'dayId')._id;
-    const cost = itinerary.transportCosts.find((candidate) => candidate._id.toString() === transportCostId)!;
+    const cost = itinerary.transportCosts.find((candidate) => candidate._id.equals(transportCostId))!;
     if (!cost.dayId && changes.dayId === undefined) throw fieldError('dayId', 'Assign this legacy transport entry to an itinerary day before updating it');
     for (const [key, value] of Object.entries(changes)) {
       (cost as unknown as Record<string, unknown>)[key] = value === '' ? undefined : value;
@@ -353,7 +361,7 @@ export class ItinerariesService {
     const itinerary = await this.findOwnedBy(
       { 'transportCosts._id': toObjectId(transportCostId, 'Transport cost not found') }, userId, 'Transport cost not found',
     );
-    itinerary.transportCosts = itinerary.transportCosts.filter((cost) => cost._id.toString() !== transportCostId);
+    itinerary.transportCosts = itinerary.transportCosts.filter((cost) => !cost._id.equals(transportCostId));
     return this.toDto(await this.persist(itinerary), userId);
   }
 
@@ -637,9 +645,9 @@ export class ItinerariesService {
    * nobody but the owner can see a private one. Hidden ones still count, so duplicate reports
    * and later reviews keep working. Invalid or unknown ids return false.
    */
-  async itineraryExists(itineraryId: string): Promise<boolean> {
+  async itineraryExists(itineraryId: string, session?: ClientSession): Promise<boolean> {
     if (!isObjectIdString(itineraryId)) return false;
-    return (await this.itineraries.exists({ _id: new Types.ObjectId(itineraryId), visibility: ItineraryVisibility.PUBLIC }).exec()) !== null;
+    return (await this.itineraries.exists({ _id: new Types.ObjectId(itineraryId), visibility: ItineraryVisibility.PUBLIC }).session(session ?? null).exec()) !== null;
   }
 
   /**
@@ -648,18 +656,19 @@ export class ItinerariesService {
    * images and the blog views; its owner still sees it, flagged `isHidden`. 404 if unknown.
    * Writes only the flag, so a concurrent owner edit is not lost.
    */
-  async setItineraryHidden(itineraryId: string, hidden: boolean): Promise<void> {
+  async setItineraryHidden(itineraryId: string, hidden: boolean, session?: ClientSession): Promise<void> {
     const id = toObjectId(itineraryId, NOT_FOUND);
-    const result = await this.itineraries.updateOne({ _id: id }, { $set: { isHidden: hidden } }).exec();
+    const result = await this.itineraries.updateOne({ _id: id }, { $set: { isHidden: hidden } }, { session }).exec();
     if (result.matchedCount === 0) throw new NotFoundException(NOT_FOUND);
   }
 
   /** GEN-10: deletes an itinerary and its activity images. 404 if unknown. */
-  async adminDeleteItinerary(itineraryId: string): Promise<void> {
+  async adminDeleteItinerary(itineraryId: string, session?: ClientSession): Promise<void> {
+    if (!session) return this.itineraries.db.transaction((active) => this.adminDeleteItinerary(itineraryId, active));
     const id = toObjectId(itineraryId, NOT_FOUND);
-    const deleted = await this.itineraries.findOneAndDelete({ _id: id }).exec();
+    const deleted = await this.itineraries.findOneAndDelete({ _id: id }, { session }).exec();
     if (!deleted) throw new NotFoundException(NOT_FOUND);
-    await this.images.deleteMany({ itineraryId: id }).exec();
+    await this.images.deleteMany({ itineraryId: id }, { session }).exec();
   }
 
   /** ITN-21: an independent private copy. Author status is rechecked at clone time. */
@@ -707,23 +716,23 @@ export class ItinerariesService {
       };
     });
 
-    // Copy image bytes first, so the clone never references an image that does not exist.
-    const copied = new Set<string>();
-    for (const copy of imageCopies) {
-      const original = await this.images.findById(copy.from).exec();
-      if (!original) continue;
-      copied.add(copy.to.toString());
-      await this.images.create({
-        _id: copy.to, itineraryId: newCloneId, activityId: copy.activityId, userId: new Types.ObjectId(viewer.userId),
-        contentType: original.contentType, data: original.data,
-      });
-    }
-    for (const day of days) {
-      for (const activity of day.activities) activity.images = activity.images.filter((image) => copied.has(image._id.toString()));
-    }
+    return this.itineraries.db.transaction(async (session) => {
+      // The clone and every copied image commit together.
+      const copied = new Set<string>();
+      for (const copy of imageCopies) {
+        const original = await this.images.findById(copy.from).session(session).exec();
+        if (!original) continue;
+        copied.add(copy.to.toString());
+        await this.images.create([{
+          _id: copy.to, itineraryId: newCloneId, activityId: copy.activityId, userId: new Types.ObjectId(viewer.userId),
+          contentType: original.contentType, data: original.data,
+        }], { session });
+      }
+      for (const day of days) {
+        for (const activity of day.activities) activity.images = activity.images.filter((image) => copied.has(image._id.toString()));
+      }
 
-    try {
-      const clone = await this.itineraries.create({
+      const [clone] = await this.itineraries.create([{
         _id: newCloneId,
         userId: new Types.ObjectId(viewer.userId),
         title: source.title,
@@ -745,12 +754,9 @@ export class ItinerariesService {
           title: source.title,
           clonedAt: new Date(),
         },
-      });
+      }], { session });
       return this.toDto(clone, viewer.userId);
-    } catch (error) {
-      await this.images.deleteMany({ itineraryId: newCloneId }).exec();
-      throw error;
-    }
+    });
   }
 
   // ---------------------------------------------------------------- flight and hotel search reuse (ITN-25, ITN-26)
@@ -758,8 +764,8 @@ export class ItinerariesService {
   /** ITN-25: hotels for the city stop containing `dayId`, from its first day to the morning after its last. */
   async searchHotels(itineraryId: string, viewer: Viewer, query: ItineraryHotelsQueryDto): Promise<SearchResult<ItineraryHotelSearch>> {
     const itinerary = await this.findReadable(itineraryId, viewer);
-    findDay(itinerary, query.dayId, 'dayId');
-    const group = cityGroupsOf(itinerary).find((candidate) => candidate.dayIds.includes(query.dayId))!;
+    const day = findDay(itinerary, query.dayId, 'dayId');
+    const group = cityGroupsOf(itinerary).find((candidate) => candidate.dayIds.includes(day._id.toString()))!;
     const criteria: ItineraryHotelSearch = {
       city: group.city,
       ...(group.countryCode ? { countryCode: group.countryCode } : {}),
@@ -817,36 +823,37 @@ export class ItinerariesService {
 
   private async canRead(itinerary: ItineraryDocument, viewer: Viewer): Promise<boolean> {
     if (viewer && itinerary.userId.toString() === viewer.userId) return true;
-    if (itinerary.visibility !== ItineraryVisibility.PUBLIC || itinerary.isHidden) return false;
+    if (itinerary.visibility !== ItineraryVisibility.PUBLIC) return false;
+    if (itinerary.isHidden) return viewer?.role === UserRole.ADMIN;
     const authorId = itinerary.userId.toString();
     return isVisibleStatus((await this.accountStatuses.getAccountStatuses([authorId])).get(authorId));
   }
 
-  private findOwned(itineraryId: string, userId: string): Promise<ItineraryDocument> {
-    return this.findOwnedBy({ _id: toObjectId(itineraryId, NOT_FOUND) }, userId, NOT_FOUND);
+  private findOwned(itineraryId: string, userId: string, session?: ClientSession): Promise<ItineraryDocument> {
+    return this.findOwnedBy({ _id: toObjectId(itineraryId, NOT_FOUND) }, userId, NOT_FOUND, session);
   }
 
-  private async findOwnedBy(filter: QueryFilter<Itinerary>, userId: string, message: string): Promise<ItineraryDocument> {
-    const itinerary = await this.itineraries.findOne({ ...filter, userId: new Types.ObjectId(userId) }).exec();
+  private async findOwnedBy(filter: QueryFilter<Itinerary>, userId: string, message: string, session?: ClientSession): Promise<ItineraryDocument> {
+    const itinerary = await this.itineraries.findOne({ ...filter, userId: new Types.ObjectId(userId) }).session(session ?? null).exec();
     if (!itinerary) throw new NotFoundException(message);
     return itinerary;
   }
 
-  private async findOwnedActivity(activityId: string, userId: string) {
+  private async findOwnedActivity(activityId: string, userId: string, session?: ClientSession) {
     const itinerary = await this.findOwnedBy(
-      { 'days.activities._id': toObjectId(activityId, 'Activity not found') }, userId, 'Activity not found',
+      { 'days.activities._id': toObjectId(activityId, 'Activity not found') }, userId, 'Activity not found', session,
     );
     for (const day of itinerary.days) {
-      const activity = day.activities.find((candidate) => candidate._id.toString() === activityId);
+      const activity = day.activities.find((candidate) => candidate._id.equals(activityId));
       if (activity) return { itinerary, day, activity };
     }
     throw new NotFoundException('Activity not found');
   }
 
   /** Saves with optimistic concurrency: a concurrent edit makes this one fail with 409. */
-  private async persist(itinerary: ItineraryDocument): Promise<ItineraryDocument> {
+  private async persist(itinerary: ItineraryDocument, session?: ClientSession): Promise<ItineraryDocument> {
     try {
-      return await itinerary.save();
+      return await itinerary.save({ session });
     } catch (error) {
       if (error instanceof MongooseError.VersionError || error instanceof MongooseError.DocumentNotFoundError) {
         throw new ConflictException('The itinerary was changed by another request. Reload and try again.');
@@ -903,8 +910,9 @@ export class ItinerariesService {
   private async dayCityId(day: Pick<ItineraryDay, 'city' | 'countryCode'>): Promise<string | null> {
     try {
       return (await this.references.resolveCity(day.city, day.countryCode)).cityId;
-    } catch {
-      return null;
+    } catch (error) {
+      if (error instanceof BadRequestException) return null;
+      throw error;
     }
   }
 
@@ -974,7 +982,7 @@ function toObjectId(id: string, notFoundMessage: string): Types.ObjectId {
 }
 
 function findDay(itinerary: ItineraryDocument, dayId: string, field?: string): ItineraryDay {
-  const day = itinerary.days.find((candidate) => candidate._id.toString() === dayId);
+  const day = itinerary.days.find((candidate) => candidate._id.equals(dayId));
   if (!day) {
     if (field) throw fieldError(field, 'Day not found in this itinerary');
     throw new NotFoundException('Day not found');

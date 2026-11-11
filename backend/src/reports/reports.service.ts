@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { ClientSession, Connection, Model, QueryFilter, Types } from 'mongoose';
 import { AuditAction, AuditTargetType } from '../audit-logs/audit-log.enums';
@@ -24,8 +24,6 @@ function isNotFound(error: unknown): boolean {
 
 @Injectable()
 export class ReportsService {
-  private readonly logger = new Logger(ReportsService.name);
-
   constructor(
     @InjectModel(Report.name) private readonly reports: Model<ReportDocument>,
     @InjectConnection() private readonly connection: Connection,
@@ -56,7 +54,7 @@ export class ReportsService {
   /** GEN-10: open reports by default, newest first, 10 per page, with the reporter's name. */
   async list(query: ListReportsQueryDto): Promise<ReportPageDto> {
     const page = query.page ?? 1;
-    const filter: QueryFilter<Report> = { status: query.status ?? ReportStatus.OPEN };
+    const filter: QueryFilter<Report> = { status: query.status ?? { $in: [ReportStatus.OPEN, ReportStatus.RESOLVING] } };
     if (query.targetType) filter.targetType = query.targetType;
     const [rows, total] = await Promise.all([
       this.reports.find(filter).sort({ createdAt: -1, _id: -1 })
@@ -72,101 +70,69 @@ export class ReportsService {
     };
   }
 
-  /**
-   * GEN-10: resolves an OPEN report.
-   *
-   * GEN-07 recovery: the report's state change and its audit entry always commit together in
-   * one transaction. The content owners' hide/delete operations do not take a session, so they
-   * run between the claim and that commit; if the audit commit fails, the claim is released and
-   * a retry completes the missing report change and audit entry (hiding again is harmless; a
-   * repeated delete finds the content gone and is recorded as such).
-   */
+  /** Claim, owner mutation, report closure and audit commit as one database action. */
   async resolve(adminId: string, reportId: string, action: ReportAction): Promise<ReportDto> {
     const _id = new Types.ObjectId(reportId);
-    const existing = await this.reports.findById(_id).lean().exec();
-    if (!existing) throw new NotFoundException('Report not found');
-    if (existing.status !== ReportStatus.OPEN) throw new ConflictException(`Report is already ${existing.status}`);
-
-    if (action === ReportAction.DISMISS) {
-      return this.connection.transaction(async (session) => {
-        const dismissed = await this.claim(_id, ReportStatus.DISMISSED, adminId, session);
-        await this.auditLogs.log({
-          adminId, action: AuditAction.REPORT_DISMISSED, targetType: AuditTargetType.REPORT, targetId: reportId,
-          details: `${dismissed.targetType} ${dismissed.targetId.toString()}: ${dismissed.reason}`,
-        }, session);
-        return toDto(dismissed);
-      });
-    }
-
-    // Claim first, outside the commit below, so two admins cannot both act on the content.
-    const claimed = await this.claim(_id, ReportStatus.RESOLVING, adminId);
-    const targetId = claimed.targetId.toString();
-    let status = action === ReportAction.HIDE ? ReportStatus.CONTENT_HIDDEN : ReportStatus.CONTENT_DELETED;
-    let auditAction = action === ReportAction.HIDE ? AuditAction.CONTENT_HIDDEN : AuditAction.CONTENT_DELETED;
-    let details = `Report ${reportId}: ${claimed.reason}`;
-    try {
-      if (action === ReportAction.HIDE) await this.content.setHidden(claimed.targetType, targetId, true);
-      else await this.content.delete(claimed.targetType, targetId);
-    } catch (error: unknown) {
-      if (!isNotFound(error)) {
-        await this.release(_id);
-        throw error;
+    return this.connection.transaction(async (session) => {
+      const existing = await this.reports.findById(_id).session(session).lean().exec();
+      if (!existing) throw new NotFoundException('Report not found');
+      if (![ReportStatus.OPEN, ReportStatus.RESOLVING].includes(existing.status)) {
+        throw new ConflictException('Report is already resolved');
       }
-      // Already removed (by its author, with its post, or by an earlier attempt of this request).
-      status = ReportStatus.CONTENT_DELETED;
-      auditAction = AuditAction.CONTENT_DELETED;
-      details = `Report ${reportId}: content was already removed. ${claimed.reason}`;
-    }
-
-    try {
-      return await this.connection.transaction(async (session) => {
-        const resolved = await this.reports.findOneAndUpdate(
-          { _id, status: ReportStatus.RESOLVING },
-          { $set: { status } },
-          { returnDocument: 'after', session },
-        ).lean().exec();
-        if (!resolved) throw new ConflictException('Report changed while it was being resolved');
-        await this.closeOpenReports(claimed.targetType, targetId, status, adminId, session);
-        await this.auditLogs.log({
-          adminId, action: auditAction, targetType: claimed.targetType as unknown as AuditTargetType, targetId, details,
-        }, session);
-        return toDto(resolved);
-      });
-    } catch (error: unknown) {
-      await this.release(_id);
-      throw error;
-    }
+      // RESOLVING may be left by the old nontransactional implementation. New claims
+      // never commit in that intermediate state, and concurrent retries serialize here.
+      const claimed = await this.claim(_id, ReportStatus.RESOLVING, adminId, session);
+      if (action === ReportAction.DISMISS) {
+        const dismissed = await this.reports.findByIdAndUpdate(_id, { $set: { status: ReportStatus.DISMISSED } },
+          { session, returnDocument: 'after' }).lean().orFail().exec();
+        await this.auditLogs.log({ adminId, action: AuditAction.REPORT_DISMISSED,
+          targetType: AuditTargetType.REPORT, targetId: reportId,
+          details: auditSummary(claimed.targetType + ' ' + claimed.targetId.toString() + ': ', claimed.reason) }, session);
+        return toDto(dismissed);
+      }
+      const targetId = claimed.targetId.toString();
+      let status = action === ReportAction.HIDE ? ReportStatus.CONTENT_HIDDEN : ReportStatus.CONTENT_DELETED;
+      let auditAction = action === ReportAction.HIDE ? AuditAction.CONTENT_HIDDEN : AuditAction.CONTENT_DELETED;
+      let prefix = 'Report ' + reportId + ': ';
+      try {
+        if (action === ReportAction.HIDE) await this.content.setHidden(claimed.targetType, targetId, true, session);
+        else await this.content.delete(claimed.targetType, targetId, session);
+      } catch (error) {
+        if (!isNotFound(error)) throw error;
+        status = ReportStatus.CONTENT_DELETED;
+        auditAction = AuditAction.CONTENT_DELETED;
+        prefix += 'content was already removed. ';
+      }
+      const resolved = await this.reports.findByIdAndUpdate(_id, { $set: { status } },
+        { session, returnDocument: 'after' }).lean().orFail().exec();
+      await this.closeOpenReports(claimed.targetType, targetId, status, adminId, session);
+      await this.auditLogs.log({ adminId, action: auditAction,
+        targetType: claimed.targetType as unknown as AuditTargetType, targetId,
+        details: auditSummary(prefix, claimed.reason) }, session);
+      return toDto(resolved);
+    });
   }
 
-  /**
-   * GEN-10: an admin hides, unhides or deletes content directly, without a report. Closing the
-   * open reports and the audit entry commit together after the owner's operation; a retry after
-   * an audit failure repeats the (idempotent) hide/unhide and records it.
-   */
+  /** Direct moderation has the same atomic audit boundary as report-driven actions. */
   async moderate(adminId: string, type: ContentType, id: string, operation: 'hide' | 'unhide' | 'delete'): Promise<ContentModerationResultDto> {
     const targetType = toTargetType(type);
-    await this.content.assertDirectlyModeratable(targetType, id);
-    if (operation === 'delete') await this.content.delete(targetType, id);
-    else await this.content.setHidden(targetType, id, operation === 'hide');
-
-    const closedReports = await this.connection.transaction(async (session) => {
-      const closed = operation === 'unhide' ? 0
+    return this.connection.transaction(async (session) => {
+      await this.content.assertDirectlyModeratable(targetType, id, session);
+      if (operation === 'delete') await this.content.delete(targetType, id, session);
+      else await this.content.setHidden(targetType, id, operation === 'hide', session);
+      const closedReports = operation === 'unhide' ? 0
         : await this.closeOpenReports(targetType, id, operation === 'hide' ? ReportStatus.CONTENT_HIDDEN : ReportStatus.CONTENT_DELETED, adminId, session);
-      await this.auditLogs.log({
-        adminId,
+      await this.auditLogs.log({ adminId,
         action: operation === 'hide' ? AuditAction.CONTENT_HIDDEN : operation === 'unhide' ? AuditAction.CONTENT_UNHIDDEN : AuditAction.CONTENT_DELETED,
-        targetType: targetType as unknown as AuditTargetType,
-        targetId: id,
-      }, session);
-      return closed;
+        targetType: targetType as unknown as AuditTargetType, targetId: id }, session);
+      return { type, id, state: operation === 'hide' ? 'HIDDEN' : operation === 'unhide' ? 'VISIBLE' : 'DELETED', closedReports };
     });
-    return { type, id, state: operation === 'hide' ? 'HIDDEN' : operation === 'unhide' ? 'VISIBLE' : 'DELETED', closedReports };
   }
 
   /** Atomically moves an OPEN report on; a concurrent resolution makes this a 409. */
   private async claim(_id: Types.ObjectId, status: ReportStatus, adminId: string, session?: ClientSession): Promise<Report> {
     const claimed = await this.reports.findOneAndUpdate(
-      { _id, status: ReportStatus.OPEN },
+      { _id, status: { $in: [ReportStatus.OPEN, ReportStatus.RESOLVING] } },
       { $set: { status, resolvedBy: new Types.ObjectId(adminId), resolvedAt: new Date() } },
       { returnDocument: 'after', session },
     ).lean().exec();
@@ -174,23 +140,20 @@ export class ReportsService {
     return claimed;
   }
 
-  /** Returns an unfinished claim to OPEN so the admin can retry. */
-  private async release(_id: Types.ObjectId): Promise<void> {
-    try {
-      await this.reports.updateOne({ _id, status: ReportStatus.RESOLVING }, { $set: { status: ReportStatus.OPEN, resolvedBy: null, resolvedAt: null } }).exec();
-    } catch {
-      this.logger.error(`Report ${_id.toString()} stays RESOLVING; it can be reopened by setting it back to OPEN`);
-    }
-  }
-
   private async closeOpenReports(targetType: ReportTargetType, targetId: string, status: ReportStatus, adminId: string, session: ClientSession): Promise<number> {
     const result = await this.reports.updateMany(
-      { targetType, targetId: new Types.ObjectId(targetId), status: ReportStatus.OPEN },
+      { targetType, targetId: new Types.ObjectId(targetId), status: { $in: [ReportStatus.OPEN, ReportStatus.RESOLVING] } },
       { $set: { status, resolvedBy: new Types.ObjectId(adminId), resolvedAt: new Date() } },
       { session },
     ).exec();
     return result.modifiedCount;
   }
+}
+
+/** Full reason is retained on the report; the audit stores a bounded linked summary. */
+function auditSummary(prefix: string, reason: string): string {
+  const summary = prefix + reason;
+  return summary.length > 500 ? summary.slice(0, 499) + '…' : summary;
 }
 
 function toDto(row: Report): ReportDto {

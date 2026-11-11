@@ -32,26 +32,24 @@ export class PostImagesService {
     if (!contentType) throw validationFailure('Image must be a JPG or PNG file');
     if (post.images.length >= MAX_IMAGES_PER_POST) throw validationFailure(`A post can have at most ${MAX_IMAGES_PER_POST} images`);
 
-    const stored = await this.images.create({ postId: post._id, data: file.buffer, contentType, size: file.size });
-    // The "no 5th image yet" condition keeps the limit even when uploads race.
-    const updated = await this.posts.findOneAndUpdate(
-      { _id: post._id, [`images.${MAX_IMAGES_PER_POST - 1}`]: { $exists: false } },
-      { $push: { images: { _id: stored._id, contentType, size: file.size, uploadedAt: stored.createdAt } } },
-      { returnDocument: 'after' },
-    ).exec();
-    if (!updated) {
-      await this.images.deleteOne({ _id: stored._id }).exec();
-      // Either the post was deleted meanwhile or another upload took the last place.
-      if (!await this.posts.exists({ _id: post._id }).exec()) throw new NotFoundException('Post not found');
-      throw validationFailure(`A post can have at most ${MAX_IMAGES_PER_POST} images`);
-    }
-    return this.blog.toResponse(updated);
+    return this.images.db.transaction(async (session) => {
+      const [stored] = await this.images.create([{ postId: post._id, data: file.buffer, contentType, size: file.size }], { session });
+      const updated = await this.posts.findOneAndUpdate(
+        { _id: post._id, [`images.${MAX_IMAGES_PER_POST - 1}`]: { $exists: false } },
+        { $push: { images: { _id: stored._id, contentType, size: file.size, uploadedAt: stored.createdAt } } },
+        { returnDocument: 'after', session }).exec();
+      if (!updated) {
+        if (!await this.posts.exists({ _id: post._id }).session(session).exec()) throw new NotFoundException('Post not found');
+        throw validationFailure(`A post can have at most ${MAX_IMAGES_PER_POST} images`);
+      }
+      return this.blog.toResponse(updated);
+    });
   }
 
   /** The image bytes, with the same visibility as the post. */
   async getImage(postId: string, imageId: string, viewer?: Viewer) {
     const post = await this.blog.getReadablePost(postId, viewer);
-    if (!Types.ObjectId.isValid(imageId) || !post.images.some((image) => image._id.toString() === imageId)) {
+    if (!Types.ObjectId.isValid(imageId) || !post.images.some((image) => image._id.equals(imageId))) {
       throw new NotFoundException('Image not found');
     }
     const image = await this.images.findOne({ _id: new Types.ObjectId(imageId), postId: post._id }).exec();
@@ -62,10 +60,14 @@ export class PostImagesService {
   /** BLG-10: the author removes an image. */
   async removeImage(postId: string, imageId: string, viewer: Viewer) {
     const post = await this.blog.getOwnedPost(postId, viewer);
-    if (!post.images.some((image) => image._id.toString() === imageId)) throw new NotFoundException('Image not found');
+    if (!post.images.some((image) => image._id.equals(imageId))) throw new NotFoundException('Image not found');
     const imageObjectId = new Types.ObjectId(imageId);
-    const updated = await this.posts.findOneAndUpdate({ _id: post._id }, { $pull: { images: { _id: imageObjectId } } }, { returnDocument: 'after' }).exec();
-    await this.images.deleteOne({ _id: imageObjectId, postId: post._id }).exec();
-    return this.blog.toResponse(updated!);
+    return this.images.db.transaction(async (session) => {
+      const updated = await this.posts.findOneAndUpdate({ _id: post._id, 'images._id': imageObjectId },
+        { $pull: { images: { _id: imageObjectId } } }, { returnDocument: 'after', session }).exec();
+      if (!updated) throw new NotFoundException('Image not found');
+      await this.images.deleteOne({ _id: imageObjectId, postId: post._id }, { session }).exec();
+      return this.blog.toResponse(updated);
+    });
   }
 }

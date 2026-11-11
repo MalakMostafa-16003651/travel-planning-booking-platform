@@ -243,7 +243,12 @@ export class RefundsService {
     const existing = await this.refunds.findOne({ stripeRefundId: input.stripeRefundId }).exec();
     if (existing) return { refund: existing, created: false };
     try {
-      return { refund: await this.refunds.create(input), created: true };
+      return await this.refunds.db.transaction(async (session) => {
+        const [refund] = await this.refunds.create([input], { session });
+        if (refund.status !== RefundStatus.PENDING) await this.notifications.stage?.(
+          this.refundNotification(refund), this.refundEventKey(refund), session);
+        return { refund, created: true };
+      });
     } catch (error) {
       if ((error as { code?: number }).code !== 11000) throw error;
       const winner = await this.refunds.findOne({ stripeRefundId: input.stripeRefundId }).exec();
@@ -258,15 +263,24 @@ export class RefundsService {
    */
   private async notifyIfFinal(refund: RefundDocument) {
     if (refund.status === RefundStatus.PENDING) return;
+    try {
+      if (this.notifications.deliver) await this.notifications.deliver(this.refundEventKey(refund));
+      else await this.notifications.notify(this.refundNotification(refund));
+    } catch {
+      this.logger.error(`Could not notify the user about refund ${refund._id.toString()}; its event remains queued`);
+    }
+  }
+
+  private refundEventKey(refund: RefundDocument): string {
+    return `refund:${refund._id.toString()}:${refund.status}`;
+  }
+
+  private refundNotification(refund: RefundDocument) {
     const amount = `${refund.amount.toFixed(2)} ${refund.currency}`;
     const message = refund.status === RefundStatus.REFUNDED
       ? `Your refund of ${amount} has been completed.`
       : `Your refund of ${amount} could not be completed. Our team will follow up.`;
-    try {
-      await this.notifications.notify({ userId: refund.userId.toString(), type: NotificationType.REFUND_ISSUED, message });
-    } catch {
-      this.logger.error(`Could not notify the user about refund ${refund._id.toString()}`);
-    }
+    return { userId: refund.userId.toString(), type: NotificationType.REFUND_ISSUED, message };
   }
 
   /** Webhook `refund.updated`. Only a PENDING refund changes, so old or repeated events cannot undo a final status. */
@@ -278,6 +292,8 @@ export class RefundsService {
       { returnDocument: 'after', session },
     ).exec();
     if (!refund) return null;
+    if (refund.status !== RefundStatus.PENDING) await this.notifications.stage?.(
+      this.refundNotification(refund), this.refundEventKey(refund), session);
     if (refund.status === RefundStatus.FAILED) {
       // Reopen durable obligations; a failed gateway refund is not money returned.
       await this.payments.updateOne({ _id: refund.paymentId, bookingConfirmedAt: null, stripePaymentIntentId: refund.stripePaymentIntentId }, { $unset: { autoRefundedAt: 1 } }, { session }).exec();
