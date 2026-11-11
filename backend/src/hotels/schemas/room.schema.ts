@@ -14,6 +14,12 @@ export class Room {
   @Prop({ type: String, required: true, trim: true, minlength: 1, maxlength: 120 })
   name!: string;
 
+  @Prop({ type: String, trim: true, minlength: 1, maxlength: 80 })
+  type?: string;
+
+  @Prop({ type: Number, min: 1, validate: Number.isSafeInteger })
+  beds?: number;
+
   @Prop({ type: Number, required: true, min: 1, validate: Number.isSafeInteger })
   capacity!: number;
 
@@ -36,4 +42,5 @@ export class Room {
 export const RoomSchema = SchemaFactory.createForClass(Room);
 RoomSchema.set('toJSON', { transform: hideBookingVersion });
 RoomSchema.set('toObject', { transform: hideBookingVersion });
-RoomSchema.index({ hotelId: 1 });
+// Legacy records are preserved; API transaction checks also protect names against legacy rows.
+RoomSchema.index({ hotelId: 1, name: 1 }, { unique: true, collation: { locale: 'en', strength: 2 }, partialFilterExpression: { type: { $exists: true }, beds: { $exists: true } }, name: 'rooms_hotel_name_unique' });

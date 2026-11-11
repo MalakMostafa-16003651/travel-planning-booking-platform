@@ -11,7 +11,7 @@ import { AdminFixture, Session } from './admin-fixture';
 
 const providers = [
   { route: 'hotels', collection: 'hotels', action: AuditAction.HOTEL_CREATED, targetType: AuditTargetType.HOTEL,
-    body: { name: 'Atomic hotel', city: 'Cairo', countryCode: 'EG', address: '12 Test Street' } },
+    body: { starClass: 4, amenities: [], name: 'Atomic hotel', city: 'Cairo', countryCode: 'EG', address: '12 Test Street' } },
   { route: 'airlines', collection: 'airlines', action: AuditAction.AIRLINE_CREATED, targetType: AuditTargetType.AIRLINE,
     body: { name: 'Atomic airline', code: 'ZX' } },
 ];

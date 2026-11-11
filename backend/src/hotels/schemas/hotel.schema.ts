@@ -54,6 +54,16 @@ export class Hotel {
   @Prop({ type: String, trim: true, default: null, maxlength: 2000 })
   description?: string | null;
 
+  @Prop({ type: Number, min: 1, max: 5, validate: Number.isInteger })
+  starClass?: number;
+
+  @Prop({ type: [String], default: undefined })
+  amenities?: string[];
+
+  /** Computed public fields, not persisted. */
+  declare averageRating?: number | null;
+  declare ratingCount?: number;
+
   /** ACC-15: a deactivated hotel is hidden from search/booking but keeps its existing confirmed reservations. */
   @Prop({ type: Boolean, required: true, default: true })
   isActive!: boolean;

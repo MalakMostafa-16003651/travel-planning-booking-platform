@@ -23,6 +23,9 @@ export class Payment {
   @Prop({ type: Types.ObjectId })
   hotelBookingId?: Types.ObjectId;
 
+  @Prop({ type: Types.ObjectId })
+  flightBookingChangeId?: Types.ObjectId;
+
   // Major units (e.g. 150.5), always copied from the booking.
   @Prop({ type: Number, required: true, min: 0 })
   amount!: number;
@@ -56,3 +59,5 @@ PaymentSchema.index({ stripePaymentIntentId: 1 }, { unique: true, name: 'payment
 // At most one Payment per booking, even if two requests race.
 PaymentSchema.index({ flightBookingId: 1 }, { unique: true, partialFilterExpression: { flightBookingId: { $exists: true } }, name: 'payments_flight_booking_unique' });
 PaymentSchema.index({ hotelBookingId: 1 }, { unique: true, partialFilterExpression: { hotelBookingId: { $exists: true } }, name: 'payments_hotel_booking_unique' });
+
+PaymentSchema.index({ flightBookingChangeId: 1 }, { unique: true, partialFilterExpression: { flightBookingChangeId: { $exists: true } }, name: 'payments_flight_change_unique' });

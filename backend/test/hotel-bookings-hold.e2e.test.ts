@@ -1,3 +1,4 @@
+import { configureTestBookableRoom } from './hotel-test-data';
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import { getModelToken } from '@nestjs/mongoose';
@@ -55,6 +56,7 @@ describe('HTL-16/HTL-18 hotel booking holds', { concurrency: false }, () => {
 
   async function createRoom(forHotel: string, name: string, capacity: number, pricePerNight: number, overrides: Partial<Room> = {}): Promise<string> {
     const [room] = await rooms.create([{ hotelId: new Types.ObjectId(forHotel), name, capacity, pricePerNight, ...overrides }]);
+    await configureTestBookableRoom(fixture.connection,room._id,forHotel);
     return room._id.toString();
   }
 
@@ -123,7 +125,7 @@ describe('HTL-16/HTL-18 hotel booking holds', { concurrency: false }, () => {
       assert.equal(held[0].hotelBookingId!.toString(), body.hotelBookingId);
       assert.equal(held[0].holdExpiresAt!.getTime(), expiresAt);
     }
-    // The rooms had no RoomAvailability document before; it was created with Lama's upsert pattern.
+    // The fixture explicitly configured positive dates; booking preserves that availability record.
     const doc = await availabilities.findOne({ roomId: new Types.ObjectId(deluxe) }).lean().exec();
     assert.equal(doc!.hotelId.toString(), hotelId);
     assert.deepEqual(doc!.blockedRanges, []);
@@ -214,7 +216,7 @@ describe('HTL-16/HTL-18 hotel booking holds', { concurrency: false }, () => {
     const single = (roomId: string, checkIn: string, checkOut: string) => request({ checkIn, checkOut, rooms: [{ roomId, adults: 1, childrenAges: [] }] });
 
     // Blocked by the moderator (HTL-06).
-    await availabilities.create([{ roomId: new Types.ObjectId(deluxe), hotelId: new Types.ObjectId(hotelId), blockedRanges: [{ startDate: '2026-12-22', endDate: '2026-12-25' }], bookedRanges: [] }]);
+    await availabilities.updateOne({ roomId: new Types.ObjectId(deluxe) }, { $set: { blockedRanges: [{ startDate: '2026-12-22', endDate: '2026-12-25' }] } }).exec();
     const blocked = await post(single(deluxe, '2026-12-20', '2026-12-23'), alice).expect(409);
     assert.equal(blocked.body.message, 'Deluxe King 204 is not available for these dates');
     // Half-open: leaving on the day the block starts, or arriving on the day it ends, is free.
@@ -263,7 +265,7 @@ describe('HTL-16/HTL-18 hotel booking holds', { concurrency: false }, () => {
   });
 
   it('HTL-18: when one room of a multi-room request is not free, no room stays held', async () => {
-    await availabilities.create([{ roomId: new Types.ObjectId(twin), hotelId: new Types.ObjectId(hotelId), blockedRanges: [{ startDate: '2026-12-21', endDate: '2026-12-22' }], bookedRanges: [] }]);
+    await availabilities.updateOne({ roomId: new Types.ObjectId(twin) }, { $set: { blockedRanges: [{ startDate: '2026-12-21', endDate: '2026-12-22' }] } }).exec();
     // Deluxe (listed first) is free and is pushed before Twin fails: the transaction must undo it.
     const response = await post(request(), alice).expect(409);
     assert.equal(response.body.message, 'Twin 105 is not available for these dates');

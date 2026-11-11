@@ -1,6 +1,6 @@
 import { BookingStatus } from '../common/enums/booking-status.enum';
 
-export type BookingType = 'flight' | 'hotel';
+export type BookingType = 'flight' | 'hotel' | 'flight-change';
 
 /** What Payments reads from a FlightBooking (Person 4) or HotelBooking (Person 6). */
 export interface PayableBooking {

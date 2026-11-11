@@ -429,6 +429,21 @@ export class HotelBookingsService {
     return found !== null;
   }
 
+  /** Shared HTL-04/05 protection: no caller can remove a Confirmed or live Pending stay. */
+  async protectedRoomStays(roomId: string, session: ClientSession): Promise<{ startDate: string; endDate: string }[]> {
+    const rows = await this.bookings.find({ 'rooms.roomId': new Types.ObjectId(roomId), $or: [
+      { status: BookingStatus.CONFIRMED }, { status: BookingStatus.PENDING, holdExpiresAt: { $gt: new Date() } },
+    ] }).select('checkIn checkOut').session(session).lean().exec();
+    return rows.map(r=>({startDate:r.checkIn,endDate:r.checkOut}));
+  }
+
+  /** Only the assigned hotel's references; no guest/user details cross this interface. */
+  async availabilityReferences(hotelId: string, ids: string[]): Promise<Map<string, { bookingReference?: string; status: BookingStatus }>> {
+    if (!ids.length) return new Map();
+    const rows = await this.bookings.find({ _id: { $in: [...new Set(ids)].map(id=>new Types.ObjectId(id)) }, hotelId: new Types.ObjectId(hotelId) }).select('bookingReference status').lean().exec();
+    return new Map(rows.map(r=>[r._id.toString(),{bookingReference:r.bookingReference,status:r.status}]));
+  }
+
   /**
    * ACC-15 (Person 2 connects this right after deactivating a hotel): every PENDING hold of that hotel becomes
    * EXPIRED (the only GEN-11 exit from PENDING) and its HELD ranges are removed, one transaction per

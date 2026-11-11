@@ -1,3 +1,4 @@
+import { configureTestBookableRoom } from './hotel-test-data';
 import { PaymentsService } from '../src/payments/payments.service';
 import { PaymentDocument } from '../src/payments/schemas/payment.schema';
 import assert from 'node:assert/strict';
@@ -51,6 +52,7 @@ describe('HTL-21 whole hotel cancellation and refunds', { concurrency: false }, 
         { daysBeforeCheckIn: 1, refundPercentage: 25 }, { daysBeforeCheckIn: 7, refundPercentage: 100 }, { daysBeforeCheckIn: 2, refundPercentage: 50 },
       ] });
     await fixture.connection.collection('rooms').insertMany(roomIds.map((_id, i) => ({ _id, hotelId, name: 'Room ' + i, capacity: 2, pricePerNight: 10000, isActive: true })));
+    for (const roomId of roomIds) await configureTestBookableRoom(fixture.connection,roomId,hotelId);
     const hold = await fixture.http().post('/api/hotel-bookings').set('Cookie', owner.cookie).send({ hotelId: hotelId.toString(),
       checkIn: CHECK_IN, checkOut: '2035-01-12', rooms: roomIds.map(id => ({ roomId: id.toString(), adults: 1, childrenAges: [] })) }).expect(201);
     bookingId = hold.body.hotelBookingId;

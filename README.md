@@ -8,7 +8,9 @@ Database: MongoDB Atlas
 
 ## Current implementation
 
-ACC-01 user registration is the first implemented backend feature. It
+The backend includes user registration, login/logout, profile updates, password changes/reset, verification, account deactivation, reusable guards and role/ownership enforcement. The detailed authentication sequence below records the implemented features; the current [ownership matrix](docs/requirements/milestone-1-ownership-matrix.md) tracks all eight modules, open audit findings and optional bonuses.
+
+ACC-01 registration
 accepts name, email, password, and terms-and-privacy consent; creates a `USER`
 account with `ACTIVE` status; stores a salted password hash; and returns only
 public account fields. ACC-04 adds login for the agreed roles, protected access and
@@ -37,10 +39,7 @@ The [flight booking contract proposal](docs/requirements/flight-booking-contract
 records what flight booking and seat holds need from Flights and Payments, along with
 the decisions still open for the team.
 
-The [hotel contract proposal](docs/requirements/hotel-contract-proposal.md) records
-the proposed Hotel/Room/RoomAvailability schemas, the HTL-01 through HTL-22
-endpoints, and what Hotels needs from and exports to Payments and the (not yet
-built) hotel-booking module.
+The [approved hotel contract](docs/requirements/hotel-contract-proposal.md) records required hotel/room metadata, positive bookable ranges, reservation-safe updates and ten-item search/inventory responses. The PR103 implementation integrates the existing hotel-booking module; review is pending. Existing rooms need explicit positive availability before accepting new holds.
 
 ## Student workflow record
 

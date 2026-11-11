@@ -1,3 +1,4 @@
+import { configureTestBookableRoom } from './hotel-test-data';
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, it, mock } from 'node:test';
 import { ClientSession, Types } from 'mongoose';
@@ -49,6 +50,7 @@ describe('HTL-17 real hotel payment confirmation', { concurrency: false }, () =>
       checkInTime: '14:00', checkOutTime: '12:00', cancellationTiers: [{ daysBeforeCheckIn: 1, refundPercentage: 100 }] });
     await fixture.connection.collection('rooms').insertMany(roomIds.map((_id, index) => ({ _id, hotelId, name: 'Room ' + index,
       capacity: 2, pricePerNight: 10000, isActive: true })));
+    for (const roomId of roomIds) await configureTestBookableRoom(fixture.connection,roomId,hotelId);
     const hold = await fixture.http().post('/api/hotel-bookings').set('Cookie', owner.cookie).send({ hotelId: hotelId.toString(),
       checkIn: '2035-01-10', checkOut: '2035-01-12', rooms: roomIds.map(roomId => ({ roomId: roomId.toString(), adults: 1, childrenAges: [] })) }).expect(201);
     bookingId = hold.body.hotelBookingId;

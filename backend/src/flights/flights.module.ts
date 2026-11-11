@@ -1,3 +1,4 @@
+import { FlightSeatsPersistenceModule } from '../flight-bookings/flight-seats-persistence.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AirlinesModule } from '../airlines/airlines.module';
@@ -18,6 +19,7 @@ import {Flight,FlightSchema,} from './schemas/flight.schema';
 @Module({
   imports: [
     AuthModule,
+    FlightSeatsPersistenceModule,
     AirlinesModule,
     FlightBookingsModule,
     NotificationsModule,

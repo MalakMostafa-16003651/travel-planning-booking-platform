@@ -1,3 +1,4 @@
+import { configureTestBookableRoom } from './hotel-test-data';
 import { FavoritesModule } from '../src/favorites/favorites.module';
 import { ItineraryExportsModule } from '../src/itinerary-exports/itinerary-exports.module';
 import assert from 'node:assert/strict';
@@ -62,6 +63,7 @@ describe('GEN-13 approved booking gates and payment recovery', { concurrency: fa
   async function hotel() {
     const h = await hotels.create({ name: 'Gated Hotel', city: 'Cairo', countryCode: 'EG', address: 'Synthetic', cancellationTiers: [], checkInTime: '14:00', checkOutTime: '12:00' });
     const room = await rooms.create({ hotelId: h._id, name: 'Gated Room', capacity: 2, pricePerNight: 10000 });
+    await configureTestBookableRoom(fixture.connection,room._id,h._id);
     await col('moderatorassignments').insertOne({ moderatorId: new Types.ObjectId(mod.userId), hotelId: h._id });
     return { h, room };
   }
@@ -238,7 +240,8 @@ describe('GEN-13 approved booking gates and payment recovery', { concurrency: fa
   });
   it('R6/R7: hotel quotes meet guest capacity and reject impossible/past dates before returning results', async () => {
     const { h, room } = await hotel(); await rooms.updateOne({ _id: room._id }, { $set: { capacity: 1, pricePerNight: 1000 } });
-    await rooms.create({ hotelId: h._id, name: 'Large', capacity: 4, pricePerNight: 20000 });
+    const large = await rooms.create({ hotelId: h._id, name: 'Large', capacity: 4, pricePerNight: 20000 });
+    await configureTestBookableRoom(fixture.connection,large._id,h._id);
     const query = { city: 'Cairo', guests: 4, checkIn: '2035-01-10', checkOut: '2035-01-12' };
     assert.equal((await fixture.http().get('/api/hotels/search').query({ ...query, maxPrice: 1500 }).expect(200)).body.total, 0);
     assert.equal((await fixture.http().get('/api/hotels/search').query(query).expect(200)).body.items[0].fromPrice, 20000);

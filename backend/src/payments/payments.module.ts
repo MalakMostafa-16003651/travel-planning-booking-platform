@@ -1,3 +1,4 @@
+import { FlightBookingChangesPersistenceModule } from '../flight-bookings/flight-booking-changes-persistence.module';
 import { forwardRef, Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AuthModule } from '../auth/auth.module';
@@ -22,6 +23,7 @@ import { StripeService } from './stripe.service';
 @Module({
   imports: [
     AuthModule,
+    FlightBookingChangesPersistenceModule,
     // forwardRef: the booking modules import this module for their BOOKING_PAYMENTS port.
     forwardRef(() => FlightBookingsModule),
     forwardRef(() => HotelBookingsModule),

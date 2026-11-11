@@ -1,19 +1,20 @@
 import { ApiPropertyOptional, ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsISO8601, IsEnum, IsInt, IsOptional, IsString, Matches, Max, Min, MinLength } from 'class-validator';
+import { IsNumber, IsISO8601, IsEnum, IsInt, IsOptional, IsString, Matches, Max, Min, MinLength } from 'class-validator';
 import { DATE_ONLY } from './transforms';
 
 export enum HotelSearchSort {
   PRICE_ASC = 'PRICE_ASC',
   PRICE_DESC = 'PRICE_DESC',
   NAME = 'NAME',
+  RATING_DESC = 'RATING_DESC',
 }
 
 /** HTL-11, HTL-12. Field names match ItineraryHotelSearch (itineraries/ports/travel-search.port.ts) exactly. */
 export class SearchHotelsQueryDto {
-  @ApiProperty({ example: 'Cairo' })
-  @IsString() @MinLength(1)
-  city!: string;
+  @ApiPropertyOptional({ example: 'Cairo', description: 'Choose city, countryCode, or both.' })
+  @IsOptional() @IsString() @MinLength(1)
+  city?: string;
 
   @ApiPropertyOptional({ example: 'EG' })
   @IsOptional() @IsString() @Matches(/^[A-Z]{2}$/)
@@ -45,8 +46,12 @@ export class SearchHotelsQueryDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(0)
   maxPrice?: number;
 
+  @ApiPropertyOptional({ minimum: 1, maximum: 5, description: 'Minimum visible average rating; unrated hotels are excluded.' })
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(1) @Max(5)
+  minRating?: number;
+
   @ApiPropertyOptional({ enum: HotelSearchSort, default: HotelSearchSort.NAME })
-  @IsOptional() @IsEnum(HotelSearchSort, { message: 'sort must be PRICE_ASC, PRICE_DESC or NAME' })
+  @IsOptional() @IsEnum(HotelSearchSort, { message: 'sort must be PRICE_ASC, PRICE_DESC, RATING_DESC or NAME' })
   sort?: HotelSearchSort;
 
   @ApiPropertyOptional({ example: 1, minimum: 1 })

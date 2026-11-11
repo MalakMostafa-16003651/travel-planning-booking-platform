@@ -11,7 +11,7 @@ import { AnalyticsPageDto, AnalyticsQueryDto, ProviderAnalyticsDto } from './dto
 
 const DAY_MS = 86400000;
 const PAGE_SIZE = 10;
-type Receipt = { bookingType: 'flight' | 'hotel'; amount: number; currency: string;
+type Receipt = { bookingType: 'flight' | 'hotel' | 'flight-change'; bookingKey?: Types.ObjectId; amount: number; currency: string;
   booking?: { hotelId?: Types.ObjectId; segments?: { airlineId: Types.ObjectId; fare: number }[] }; refunds: { amount: number; currency: string }[] };
 
 @Injectable()
@@ -31,27 +31,36 @@ export class AdminAnalyticsService {
     const page = query.page ?? 1;
     const rows = await this.connection.transaction(async session => {
       const groups = new Map<string, ProviderAnalyticsDto>();
+      const counted = new Set<string>();
       const cursor = this.payments.aggregate<Receipt>([
         { $match: { bookingConfirmedAt: { $gte: start, $lt: exclusiveEnd }, status: { $in: [PaymentStatus.SUCCEEDED, PaymentStatus.REFUNDED] },
-          ...(query.type ? { bookingType: query.type === 'airline' ? 'flight' : 'hotel' } : {}) } },
+          ...(query.type ? { bookingType: query.type === 'airline' ? { $in: ['flight', 'flight-change'] } : 'hotel' } : {}) } },
         { $lookup: { from: 'flightbookings', localField: 'flightBookingId', foreignField: '_id', pipeline: [{ $project: { _id: 0, 'segments.airlineId': 1, 'segments.fare': 1 } }], as: 'flight' } },
+        { $lookup: { from: 'flightbookingchanges', localField: 'flightBookingChangeId', foreignField: '_id', pipeline: [
+          { $lookup: { from: 'flightbookings', localField: 'flightBookingId', foreignField: '_id', pipeline: [{ $project: { 'segments.airlineId': 1, 'segments.fare': 1 } }], as: 'currentBooking' } },
+          { $set: { currentBooking: { $arrayElemAt: ['$currentBooking', 0] } } },
+        ], as: 'change' } },
         { $lookup: { from: 'hotelbookings', localField: 'hotelBookingId', foreignField: '_id', pipeline: [{ $project: { _id: 0, hotelId: 1 } }], as: 'hotel' } },
         { $lookup: { from: 'refunds', let: { paymentId: '$_id', intent: '$stripePaymentIntentId' }, pipeline: [
           { $match: { status: RefundStatus.REFUNDED, createdAt: { $lte: generatedAt }, $expr: { $and: [{ $eq: ['$paymentId', '$$paymentId'] }, { $eq: ['$stripePaymentIntentId', '$$intent'] }] } } },
           { $project: { _id: 0, amount: 1, currency: 1 } },
         ], as: 'refunds' } },
         { $project: { _id: 0, bookingType: 1, amount: 1, currency: 1, refunds: 1,
-          booking: { $cond: [{ $eq: ['$bookingType', 'flight'] }, { $arrayElemAt: ['$flight', 0] }, { $arrayElemAt: ['$hotel', 0] }] } } },
+          bookingKey: { $ifNull: ['$flightBookingId', { $ifNull: ['$hotelBookingId', { $arrayElemAt: ['$change.flightBookingId', 0] }] }] },
+          booking: { $switch: { branches: [
+            { case: { $eq: ['$bookingType', 'hotel'] }, then: { $arrayElemAt: ['$hotel', 0] } },
+            { case: { $eq: ['$bookingType', 'flight-change'] }, then: { $arrayElemAt: ['$change.currentBooking', 0] } },
+          ], default: { $arrayElemAt: ['$flight', 0] } } } } },
       ]).session(session).option({ maxTimeMS: 15000 }).cursor({ batchSize: 100 });
       try {
         for await (const raw of cursor) {
           const receipt = raw as Receipt;
-          if (!['flight', 'hotel'].includes(receipt.bookingType)) throw unavailable();
+          if (!['flight', 'hotel', 'flight-change'].includes(receipt.bookingType)) throw unavailable();
           const gross = minor(receipt.amount, receipt.currency);
           const refunded = receipt.refunds.reduce((sum, refund) => safeSum(sum, minor(refund.amount, refund.currency)), 0);
           if (refunded > gross) throw unavailable();
-          const type = receipt.bookingType === 'flight' ? 'airline' : 'hotel';
-          const providers = receipt.bookingType === 'flight'
+          const type = receipt.bookingType === 'hotel' ? 'hotel' : 'airline';
+          const providers = receipt.bookingType !== 'hotel'
             ? receipt.booking?.segments?.map(segment => ({ id: segment.airlineId?.toString(), weight: segment.fare }))
             : receipt.booking?.hotelId ? [{ id: receipt.booking.hotelId.toString(), weight: 1 }] : undefined;
           if (!providers?.length || providers.some(provider => !/^[a-f\d]{24}$/i.test(provider.id ?? ''))) throw unavailable();
@@ -67,7 +76,8 @@ export class AdminAnalyticsService {
               row = { type, ...(type === 'airline' ? { airlineId: id } : { hotelId: id }), name: '', bookings: 0, grossRevenueMinor: 0, refundedMinor: 0, netRevenueMinor: 0, currency: PLATFORM_CURRENCY };
               groups.set(key, row);
             }
-            row.bookings++;
+            const countKey = key + ':' + receipt.bookingKey?.toString();
+            if (!counted.has(countKey)) { row.bookings++; counted.add(countKey); }
             row.refundedMinor = safeSum(row.refundedMinor, refundShares.get(id)!);
             row.netRevenueMinor = safeSum(row.netRevenueMinor, allocatedGross - refundShares.get(id)!);
             row.grossRevenueMinor = safeSum(row.netRevenueMinor, row.refundedMinor);
@@ -84,7 +94,7 @@ export class AdminAnalyticsService {
       items.forEach(row => { row.name = (row.airlineId ? airlineNames.get(row.airlineId) : hotelNames.get(row.hotelId!)) ?? 'Unavailable provider'; });
       return { items, total: all.length };
     }, { readConcern: { level: 'snapshot' }, readPreference: 'primary' });
-    return { from: query.from, to: query.to, generatedAt, basis: 'Paid confirmation-date cohort (UTC); completed refunds through generatedAt. Flight gross receipts use stored-fare weights; refunds use allocated gross weights, both with largest-remainder cents. Provider payouts are not calculated; mixed-airline counts are not additive.', ...rows, page, pageSize: PAGE_SIZE };
+    return { from: query.from, to: query.to, generatedAt, basis: 'Paid confirmation-date cohort (UTC); completed refunds through generatedAt. Flight receipts (including applied fare differences) use the current canonical booking provider/fare weights; repeated charges count the same booking once per provider; refunds use allocated gross weights, both with largest-remainder cents. Provider payouts are not calculated; mixed-airline counts are not additive.', ...rows, page, pageSize: PAGE_SIZE };
   }
 }
 function unavailable() { return new ServiceUnavailableException('Analytics source records need reconciliation; no partial totals were returned'); }

@@ -1,3 +1,5 @@
+import { advanceBookingVersion, incrementableVersion } from '../common/booking-gate';
+import { FlightSeatAssignmentsService } from '../flight-bookings/flight-seat-assignments.service';
 import {BadRequestException,ConflictException,ForbiddenException,Injectable,Logger,NotFoundException,OnModuleInit,ServiceUnavailableException,} from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, QueryFilter, Types } from 'mongoose';
@@ -44,6 +46,7 @@ export class FlightsService implements OnModuleInit {
 
     private readonly bookings: FlightBookingsService,
     private readonly notifications: NotificationsService,
+    private readonly seatAssignments: FlightSeatAssignmentsService,
   ) {}
 
 async onModuleInit(): Promise<void> {
@@ -420,86 +423,25 @@ async onModuleInit(): Promise<void> {
 
   // FLT-05: Update cabin inventory
 
-  async updateCabin(
-    moderatorId: string,
-    flightId: string,
-    cabinId: string,
-    input: UpdateCabinDto,
-  ): Promise<CabinInventory> {
-    if (!Object.keys(input).length) {
-      throw new BadRequestException(
-        'Supply at least one cabin field',
-      );
-    }
-
-    const flight = await this.getOwnedScheduledFlight(
-      moderatorId,
-      flightId,
-    );
-
-    const cabinObjectId = this.objectId(
-      cabinId,
-      'Cabin',
-    );
-
-    const cabin = await this.cabins
-      .findOne({
-        _id: cabinObjectId,
-        flightId: flight._id,
-      })
-      .exec();
-
-    if (!cabin) {
-      throw new NotFoundException(
-        'Cabin not found for this flight',
-      );
-    }
-
-    if (input.totalSeats !== undefined) {
-      const updated = await this.cabins
-        .findOneAndUpdate(
-          {
-            _id: cabinObjectId,
-            flightId: flight._id,
-            $expr: {
-              $gte: [
-                input.totalSeats,
-                {
-                  $add: ['$bookedSeats', '$heldSeats'],
-                },
-              ],
-            },
-          },
-          { $set: { ...input } },
-          { new: true, runValidators: true },
-        )
-        .exec();
-
-      if (!updated) {
-        throw new ConflictException(
-          'Seat count cannot be reduced below booked plus held seats',
-        );
+  async updateCabin(moderatorId: string, flightId: string, cabinId: string, input: UpdateCabinDto): Promise<CabinInventory> {
+    if (!Object.keys(input).length) throw new BadRequestException('Supply at least one cabin field');
+    const flight = await this.getOwnedScheduledFlight(moderatorId, flightId);
+    const cabinObjectId = this.objectId(cabinId, 'Cabin');
+    return this.connection.transaction(async (session) => {
+      const gate = await this.flights.updateOne({ _id: flight._id, status: FlightStatus.SCHEDULED,
+        departureAt: { $gt: new Date() }, $expr: incrementableVersion('bookingVersion') },
+        advanceBookingVersion(), { session, updatePipeline: true, timestamps: false }).exec();
+      if (gate.modifiedCount !== 1) throw new ConflictException('Flight is no longer editable');
+      if (!await this.cabins.exists({ _id: cabinObjectId, flightId: flight._id }).session(session)) throw new NotFoundException('Cabin not found for this flight');
+      if (input.totalSeats !== undefined && input.totalSeats < await this.seatAssignments.highestSeat(cabinId, session)) {
+        throw new ConflictException('Seat count cannot remove an assigned seat number');
       }
-
+      const updated = await this.cabins.findOneAndUpdate({ _id: cabinObjectId, flightId: flight._id,
+        ...(input.totalSeats === undefined ? {} : { $expr: { $gte: [input.totalSeats, { $add: ['$bookedSeats', '$heldSeats'] }] } }) },
+        { $set: input }, { returnDocument: 'after', runValidators: true, session }).exec();
+      if (!updated) throw new ConflictException('Seat count cannot be reduced below booked plus held seats');
       return updated;
-    }
-
-    const updated = await this.cabins
-      .findOneAndUpdate(
-        {
-          _id: cabinObjectId,
-          flightId: flight._id,
-        },
-        { $set: input },
-        { new: true, runValidators: true },
-      )
-      .exec();
-
-    if (!updated) {
-      throw new NotFoundException('Cabin not found');
-    }
-
-    return updated;
+    });
   }
 
   // FLT-06: Cancel flight

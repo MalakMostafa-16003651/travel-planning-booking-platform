@@ -1,3 +1,4 @@
+import { FlightSeatSelectionDto } from './select-flight-seats.dto';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { BookingStatus } from '../../common/enums/booking-status.enum';
 import { BOOKINGS_PAGE_SIZE } from '../flight-booking.rules';
@@ -80,6 +81,7 @@ export class FlightRefundStatusDto {
 }
 
 export class FlightBookingDto {
+  @ApiPropertyOptional({ type: [FlightSeatSelectionDto], description: 'Optional FLT-28 selections, populated on booking details.' }) seatSelections?: FlightSeatSelectionDto[];
   @ApiProperty() flightBookingId!: string;
   @ApiProperty() userId!: string;
   @ApiProperty({ enum: BookingStatus }) status!: BookingStatus;

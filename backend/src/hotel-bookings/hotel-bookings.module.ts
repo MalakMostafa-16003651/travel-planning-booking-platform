@@ -35,6 +35,6 @@ import { HotelBooking, HotelBookingSchema } from './schemas/hotel-booking.schema
   providers: [HotelCancellationQuotesService, HotelBookingsService, HotelBookingsMaintenanceService, HotelBookingsClock, RoomInventoryAdapter],
   // Person 5 (HTL-22 listForHotel), Person 2 (ACC-17 listForAdmin) and Person 1 (ACC-12
   // hasUpcomingConfirmedBookings) connect these on their side.
-  exports: [HotelBookingsService],
+  exports: [HotelBookingsService, RoomInventoryAdapter],
 })
 export class HotelBookingsModule {}

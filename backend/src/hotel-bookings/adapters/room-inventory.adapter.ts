@@ -22,18 +22,19 @@ export class RoomInventoryAdapter {
   ) {}
 
   /** Lock hotel first, then sorted room IDs. Provider/room status writes serialize with these gates. */
-  async acquireBookingGate(hotelId: string, roomIds: string[], session: ClientSession): Promise<void> {
-    const hotel = await this.hotels.updateOne({ _id: hotelId, isActive: true, $expr: incrementableVersion('bookingVersion') },
+  async acquireBookingGate(hotelId: string, roomIds: string[], session: ClientSession, requireActive = true): Promise<void> {
+    const active = requireActive ? { isActive: true } : {};
+    const hotel = await this.hotels.updateOne({ _id: hotelId, ...active, $expr: incrementableVersion('bookingVersion') },
       advanceBookingVersion(), { session, updatePipeline: true, timestamps: false }).exec();
     if (hotel.modifiedCount !== 1) {
-      if (!await this.hotels.exists({ _id: hotelId, isActive: true }).session(session).exec()) throw new NotFoundException('Hotel not found');
+      if (!await this.hotels.exists({ _id: hotelId, ...active }).session(session).exec()) throw new NotFoundException('Hotel not found');
       throw new ConflictException('Hotel booking gate is unavailable');
     }
     for (const roomId of [...new Set(roomIds.map(id => id.toLowerCase()))].sort()) {
-      const room = await this.rooms.updateOne({ _id: roomId, hotelId, isActive: true, $expr: incrementableVersion('bookingVersion') },
+      const room = await this.rooms.updateOne({ _id: roomId, hotelId, ...active, $expr: incrementableVersion('bookingVersion') },
         advanceBookingVersion(), { session, updatePipeline: true, timestamps: false }).exec();
       if (room.modifiedCount !== 1) {
-        if (!await this.rooms.exists({ _id: roomId, hotelId, isActive: true }).session(session).exec()) throw new NotFoundException('Room not found in this hotel');
+        if (!await this.rooms.exists({ _id: roomId, hotelId, ...active }).session(session).exec()) throw new NotFoundException('Room not found in this hotel');
         throw new ConflictException('Room booking gate is unavailable');
       }
     }
@@ -48,7 +49,7 @@ export class RoomInventoryAdapter {
   }
 
   /**
-   * L4: a room has no RoomAvailability document until its first blockDates. Create it with the same
+   * A legacy room may have no availability document. Create a CLOSED record with the same
    * idempotent upsert Person 5 uses in HotelsService.blockDates ($setOnInsert; a concurrent insert's
    * duplicate-key error means it now exists). Runs before the hold transaction, so the conditional
    * hold below can stay a plain non-upsert update.
@@ -69,8 +70,8 @@ export class RoomInventoryAdapter {
 
   /**
    * HTL-18, inside the caller's transaction:
-   * 1. L3: remove this room's expired HELD entries (Person 5's search does not check holdExpiresAt);
-   * 2. L1: push a HELD range only if nothing in blockedRanges or bookedRanges overlaps [checkIn, checkOut)
+   * 1. Remove expired HELD entries (public readers also ignore their elapsed deadlines);
+   * 2. Push a HELD range only inside configured positive availability, with no blocked/booked overlap [checkIn, checkOut)
    *    (startDate < checkOut && endDate > checkIn, half-open, the same rule as HotelsService.isRoomFree).
    * Returns false, having added nothing, when the room is not free.
    */
@@ -80,15 +81,12 @@ export class RoomInventoryAdapter {
     hold: { hotelBookingId: Types.ObjectId; holdExpiresAt: Date; now: Date },
     session: ClientSession,
   ): Promise<boolean> {
-    await this.availabilities.updateOne(
-      { roomId },
-      { $pull: { bookedRanges: { status: BookedRangeStatus.HELD, holdExpiresAt: { $lte: hold.now } } } },
-      { session },
-    ).exec();
+    await this.releaseExpiredRoomHolds(roomId,hold.now,session);
     const overlap = { startDate: { $lt: stay.checkOut }, endDate: { $gt: stay.checkIn } };
     const result = await this.availabilities.updateOne(
       {
         roomId,
+        bookableRanges: { $elemMatch: { startDate: { $lte: stay.checkIn }, endDate: { $gte: stay.checkOut } } },
         blockedRanges: { $not: { $elemMatch: overlap } },
         bookedRanges: { $not: { $elemMatch: overlap } },
       },
@@ -106,6 +104,12 @@ export class RoomInventoryAdapter {
       { session, runValidators: true },
     ).exec();
     return result.modifiedCount === 1;
+  }
+
+  /** Shared by new holds and moderator blocking; elapsed holds no longer own these nights. */
+  async releaseExpiredRoomHolds(roomId: Types.ObjectId, now: Date, session?: ClientSession): Promise<void> {
+    await this.availabilities.updateOne({ roomId },
+      { $pull: { bookedRanges: { status: BookedRangeStatus.HELD, holdExpiresAt: { $lte: now } } } }, { session }).exec();
   }
 
   /** HTL-17: convert exactly this reservation's live hold, inside the booking transaction. */
