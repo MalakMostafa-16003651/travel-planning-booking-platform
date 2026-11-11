@@ -352,7 +352,7 @@ All routes need a login and role `USER` (shared `AuthGuard` and `RolesGuard`). A
 
 **Read-only views for the blog (BLG-12, BLG-13).** `ItinerariesService.listPublicByAuthor(authorId, page)` and `getPublicSummary(itineraryId, authorId?)` return public itinerary summaries with the same visibility rules as public search (PUBLIC only, deactivated or missing authors hidden, summary fields only). See the [itinerary contract](../docs/requirements/itinerary-contract-proposal.md).
 
-**Attractions.** An activity's optional `attractionId` must be one of the shared catalog's ids (`GET /api/attractions`, `att-1` to `att-8`); unknown ids are rejected with 400 on create and update.
+**Attractions.** An activity's optional `attractionId` must be one of the shared catalog's ids (`GET /api/attractions`, `att-1` to `att-8`), and that attraction must be in the city of the activity's day; otherwise create and update return 400. Changing a day's city is rejected with 400 while one of its activities points at an attraction in the old city. Send `"attractionId": null` in `PATCH /api/activities/{activityId}` to remove an attraction (an empty string is rejected).
 
 **Moderation hooks (GEN-09, GEN-10).** `ItinerariesService.itineraryExists`, `setItineraryHidden` and `adminDeleteItinerary` are for the reports module. Only PUBLIC itineraries can be reported. A hidden itinerary is shown only to its owner (flagged `isHidden`), and only an administrator can unhide it.
 
