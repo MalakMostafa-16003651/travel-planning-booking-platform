@@ -29,6 +29,7 @@ import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { UserRole } from '../common/enums/user-role.enum';
 import { AvailableRoomsQueryDto } from './dto/available-rooms-query.dto';
+import { HotelDetailQueryDto } from './dto/hotel-detail-query.dto';
 import { BlockRoomDatesDto } from './dto/block-room-dates.dto';
 import { CreateHotelDto } from './dto/create-hotel.dto';
 import { CreateRoomDto } from './dto/create-room.dto';
@@ -75,11 +76,14 @@ export class HotelsController {
 
   @Get(':id')
   @UseGuards(OptionalAuthGuard)
-  @ApiOperation({ summary: 'View a hotel profile (HTL-02)' })
-  @ApiOkResponse({ description: 'The hotel profile' })
+  @ApiOperation({
+    summary: 'View a hotel details page (HTL-02)',
+    description: 'Profile, photos, star class, amenities, check-in/check-out times, cancellation tiers, averageRating and ratingCount, and `reviews` (newest first, first page of 10; more via GET /api/hotels/{id}/reviews). With checkIn and checkOut (and optional guests) it also returns `availableRooms` for that stay (first page; more via GET /api/hotels/{id}/rooms/available); otherwise availableRooms is null.',
+  })
+  @ApiOkResponse({ description: 'The hotel details', type: Object })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: 'Not found, or deactivated and not visible to the caller.' })
-  getById(@Param('id') id: string, @Req() req: AuthenticatedRequest): Promise<Hotel> {
-    return this.hotels.getById(id, req.user);
+  getById(@Param('id') id: string, @Req() req: AuthenticatedRequest, @Query() query: HotelDetailQueryDto): Promise<Record<string, unknown>> {
+    return this.hotels.getDetails(id, req.user, query);
   }
 
   @Patch(':id')
@@ -125,7 +129,7 @@ export class HotelsController {
   @UseGuards(AuthGuard, RolesGuard)
   @Roles(UserRole.HOTEL_MODERATOR)
   @ApiCookieAuth('accessToken')
-  @ApiOperation({ summary: 'Edit a room of the moderator\'s own hotel (HTL-05)' })
+  @ApiOperation({ summary: 'Edit a room of the moderator\'s own hotel (HTL-05, HTL-06)', description: 'Name, type, beds, maximum occupancy and price (existing reservations keep their booked price). isActive false deactivates the room: 409 while it has a Confirmed or unexpired Pending Payment reservation; a deactivated room is excluded from search. isActive true reactivates it.' })
   @ApiOkResponse({ description: 'Updated room' })
   @ApiUnauthorizedResponse({ type: ApiErrorDto })
   @ApiForbiddenResponse({ type: ApiErrorDto })
@@ -144,14 +148,14 @@ export class HotelsController {
   @UseGuards(AuthGuard, RolesGuard)
   @Roles(UserRole.HOTEL_MODERATOR)
   @ApiCookieAuth('accessToken')
-  @ApiOperation({ summary: 'Remove a room from the moderator\'s own hotel (HTL-06)', description: 'A soft deactivation: existing bookings referencing the room keep a valid id. Refused while the room has an active reservation (an unexpired hold or a confirmed stay not yet checked out).' })
+  @ApiOperation({ summary: 'Delete a room of the moderator\'s own hotel (HTL-06)', description: 'Permanent, and allowed only for a room that has never been reserved. A room with any reservation history returns 409: deactivate it instead with PATCH /api/hotels/{id}/rooms/{roomId} { "isActive": false }, which excludes it from search and is refused while it has a Confirmed or unexpired Pending Payment reservation.' })
   @ApiNoContentResponse()
   @ApiUnauthorizedResponse({ type: ApiErrorDto })
   @ApiForbiddenResponse({ type: ApiErrorDto })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: 'Not :id\'s hotel, or the room does not belong to it.' })
-  @ApiConflictResponse({ type: ApiErrorDto, description: 'The room has an active reservation.' })
-  async deactivateRoom(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Param('roomId') roomId: string): Promise<void> {
-    await this.hotels.deactivateRoom(req.user!.userId, id, roomId);
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'The room has been reserved before.' })
+  async deleteRoom(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Param('roomId') roomId: string): Promise<void> {
+    await this.hotels.deleteRoom(req.user!.userId, id, roomId);
   }
 
   @Get(':id/rooms/available')

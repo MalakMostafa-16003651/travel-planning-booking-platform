@@ -1,5 +1,5 @@
 import { FlightBookingChangeDto } from './dto/flight-booking-change.dto';
-import { Body, Controller, Get, Header, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Header, Param, Post, Req, UseGuards, Patch } from '@nestjs/common';
 import { ApiBadRequestResponse, ApiConflictResponse, ApiCookieAuth, ApiCreatedResponse, ApiForbiddenResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags, ApiUnauthorizedResponse } from '@nestjs/swagger';
 import { AuthGuard, AuthenticatedRequest } from '../auth/auth.guard';
 import { Roles } from '../auth/roles.decorator';
@@ -24,6 +24,10 @@ export class FlightBookingChangesController {
   @ApiOperation({summary:'FLT-27: hold a replacement trip and quote its fare difference'})
   @ApiCreatedResponse({type:FlightBookingChangeDto,description:'10-minute change hold; original booking stays Confirmed.'})
   create(@Param('id')id:string,@Req()request:AuthenticatedRequest,@Body()input:CreateFlightBookingChangeDto){return this.changes.create(id,request.user!.userId,input);}
+  @Patch('flight-bookings/:id/change-flight') @Header('Cache-Control','no-store')
+  @ApiOperation({summary:'FLT-27: change flight (PDF path for POST /api/flight-bookings/{id}/changes)',description:'Same request and result: holds the replacement trip for 10 minutes and quotes the fare difference. Finish with POST /api/flight-booking-changes/{id}/confirm (equal/lower fare) or a Stripe payment of type flight-change (higher fare).'})
+  @ApiOkResponse({type:FlightBookingChangeDto,description:'10-minute change hold; original booking stays Confirmed.'})
+  changeFlight(@Param('id')id:string,@Req()request:AuthenticatedRequest,@Body()input:CreateFlightBookingChangeDto){return this.changes.create(id,request.user!.userId,input);}
   @Get('flight-booking-changes/:id') @Header('Cache-Control','no-store')
   @ApiOperation({summary:'FLT-27: view your change quote and result'})
   @ApiOkResponse({type:FlightBookingChangeDto,description:'Own change, amount to pay/refund and status.'})

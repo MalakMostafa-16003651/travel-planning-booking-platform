@@ -12,7 +12,7 @@ import { OptionalAuthGuard } from '../itineraries/optional-auth.guard';
 import { MAX_IMAGE_BYTES, MAX_IMAGES_PER_POST } from './blog.rules';
 import { BlogService } from './blog.service';
 import { CommentsService } from './comments.service';
-import { CreateBlogPostDto, ListPostsQueryDto, PageQueryDto, PostIdParamDto, PostImageParamsDto, UpdateBlogPostDto } from './dto/blog-post.dto';
+import { AttachPostItineraryDto, CreateBlogPostDto, ListPostsQueryDto, PageQueryDto, PostIdParamDto, PostImageParamsDto, UpdateBlogPostDto } from './dto/blog-post.dto';
 import { CreateCommentDto } from './dto/comment.dto';
 import { LikesService } from './likes.service';
 import { PostImagesService, UploadedImage } from './post-images.service';
@@ -95,6 +95,20 @@ export class BlogController {
   @ApiNotFoundResponse({ type: ApiErrorDto, description: 'No such post you may read.' })
   update(@Param() params: PostIdParamDto, @Body() dto: UpdateBlogPostDto, @Req() request: AuthenticatedRequest) {
     return this.blog.update(params.id, dto, request.user!);
+  }
+
+  @Patch(':id/itinerary')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(UserRole.USER)
+  @ApiCookieAuth('accessToken')
+  @ApiOperation({ summary: 'BLG-13 (bonus): attach one of your own public itineraries to your post, or detach it with null' })
+  @ApiOkResponse({ description: 'The post, with its itinerary summary.' })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'Invalid id, or the itinerary is not one of your own public itineraries.' })
+  @ApiUnauthorizedResponse({ type: ApiErrorDto, description: 'Missing, invalid or expired session.' })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'Not your post, or role not USER.' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'No such post you may read.' })
+  attachItinerary(@Param() params: PostIdParamDto, @Body() dto: AttachPostItineraryDto, @Req() request: AuthenticatedRequest) {
+    return this.blog.update(params.id, Object.assign(new UpdateBlogPostDto(), { itineraryId: dto.itineraryId }), request.user!);
   }
 
   @Delete(':id')

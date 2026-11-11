@@ -1,0 +1,96 @@
+AI PROMPT LOG - Travel Planning and Booking Platform (GIU Software Project I, Winter 2026)
+
+This file is required by the project description (sections 11.1 and 13.1).
+
+Every student also keeps one continuous, detailed workflow record. It has the dated
+prompts, how the output was used, the checks run and the student's own review notes:
+
+  Person 1 - Authentication & Users ..................... docs/work-logs/16003651.md
+  Person 2 - Admin, Moderation & Shared Admin Services .. docs/work-logs/16002483.md
+  Person 3 - Airlines, Flights & Flight Search .......... docs/work-logs/16001391.md
+  Person 4 - Flight Booking & Inventory Holds ........... docs/work-logs/16002979.md
+  Person 5 - Hotels, Rooms & Availability ............... docs/work-logs/16002622.md
+  Person 6 - Hotel Booking & Reviews .................... docs/work-logs/16005523.md
+  Person 7 - Itineraries, Activities & Budgeting ........ docs/work-logs/16001313.md
+  Person 8 - Payments, Refunds & Blog ................... docs/work-logs/16002290.md
+
+Those records are the full history. Entries below use the format from section 11.1 and
+summarize prompts that materially changed the submitted project. Each student adds
+their own entries; nobody records prompts on someone else's behalf. Credentials,
+tokens and private data are never pasted into prompts or into this file.
+
+================================================
+Date: 2026-11-10
+Student: 16001313 (Person 7)
+Tool: Claude Code (Anthropic)
+Related Requirement: PDF 5.1, ITN-10
+
+Prompt:
+can you update me what is left for me to do
+
+How the output was used:
+Found the merged shared attractions catalog (PR #97) and added the activity
+attractionId check against it (PR #98). Details: docs/work-logs/16001313.md.
+================================================
+Date: 2026-11-11
+Student: 16001313 (Person 7)
+Tool: Claude Code (Anthropic)
+Related Requirement: all mandatory and bonus IDs (audit)
+
+Prompt:
+analyze the entire repo persons 1-8 and cross reference it against the original
+description and requirements, mandatory and bonus backend. make sure all is there
+and working correctly, test everything, and make sure the work logs are there for
+all users and that all are working on the same database.
+
+How the output was used:
+Audit of develop against the workbook and PDF; full test runs (770/770 on main,
+838/838 on develop). Found that develop was missing Person 3's work log (it was only
+on main) and restored it (PR #104). Confirmed one shared MONGODB_URI connection.
+================================================
+Date: 2026-11-11
+Student: 16001313 (Person 7)
+Tool: Claude Code (Anthropic)
+Related Requirement: ITN-10, PDF 5.1
+
+Prompt:
+(about two optional audit items) do them
+
+How the output was used:
+An activity's attraction must be in its day's city; a day's city change is refused
+while one of its activities points elsewhere; clearing with attractionId null is
+tested. Merged in PR #104 (840/840 tests).
+================================================
+Date: 2026-11-11
+Student: 16001313 (Person 7)
+Tool: Claude Code (Anthropic)
+Related Requirement: ACC-12, FLT-01, FLT-05, FLT-08, FLT-09, FLT-11, FLT-12, FLT-29,
+  HTL-02, HTL-06, GEN-02, BLG-13, FLT-27, FLT-28, PDF sections 8, 11.1, 13.1
+
+Prompt:
+(with the workbook and project PDF attached) you are working alone now. read
+everything in the entire repo, check it against all the requirements and the team
+rules, fix the entire repo and make sure it is working correctly.
+
+How the output was used:
+Read the 14-page PDF and the full workbook (104 mandatory and 11 bonus IDs). Built
+on the open PR #103 instead of redoing it. Booted the real server on a throwaway
+database and ran a scripted smoke test through the API, the way an evaluator would
+use Swagger (163 checks). Compared every endpoint in the PDF tables with Swagger.
+Changes, all with tests (test/pdf-api-coverage.e2e.test.ts):
+  - PDF paths that were missing: DELETE /api/users/me, PATCH /api/airlines/:id,
+    PUT /api/airlines/:id/baggage-policy and /cancellation-policy,
+    GET /api/flights/:id/passengers/export, PATCH /api/flight-bookings/:id/change-flight,
+    PATCH /api/flight-bookings/:id/seat, PATCH /api/posts/:id/itinerary.
+    These call the existing services; no business logic is copied.
+  - Empty edits of a flight, cabin or airline profile now fail with 400 instead of 200.
+  - HTL-02: the hotel details include the newest reviews, and the available rooms
+    when stay dates are given.
+  - HTL-06: DELETE deletes only a room that has never been reserved (else 409);
+    PATCH { isActive } deactivates or reactivates a room.
+  - FLT-05: airports can change while the flight has no booking.
+  - FLT-11/12: same-day round-trip searches are accepted; impossible dates are refused.
+  - Corrected the stale flight-cancellation message and the Swagger description.
+  - Added this file.
+The output was reviewed against the requirement text and the existing tests before use.
+================================================

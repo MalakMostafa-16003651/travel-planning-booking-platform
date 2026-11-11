@@ -116,7 +116,8 @@ describe('Flight schedule-change notifications (FLT-05 / GEN-01, e2e)', { concur
 
   it('does not notify anyone when the schedule did not change', async () => {
     await connection.collection('notifications').deleteMany({});
-    await request(app.getHttpServer()).patch(`/api/flights/${flightId}`).set('Cookie', moderatorCookie).send({}).expect(200);
+    // An empty edit is a validation error (GEN-02), and nothing changes or is sent.
+    await request(app.getHttpServer()).patch(`/api/flights/${flightId}`).set('Cookie', moderatorCookie).send({}).expect(400);
     assert.equal(await connection.collection('notifications').countDocuments({}), 0);
   });
 

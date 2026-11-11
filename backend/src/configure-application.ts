@@ -46,7 +46,7 @@ export function configureApplication(app: INestApplication): void {
 
   const config = new DocumentBuilder()
     .setTitle('Travel Planning and Booking Platform API')
-    .setDescription('Milestone 1. Authentication, password management, ACC-09 own-profile updates, shared currency reference data, role guards and protected cookies. Flight booking integration depends on the provider/payment contracts.')
+    .setDescription('Milestone 1 backend for the Travel Planning and Booking Platform (GIU Software Project I, Winter 2026). Accounts and administration, airlines/flights and flight bookings, hotels/rooms and hotel bookings with reviews, Stripe test-mode payments and refunds, itineraries with budgets and exchange rates, the blog, reports/moderation, notifications and audit logs. Each operation names the requirement IDs it implements. Authentication uses httpOnly cookies set by POST /api/auth/login; Swagger UI sends them automatically. Prices and amounts are integer minor units of USD (PAY-04). Lists are paginated with 10 items per page (GEN-05).')
     .addCookieAuth(ACCESS_TOKEN_COOKIE, { type: 'apiKey', in: 'cookie' }, 'accessToken')
     .addCookieAuth(PASSWORD_CHANGE_TOKEN_COOKIE, { type: 'apiKey', in: 'cookie' }, 'passwordChangeToken')
     .setVersion('0.1.0')

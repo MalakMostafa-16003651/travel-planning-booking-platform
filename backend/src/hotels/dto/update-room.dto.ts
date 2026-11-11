@@ -1,7 +1,7 @@
 import { Transform } from 'class-transformer';
 const trimmed = ({ value }: { value: unknown }) => typeof value === 'string' ? value.trim() : value;
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { Max, IsInt, IsNotEmpty, IsString, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
+import { IsBoolean, IsInt, IsNotEmpty, IsString, Max, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
 
 export class UpdateRoomDto {
   @ApiPropertyOptional({ example: 'Deluxe King' })
@@ -23,4 +23,8 @@ export class UpdateRoomDto {
   @ApiPropertyOptional({ example: 2, minimum: 1 })
   @ValidateIf((_object, value) => value !== undefined) @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
   beds?: number;
+
+  @ApiPropertyOptional({ description: 'HTL-06: false deactivates the room (refused with 409 while it has a Confirmed or unexpired Pending Payment reservation) and excludes it from search; true reactivates it.' })
+  @ValidateIf((_object, value) => value !== undefined) @IsBoolean()
+  isActive?: boolean;
 }

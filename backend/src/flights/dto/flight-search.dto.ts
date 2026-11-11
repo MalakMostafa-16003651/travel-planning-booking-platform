@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
-import {ArrayMaxSize,ArrayNotEmpty,IsArray,IsBoolean,IsEnum,IsInt,IsOptional,IsString,Matches, Max,Min,Validate,ValidationArguments,ValidatorConstraint,ValidatorConstraintInterface,} from 'class-validator';
+import {IsISO8601,ArrayMaxSize,ArrayNotEmpty,IsArray,IsBoolean,IsEnum,IsInt,IsOptional,IsString,Matches, Max,Min,Validate,ValidationArguments,ValidatorConstraint,ValidatorConstraintInterface,} from 'class-validator';
 import { CabinClass } from '../schemas/cabin-inventory.schema';
 
 export enum FlightSort {
@@ -38,12 +38,13 @@ class ReturnDateRequiredConstraint
     return (
       typeof dto.returnDate === 'string' &&
       /^\d{4}-\d{2}-\d{2}$/.test(dto.returnDate) &&
-      dto.returnDate > dto.departureDate
+      // Same-day round trips are allowed; the service keeps only return flights that leave after an outbound lands.
+      dto.returnDate >= dto.departureDate
     );
   }
 
   defaultMessage(): string {
-    return 'A round-trip search requires a return date after the departure date';
+    return 'A round-trip search requires a real return date on or after the departure date';
   }
 }
 
@@ -67,15 +68,17 @@ arrivalAirportCode!: string;
   @Validate(ReturnDateRequiredConstraint)
   roundTrip!: boolean;
 
-  @ApiProperty({ example: '2026-12-10' })
+  @ApiProperty({ example: '2026-12-10', description: 'Local date at the departure airport.' })
   @IsString()
   @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  @IsISO8601({ strict: true }, { message: 'departureDate must be a real calendar date' })
   departureDate!: string;
 
   @ApiPropertyOptional({ example: '2026-12-17' })
   @IsOptional()
   @IsString()
   @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  @IsISO8601({ strict: true }, { message: 'returnDate must be a real calendar date' })
   returnDate?: string;
 
   @ApiProperty({ example: 1, minimum: 1, maximum: 50 })

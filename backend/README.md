@@ -1,7 +1,6 @@
-# Backend: registration and login
+# Backend API (Milestone 1)
 
-This NestJS 12 backend implements registration, login/lockout, logout/inactivity, administrator-assisted reset, password changes and ACC-09 own-profile viewing/updating using TypeScript, Mongoose and MongoDB Atlas. It also provides the shared currency catalog for profiles and budgeting. Registration creates a normal account without logging it in; `/api/auth/me` returns the authenticated identity. Optional token renewal remains later work.
-
+This NestJS 12 backend implements the Milestone 1 API for every module: accounts and administration, airlines/flights and flight bookings, hotels/rooms and hotel bookings with reviews, Stripe test-mode payments and refunds, itineraries with budgets and exchange rates, the blog, reports/moderation, notifications and audit logs. It uses TypeScript, Mongoose and the team's shared MongoDB Atlas database. The repository [README](../README.md) has the setup checklist (environment, seeding, running, tests). The sections below document individual features in the order they were built; the newest notes are at the end.
 ## Run locally
 
 Install Node.js 24 LTS with npm. Create the repository-root `.env` using the root `.env.example`, and enter the team's private connection string locally. Keep `.env` out of Git.
@@ -547,3 +546,30 @@ Each API process checks the private `notificationemailjobs` collection every 15 
 Delivery is **at least once**: a crash after SMTP accepts a message but before SENT is recorded can cause a duplicate. SENT means SMTP acceptance, not proof that a recipient read the message. SMTP diagnostics/recipient/message contents are not logged. Jobs contain no passwords, password hashes, reset tokens or SMTP credentials. Moderator invitations tell the moderator to obtain the admin-set temporary password separately and change it at first login.
 
 Development checks: use Mailtrap Email Sandbox, create a moderator as an authenticated admin, and inspect its invitation after a worker tick. New booking/refund/status/schedule notices use the same path as their existing in-app notifications. Keep temporary passwords private. `notification-emails.e2e.test.ts` uses isolated MongoDB and a fake transport for rollback, pending setup, retry, lease and invitation tests; other domain suites cover the existing notification producers. No email job/recipient/retry state is exposed by the inbox API.
+
+## PDF endpoint paths and audit fixes (2026-11-11)
+
+Every endpoint in the project description's section 8 tables now exists at its PDF path; `test/pdf-api-coverage.e2e.test.ts` checks this against Swagger. Where a route already existed under another path, the PDF path calls the same service. No business logic is copied, and the original paths keep working:
+
+| PDF path | Same as |
+| --- | --- |
+| `DELETE /api/users/me` (body `{ "confirmed": true }`) | `POST /api/users/me/deactivate` (ACC-12; the account is deactivated, not erased) |
+| `PATCH /api/airlines/:id` | `PATCH /api/airlines/me` (FLT-01); `:id` must be the moderator's own airline, otherwise 404 |
+| `PUT /api/airlines/:id/baggage-policy` | baggage part of `PATCH /api/airlines/me/policies` (FLT-08) |
+| `PUT /api/airlines/:id/cancellation-policy` | tier part of `PATCH /api/airlines/me/policies` (FLT-09) |
+| `GET /api/flights/:id/passengers/export` | `GET /api/flights/:id/bookings/export.csv` (FLT-29) |
+| `PATCH /api/flight-bookings/:id/change-flight` | `POST /api/flight-bookings/:id/changes` (FLT-27 bonus) |
+| `PATCH /api/flight-bookings/:id/seat` | `PUT /api/flight-bookings/:id/seats` (FLT-28 bonus) |
+| `PATCH /api/posts/:id/itinerary` (body `{ "itineraryId": "..." }` or `null`) | `itineraryId` in `PATCH /api/posts/:id` (BLG-13 bonus) |
+
+The optional ACC-02 `GET /api/auth/verify-email` is deliberately `POST /api/auth/verify-email`: the single-use token travels in the JSON body rather than a URL, where it could leak into logs and browser history.
+
+Behaviour fixed in the same audit:
+
+- **GEN-02:** an empty `PATCH` of a flight, cabin or airline profile is a 400 validation error. It used to return 200 without changing anything: with this TypeScript target, every declared optional DTO field exists as an `undefined` key, so `Object.keys()` was never empty. `common/validation/defined-fields.ts` checks for supplied values instead.
+- **HTL-02:** `GET /api/hotels/:id` adds `reviews` (newest first, first page of 10) next to `averageRating`/`ratingCount`. With `checkIn` and `checkOut` (and optional `guests`) it also returns `availableRooms` for that stay; without dates, `availableRooms` is null. Only one date is a 400.
+- **HTL-06:** `DELETE /api/hotels/:id/rooms/:roomId` permanently deletes a room only if no reservation of any status ever referenced it; otherwise it returns 409. `PATCH /api/hotels/:id/rooms/:roomId` with `{ "isActive": false }` deactivates a room (409 while it has a Confirmed or unexpired Pending Payment reservation) and `{ "isActive": true }` reactivates it. Deletion takes the room's booking gate, so it cannot race a new hold.
+- **FLT-05:** `PATCH /api/flights/:id` accepts `departureAirportCode`/`arrivalAirportCode` while the flight has no booking and no flight-change hold. The check and the write share one transaction with the flight's booking gate; once any booking exists, it returns 409.
+- **FLT-11/FLT-12:** flight search accepts a same-day round trip (`returnDate` equal to `departureDate`); only return flights that leave after the outbound lands are offered. Impossible dates such as `2027-02-30` are rejected with 400.
+- The flight-cancellation response and the Swagger description no longer describe integrations as missing.
+
