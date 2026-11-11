@@ -169,6 +169,7 @@ export class ItinerariesService {
     if (input.city !== undefined || input.countryCode !== undefined) {
       const city = await this.references.resolveCity(input.city ?? day.city, input.countryCode ?? (input.city ? undefined : day.countryCode));
       if (!itinerary.countries.includes(city.countryCode)) throw fieldError('city', 'The city must be in a selected itinerary country');
+      if (city.name !== day.city || city.countryCode !== day.countryCode) await this.assertDayAttractionsIn(day, city.cityId);
       day.city = city.name;
       day.countryCode = city.countryCode;
     }
@@ -206,7 +207,7 @@ export class ItinerariesService {
     assertTimes(input.startTime, input.endTime);
     const itinerary = await this.findOwned(itineraryId, userId);
     const day = findDay(itinerary, dayId);
-    if (input.attractionId) await this.assertAttraction(input.attractionId);
+    if (input.attractionId) await this.assertAttraction(input.attractionId, day);
     const cost = await this.activityCost(input, itinerary.currency);
     if (day.activities.length >= MAX_ACTIVITIES_PER_DAY) {
       throw new ConflictException(`A day can have at most ${MAX_ACTIVITIES_PER_DAY} activities`);
@@ -216,8 +217,8 @@ export class ItinerariesService {
   }
 
   async updateActivity(activityId: string, userId: string, input: UpdateActivityDto): Promise<ItineraryDto> {
-    const { itinerary, activity } = await this.findOwnedActivity(activityId, userId);
-    if (input.attractionId) await this.assertAttraction(input.attractionId);
+    const { itinerary, day, activity } = await this.findOwnedActivity(activityId, userId);
+    if (input.attractionId) await this.assertAttraction(input.attractionId, day);
     const cost = await this.activityCost({ cost: input.cost ?? activity.cost, currency: input.currency ?? activity.currency }, itinerary.currency);
     const next = { startTime: activity.startTime, endTime: activity.endTime, ...definedOnly(input) };
     assertTimes(next.startTime, next.endTime);
@@ -883,10 +884,38 @@ export class ItinerariesService {
     return new Map(ids.map((id) => [id, names.get(id) ?? DELETED_USER_NAME]));
   }
 
-  /** PDF 5.1: an activity may reference only an attraction from the shared seeded catalog (Malak, PR #97). */
-  private async assertAttraction(attractionId: string): Promise<void> {
-    if (!(await this.references.findAttraction(attractionId))) {
+  /**
+   * PDF 5.1: an activity may reference only an attraction from the shared seeded catalog (Malak, PR #97),
+   * and that attraction must be in the city of the activity's day (e.g. no Louvre on a Cairo day).
+   */
+  private async assertAttraction(attractionId: string, day: ItineraryDay): Promise<void> {
+    const attraction = await this.references.findAttraction(attractionId);
+    if (!attraction) {
       throw fieldError('attractionId', `Unknown attraction ${attractionId}. Choose one from GET /api/attractions`);
+    }
+    const dayCityId = await this.dayCityId(day);
+    if (attraction.cityId !== dayCityId) {
+      throw fieldError('attractionId', `${attraction.name} is not in ${day.city}. Choose an attraction in this day's city`);
+    }
+  }
+
+  /** The catalog cityId of a day; null if the stored city no longer resolves (then no attraction can match). */
+  private async dayCityId(day: Pick<ItineraryDay, 'city' | 'countryCode'>): Promise<string | null> {
+    try {
+      return (await this.references.resolveCity(day.city, day.countryCode)).cityId;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Changing a day's city must not leave its activities pointing at attractions in the old city. */
+  private async assertDayAttractionsIn(day: ItineraryDay, cityId: string): Promise<void> {
+    const attractionIds = [...new Set(day.activities.map((activity) => activity.attractionId).filter((id): id is string => !!id))];
+    for (const attractionId of attractionIds) {
+      const attraction = await this.references.findAttraction(attractionId);
+      if (attraction && attraction.cityId !== cityId) {
+        throw fieldError('city', `This day has an activity at ${attraction.name}, which is not in the new city. Remove or change that attraction first`);
+      }
     }
   }
 

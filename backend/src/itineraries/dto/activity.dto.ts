@@ -24,7 +24,7 @@ export class CreateActivityDto {
   @MaxLength(200, { message: 'Location must be at most 200 characters' })
   location?: string;
 
-  @ApiPropertyOptional({ example: 'att-1', description: 'Optional attraction from the shared catalog (GET /api/attractions). Unknown ids are rejected with 400.' })
+  @ApiPropertyOptional({ example: 'att-1', description: 'Optional attraction from the shared catalog (GET /api/attractions), in the city of this day. Unknown or other-city ids are rejected with 400. On update, null removes it.', nullable: true })
   @IsOptional()
   @Trim()
   @IsString({ message: 'attractionId must be text' })

@@ -110,6 +110,12 @@ PDF section 5.1 lists **attractions** among the official reference datasets. Agr
   `ReferenceDataService.findAttraction` (the `references` instance the module already injects)
   and return 400 for an unknown id. `attractionId` stays optional. Existing activity records are
   not rewritten.
+- **Added (2026-11-11):** the attraction's `cityId` must match the activity's day city (resolved
+  through `ReferenceDataService.resolveCity`), on activity create/update; a day's city change is
+  rejected (400 on `city`) while one of its activities points at an attraction elsewhere.
+  `PATCH /api/activities/{activityId}` with `"attractionId": null` removes the attraction.
+  Activities saved earlier with a mismatched attraction are not rewritten; they are checked only
+  when their attraction or their day's city is changed.
 
 ## Moderation hooks for administrators (GEN-09, GEN-10, with Arwa)
 
