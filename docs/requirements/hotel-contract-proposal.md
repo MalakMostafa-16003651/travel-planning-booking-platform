@@ -39,7 +39,7 @@ GET /api/hotels/:id/availability is assigned-moderator-only. It accepts from/to/
 - BOOKED: confirmed reservation or live Pending hold. hotelBookingId and canonical bookingStatus are included; bookingReference appears only when one actually exists. A hold never receives an invented confirmed reference.
 - BLOCKED: inactive, explicitly blocked or outside configured bookable dates.
 
-Reservation references are joined through HotelBookingsService.availabilityReferences with hotel ownership in the query. No guest contact or payment details are exposed. The existing moderator reservations endpoint remains confirmed-reservations-only and uses its agreed multi-room adapter; the inventory calendar separately represents live holds.
+Reservation references are joined through HotelBookingsService.availabilityReferences with hotel ownership in the query. No guest contact or payment details are exposed. The existing moderator reservations endpoint retains its agreed multi-room adapter: Confirmed, Completed and Cancelled plus only still-live Pending holds; expired holds are hidden. The inventory calendar separately represents nightly occupancy.
 
 ## Teammate handoff and deployment
 
@@ -49,3 +49,5 @@ Kiki: existing shared hotel-search adapter remains the integration surface. Coun
 Arwa: hotel-create requests now include starClass/amenities; existing audit transaction remains.
 
 No new role, public booking status, environment variable or separate workflow file is added. Test fixtures explicitly configure positive dates in isolated MongoDB; they do not open Atlas rooms. Validation evidence and the review outcome are recorded in Malak's single work log. Full acceptance of unrelated hotel detail/media/delete criteria remains tracked separately in the matrix.
+
+Validation: combined backend regression907/907,96 suites/67 test files, zero failures; production build passed. Full evidence is recorded in the single student log. PR103 is pending review, not a merged release.
