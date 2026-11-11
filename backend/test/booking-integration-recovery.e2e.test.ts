@@ -44,7 +44,8 @@ describe('GEN-13 approved booking gates and payment recovery', { concurrency: fa
   const hotelBooking = (id: string) => col('hotelbookings').findOne({ _id: new Types.ObjectId(id) });
   const getPayment = (bookingId: string) => col('payments').findOne({ $or: [{ flightBookingId: new Types.ObjectId(bookingId) }, { hotelBookingId: new Types.ObjectId(bookingId) }] });
   const deactive = (id: Types.ObjectId) => fixture.http().patch('/api/admin/providers/hotel/' + id + '/deactivate').set('Cookie', admin.cookie).send({});
-  const removeRoom = (hotelId: Types.ObjectId, roomId: Types.ObjectId) => fixture.http().delete('/api/hotels/' + hotelId + '/rooms/' + roomId).set('Cookie', mod.cookie);
+  // HTL-06 room deactivation (DELETE is permanent deletion of never-reserved rooms; deactivation is PATCH isActive false).
+  const removeRoom = (hotelId: Types.ObjectId, roomId: Types.ObjectId) => fixture.http().patch('/api/hotels/' + hotelId + '/rooms/' + roomId).set('Cookie', mod.cookie).send({ isActive: false });
   const cancelFlightBooking = (id: string) => fixture.http().post('/api/flight-bookings/' + id + '/cancel').set('Cookie', owner.cookie);
   async function startPayment(type: 'flight' | 'hotel', bookingId: string) {
     await fixture.http().post('/api/bookings/' + type + '/' + bookingId + '/accept-policies').set('Cookie', owner.cookie).send({ accepted: true }).expect(200);
@@ -150,7 +151,7 @@ describe('GEN-13 approved booking gates and payment recovery', { concurrency: fa
       const { h, room } = await hotel(), entered = latch(), release = latch(), original = inventory.acquireBookingGate.bind(inventory); let once = true;
       context.mock.method(inventory, 'acquireBookingGate', async (...args: Parameters<RoomInventoryAdapter['acquireBookingGate']>) => { if (once) { once = false; entered.open(); await release.wait(); } return original(...args); });
       const holding = hold(h, room).then(r => r); await entered.wait();
-      try { if (target === 'hotel') await deactive(h._id).expect(200); else await removeRoom(h._id, room._id).expect(204); } finally { release.open(); }
+      try { if (target === 'hotel') await deactive(h._id).expect(200); else await removeRoom(h._id, room._id).expect(200); } finally { release.open(); }
       assert.equal((await holding).status, 404); assert.equal(await col('hotelbookings').countDocuments({}), 0); assert.equal((await col('roomavailabilities').findOne({ roomId: room._id }))!.bookedRanges.length, 0);
     });
   }
@@ -168,6 +169,19 @@ describe('GEN-13 approved booking gates and payment recovery', { concurrency: fa
     const disabling = removeRoom(h._id, room._id).then(r => r); await entered.wait(); let held;
     try { held = await hold(h, room).expect(201); } finally { release.open(); }
     assert.equal((await disabling).status, 409); assert.equal((await rooms.findById(room._id))!.isActive, true); assert.equal((await hotelBooking(held.body.hotelBookingId))!.status, 'PENDING');
+  });
+  it('HTL-06: deleting a never-reserved room after a hold preflight wins; the hold fails without inventory', async (context) => {
+    const { h, room } = await hotel(), entered = latch(), release = latch(), original = inventory.acquireBookingGate.bind(inventory); let once = true;
+    context.mock.method(inventory, 'acquireBookingGate', async (...args: Parameters<RoomInventoryAdapter['acquireBookingGate']>) => { if (once) { once = false; entered.open(); await release.wait(); } return original(...args); });
+    const holding = hold(h, room).then(r => r); await entered.wait();
+    try { await fixture.http().delete('/api/hotels/' + h._id + '/rooms/' + room._id).set('Cookie', mod.cookie).expect(204); } finally { release.open(); }
+    assert.equal((await holding).status, 404); assert.equal(await col('hotelbookings').countDocuments({}), 0);
+    assert.equal(await rooms.countDocuments({ _id: room._id }), 0); assert.equal(await col('roomavailabilities').countDocuments({ roomId: room._id }), 0);
+  });
+  it('HTL-06: a room that was held once can no longer be deleted, only deactivated', async () => {
+    const { h, room } = await hotel(); await hold(h, room).expect(201);
+    await fixture.http().delete('/api/hotels/' + h._id + '/rooms/' + room._id).set('Cookie', mod.cookie).expect(409);
+    assert.equal(await rooms.countDocuments({ _id: room._id }), 1);
   });
   it('hotel deactivation before a paid confirmation wins the shared gate and causes full compensation', async (context) => {
     const { h, room } = await hotel(), held = await hold(h, room).expect(201), id = held.body.hotelBookingId, intentId = await startPayment('hotel', id), original = inventory.acquireBookingGate.bind(inventory), entered = latch(), release = latch(); let once = true;
