@@ -1,11 +1,14 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AuthModule } from '../auth/auth.module';
 import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 import { ReferenceDataModule } from '../reference-data/reference-data.module';
+import { ReviewsModule } from '../reviews/reviews.module';
+import { ReviewsService } from '../reviews/reviews.service';
 import { HotelBookingsReservationsAdapter } from './adapters/hotel-bookings-reservations.adapter';
 import { HotelBookingsModule } from '../hotel-bookings/hotel-bookings.module';
 import { UsersModule } from '../users/users.module';
+import { HOTEL_RATINGS } from './ports/hotel-ratings.port';
 import { HOTEL_RESERVATIONS } from './ports/hotel-reservations.port';
 import { Hotel, HotelSchema } from './schemas/hotel.schema';
 import { HotelPhoto, HotelPhotoSchema } from './schemas/hotel-photo.schema';
@@ -22,6 +25,8 @@ import { OptionalAuthGuard } from './optional-auth.guard';
     ReferenceDataModule,
     HotelBookingsModule,
     UsersModule,
+    // forwardRef: ReviewsModule imports HotelsModule for its own HotelsService dependency.
+    forwardRef(() => ReviewsModule),
     MongooseModule.forFeature([
       { name: Hotel.name, schema: HotelSchema },
       { name: Room.name, schema: RoomSchema },
@@ -34,6 +39,7 @@ import { OptionalAuthGuard } from './optional-auth.guard';
     HotelsService,
     OptionalAuthGuard,
     { provide: HOTEL_RESERVATIONS, useClass: HotelBookingsReservationsAdapter },
+    { provide: HOTEL_RATINGS, useExisting: ReviewsService },
   ],
   exports: [HotelsService],
 })

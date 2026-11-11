@@ -7,6 +7,7 @@ export enum HotelSearchSort {
   PRICE_ASC = 'PRICE_ASC',
   PRICE_DESC = 'PRICE_DESC',
   NAME = 'NAME',
+  RATING_DESC = 'RATING_DESC',
 }
 
 /** HTL-11, HTL-12. Field names match ItineraryHotelSearch (itineraries/ports/travel-search.port.ts) exactly. */
@@ -45,8 +46,12 @@ export class SearchHotelsQueryDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(0)
   maxPrice?: number;
 
+  @ApiPropertyOptional({ description: 'HTL-12: minimum average rating (1-5), hidden reviews excluded. Hotels with no reviews yet are excluded.' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(5)
+  minRating?: number;
+
   @ApiPropertyOptional({ enum: HotelSearchSort, default: HotelSearchSort.NAME })
-  @IsOptional() @IsEnum(HotelSearchSort, { message: 'sort must be PRICE_ASC, PRICE_DESC or NAME' })
+  @IsOptional() @IsEnum(HotelSearchSort, { message: 'sort must be PRICE_ASC, PRICE_DESC, NAME or RATING_DESC' })
   sort?: HotelSearchSort;
 
   @ApiPropertyOptional({ example: 1, minimum: 1 })

@@ -73,11 +73,11 @@ export class HotelsController {
 
   @Get(':id')
   @UseGuards(OptionalAuthGuard)
-  @ApiOperation({ summary: 'View a hotel profile (HTL-02)' })
-  @ApiOkResponse({ description: 'The hotel profile' })
+  @ApiOperation({ summary: 'View a hotel profile (HTL-02)', description: 'Includes averageRating/ratingCount from Person 6\'s visible reviews (null/0 with none yet).' })
+  @ApiOkResponse({ description: 'The hotel profile, with averageRating and ratingCount', type: Object })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: 'Not found, or deactivated and not visible to the caller.' })
-  getById(@Param('id') id: string, @Req() req: AuthenticatedRequest): Promise<Hotel> {
-    return this.hotels.getById(id, req.user);
+  getById(@Param('id') id: string, @Req() req: AuthenticatedRequest): Promise<Record<string, unknown>> {
+    return this.hotels.getDetail(id, req.user);
   }
 
   @Patch(':id')

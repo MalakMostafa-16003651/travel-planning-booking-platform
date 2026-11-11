@@ -95,7 +95,7 @@ describe('Hotels E2E', { concurrency: false }, () => {
     await Promise.all([
       users.deleteMany({}).exec(),
       sessions.deleteMany({}).exec(),
-      ...['hotels', 'rooms', 'roomavailabilities', 'moderatorassignments', 'hotelbookings', 'auditlogs'].map((name) => connection.collection(name).deleteMany({})),
+      ...['hotels', 'rooms', 'roomavailabilities', 'moderatorassignments', 'hotelbookings', 'auditlogs', 'reviews'].map((name) => connection.collection(name).deleteMany({})),
     ]);
 
     adminCookie = await login('admin@example.com', UserRole.ADMIN);
@@ -184,6 +184,23 @@ describe('Hotels E2E', { concurrency: false }, () => {
     it('returns 404 for an unknown or malformed id', async () => {
       await http().get(`/api/hotels/${new Types.ObjectId().toString()}`).expect(404);
       await http().get('/api/hotels/not-an-id').expect(404);
+    });
+
+    it('includes averageRating/ratingCount from visible reviews (null/0 with none), via HTL-02/HTL-12 ReviewsService.getRatingStats', async () => {
+      const none = await http().get(`/api/hotels/${hotelId}`).expect(200);
+      assert.equal(none.body.averageRating, null);
+      assert.equal(none.body.ratingCount, 0);
+
+      const reviewer = (await users.findOne({ email: 'admin@example.com' }).orFail().exec())._id;
+      await connection.collection('reviews').insertMany([
+        { userId: reviewer, hotelId: new Types.ObjectId(hotelId), hotelBookingId: new Types.ObjectId(), rating: 4, isHidden: false, createdAt: new Date(), updatedAt: new Date() },
+        { userId: reviewer, hotelId: new Types.ObjectId(hotelId), hotelBookingId: new Types.ObjectId(), rating: 2, isHidden: false, createdAt: new Date(), updatedAt: new Date() },
+        { userId: reviewer, hotelId: new Types.ObjectId(hotelId), hotelBookingId: new Types.ObjectId(), rating: 1, isHidden: true, createdAt: new Date(), updatedAt: new Date() },
+      ]);
+
+      const withReviews = await http().get(`/api/hotels/${hotelId}`).expect(200);
+      assert.equal(withReviews.body.averageRating, 3);
+      assert.equal(withReviews.body.ratingCount, 2);
     });
   });
 
@@ -725,6 +742,34 @@ describe('Hotels E2E', { concurrency: false }, () => {
         .query({ city: 'Cairo', checkIn: '2026-12-20', checkOut: '2026-12-27', guests: 1, sort: 'PRICE_DESC' })
         .expect(200);
       assert.equal(descending.body.items[0].hotelId, hotelId);
+    });
+
+    it('filters by minRating and sorts by rating descending (HTL-12, Osama\'s getRatingStats)', async () => {
+      await addRoom(moderatorCookie, hotelId, { capacity: 2, pricePerNight: 10000 });
+      const second = await createHotelWithModerator({ name: 'Highly Rated Hotel' }, 'rated-hotel-moderator@example.com');
+      await addRoom(second.cookie, second.hotelId, { capacity: 2, pricePerNight: 10000 });
+
+      const reviewer = (await users.findOne({ email: 'admin@example.com' }).orFail().exec())._id;
+      await connection.collection('reviews').insertMany([
+        { userId: reviewer, hotelId: new Types.ObjectId(hotelId), hotelBookingId: new Types.ObjectId(), rating: 2, isHidden: false, createdAt: new Date(), updatedAt: new Date() },
+        { userId: reviewer, hotelId: new Types.ObjectId(second.hotelId), hotelBookingId: new Types.ObjectId(), rating: 5, isHidden: false, createdAt: new Date(), updatedAt: new Date() },
+      ]);
+
+      const unfiltered = await http()
+        .get('/api/hotels/search')
+        .query({ city: 'Cairo', checkIn: '2026-12-20', checkOut: '2026-12-27', guests: 1, sort: 'RATING_DESC' })
+        .expect(200);
+      assert.equal(unfiltered.body.total, 2);
+      assert.equal(unfiltered.body.items[0].hotelId, second.hotelId);
+      assert.equal(unfiltered.body.items[0].averageRating, 5);
+      assert.equal(unfiltered.body.items[1].averageRating, 2);
+
+      const filtered = await http()
+        .get('/api/hotels/search')
+        .query({ city: 'Cairo', checkIn: '2026-12-20', checkOut: '2026-12-27', guests: 1, minRating: 4 })
+        .expect(200);
+      assert.equal(filtered.body.total, 1);
+      assert.equal(filtered.body.items[0].hotelId, second.hotelId);
     });
 
     it('filters by minPrice and maxPrice', async () => {

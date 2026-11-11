@@ -1,11 +1,12 @@
 import { assertSearchStay } from './hotel-search.rules';
-import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, forwardRef, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, Types } from 'mongoose';
 import { AuditAction, AuditTargetType } from '../audit-logs/audit-log.enums';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { UserRole } from '../common/enums/user-role.enum';
 import { HotelBookingsService } from '../hotel-bookings/hotel-bookings.service';
+import { HOTEL_RATINGS, HotelRatingsPort } from './ports/hotel-ratings.port';
 import { ReferenceDataService } from '../reference-data/reference-data.service';
 import { AvailableRoomsQueryDto } from './dto/available-rooms-query.dto';
 import { BlockRoomDatesDto } from './dto/block-room-dates.dto';
@@ -20,7 +21,7 @@ import { UpdateRoomDto } from './dto/update-room.dto';
 import { MAX_HOTEL_PHOTOS, detectPhotoContentType } from './hotels.rules';
 import { HOTEL_RESERVATIONS, HotelReservationsPage, HotelReservationsPort } from './ports/hotel-reservations.port';
 import { BlockedRange, BookedRange, RoomAvailability } from './schemas/room-availability.schema';
-import { Hotel } from './schemas/hotel.schema';
+import { Hotel, HotelDocument } from './schemas/hotel.schema';
 import { HotelPhoto } from './schemas/hotel-photo.schema';
 import { Room } from './schemas/room.schema';
 
@@ -46,6 +47,9 @@ export interface HotelSearchResult {
   /** The cheapest qualifying room's nightly price, integer minor units. */
   fromPrice: number;
   availableRooms: number;
+  /** HTL-12: null means no visible reviews yet. */
+  averageRating: number | null;
+  ratingCount: number;
 }
 
 export interface HotelSearchPage {
@@ -76,6 +80,7 @@ export class HotelsService {
     private readonly hotelBookings: HotelBookingsService,
     @Inject(HOTEL_RESERVATIONS) private readonly reservations: HotelReservationsPort,
     private readonly auditLogs: AuditLogsService,
+    @Inject(forwardRef(() => HOTEL_RATINGS)) private readonly reviews: HotelRatingsPort,
   ) {}
 
   async create(input: CreateHotelDto, adminId: string): Promise<Hotel> {
@@ -111,6 +116,13 @@ export class HotelsService {
       throw new NotFoundException('Hotel not found');
     }
     return hotel;
+  }
+
+  /** HTL-02: the public hotel view, with Person 6's average rating/count joined in (null/0 with no visible reviews). */
+  async getDetail(id: string, requester?: Requester): Promise<Record<string, unknown>> {
+    const hotel = await this.getById(id, requester);
+    const stats = (await this.reviews.getRatingStats([hotel._id.toString()])).get(hotel._id.toString());
+    return { ...(hotel as HotelDocument).toJSON(), averageRating: stats?.averageRating ?? null, ratingCount: stats?.ratingCount ?? 0 };
   }
 
   private async canSeeInactive(hotelId: Types.ObjectId, requester?: Requester): Promise<boolean> {
@@ -408,16 +420,31 @@ export class HotelsService {
         checkOutTime: hotel.checkOutTime,
         fromPrice,
         availableRooms: freeRooms.length,
+        averageRating: null,
+        ratingCount: 0,
       });
     }
 
-    if (query.sort === HotelSearchSort.PRICE_ASC) results.sort((a, b) => a.fromPrice - b.fromPrice);
-    else if (query.sort === HotelSearchSort.PRICE_DESC) results.sort((a, b) => b.fromPrice - a.fromPrice);
-    else results.sort((a, b) => a.name.localeCompare(b.name));
+    // HTL-12: joined after qualification, since rating has no bearing on whether a hotel qualifies by stay/capacity/price.
+    const ratingStats = await this.reviews.getRatingStats(results.map((result) => result.hotelId));
+    for (const result of results) {
+      const stats = ratingStats.get(result.hotelId);
+      result.averageRating = stats?.averageRating ?? null;
+      result.ratingCount = stats?.ratingCount ?? 0;
+    }
+    const qualifyingByRating = query.minRating === undefined
+      ? results
+      : results.filter((result) => result.averageRating !== null && result.averageRating >= query.minRating!);
 
-    const total = results.length;
+    if (query.sort === HotelSearchSort.PRICE_ASC) qualifyingByRating.sort((a, b) => a.fromPrice - b.fromPrice);
+    else if (query.sort === HotelSearchSort.PRICE_DESC) qualifyingByRating.sort((a, b) => b.fromPrice - a.fromPrice);
+    else if (query.sort === HotelSearchSort.RATING_DESC) {
+      qualifyingByRating.sort((a, b) => (b.averageRating ?? -1) - (a.averageRating ?? -1) || a.name.localeCompare(b.name));
+    } else qualifyingByRating.sort((a, b) => a.name.localeCompare(b.name));
+
+    const total = qualifyingByRating.length;
     const start = (page - 1) * HOTEL_SEARCH_PAGE_SIZE;
-    const items = results.slice(start, start + HOTEL_SEARCH_PAGE_SIZE);
+    const items = qualifyingByRating.slice(start, start + HOTEL_SEARCH_PAGE_SIZE);
     return { items, page, pageSize: HOTEL_SEARCH_PAGE_SIZE, total, totalPages: Math.ceil(total / HOTEL_SEARCH_PAGE_SIZE) };
   }
 

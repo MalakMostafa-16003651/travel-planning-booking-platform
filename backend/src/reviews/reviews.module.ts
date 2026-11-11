@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AuthModule } from '../auth/auth.module';
 import { HotelBookingsModule } from '../hotel-bookings/hotel-bookings.module';
@@ -13,7 +13,8 @@ import { Review, ReviewSchema } from './schemas/review.schema';
   imports: [
     AuthModule,
     UsersModule,
-    HotelsModule,
+    // forwardRef: HotelsModule now imports this module for getRatingStats (HTL-02/HTL-12).
+    forwardRef(() => HotelsModule),
     HotelBookingsModule,
     MongooseModule.forFeature([{ name: Review.name, schema: ReviewSchema }]),
   ],
