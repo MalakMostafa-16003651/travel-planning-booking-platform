@@ -1,3 +1,4 @@
+import { FlightSeatAssignmentsService } from './flight-seat-assignments.service';
 import { expiredBookingPaymentPipeline } from '../payments/expired-booking-payments';
 import { UsersService } from '../users/users.service';
 import { EmailEligibilityService } from '../auth/email-eligibility.service';
@@ -53,6 +54,7 @@ export class FlightBookingsService {
     @Inject(BOOKING_NOTIFICATIONS) private readonly notifications: BookingNotificationsPort,
     private readonly emailEligibility: EmailEligibilityService,
     private readonly users: UsersService,
+    private readonly seatAssignments: FlightSeatAssignmentsService,
   ) {}
 
   /** FLT-19/FLT-21: prices the request without reserving or storing anything. */
@@ -501,6 +503,7 @@ export class FlightBookingsService {
         throw new ConflictException('Held seats could not be confirmed');
       }
     }
+    await this.seatAssignments.confirm(confirmed._id, session);
     return confirmed;
   }
 
@@ -557,6 +560,7 @@ export class FlightBookingsService {
           throw new ConflictException('Booked seats could not be released; cancellation was not applied');
         }
       }
+      await this.seatAssignments.release(cancelled._id, session);
       return cancelled;
     });
   }
@@ -574,6 +578,7 @@ export class FlightBookingsService {
           throw new ConflictException('Held seats could not be released; expiry was not applied');
         }
       }
+      await this.seatAssignments.release(booking._id, session);
       return booking;
     });
     if (!expired) return false;
@@ -609,6 +614,8 @@ export class FlightBookingsService {
    */
   private async withRefundStatus(booking: FlightBookingDocument): Promise<FlightBookingDto> {
     const details = FlightBookingDto.from(booking);
+    const seats = await this.seatAssignments.list(booking._id.toString());
+    if (seats.length) details.seatSelections = seats;
     if (!booking.refundAmount) return details;
     try {
       const refund = await this.payments.getRefundStatus({ bookingType: 'FLIGHT', bookingId: booking._id.toString() });

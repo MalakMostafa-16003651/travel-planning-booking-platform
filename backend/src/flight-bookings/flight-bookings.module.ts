@@ -7,6 +7,9 @@ import { BookingPaymentsAdapter } from '../payments/adapters/booking-payments.ad
 import { PaymentsModule } from '../payments/payments.module';
 import { UsersModule } from '../users/users.module';
 import { MongoFlightInventoryAdapter } from './adapters/mongo-flight-inventory.adapter';
+import { FlightSeatsPersistenceModule } from './flight-seats-persistence.module';
+import { FlightSeatsService } from './flight-seats.service';
+import { FlightSeatsController } from './flight-seats.controller';
 import { ETicketService } from './e-ticket.service';
 import { FlightBookingsMaintenanceService } from './flight-bookings-maintenance.service';
 import { FlightBookingsController } from './flight-bookings.controller';
@@ -19,6 +22,7 @@ import { FlightBooking, FlightBookingSchema } from './schemas/flight-booking.sch
 @Module({
   imports: [
     AuthModule,
+    FlightSeatsPersistenceModule,
     UsersModule,
     // Person 2's in-app notifications (GEN-01).
     NotificationsModule,
@@ -26,9 +30,10 @@ import { FlightBooking, FlightBookingSchema } from './schemas/flight-booking.sch
     forwardRef(() => PaymentsModule),
     MongooseModule.forFeature([{ name: FlightBooking.name, schema: FlightBookingSchema }]),
   ],
-  controllers: [FlightBookingsController],
+  controllers: [FlightBookingsController, FlightSeatsController],
   providers: [
     FlightBookingsService,
+    FlightSeatsService,
     FlightBookingsMaintenanceService,
     ETicketService,
     { provide: FLIGHT_INVENTORY, useClass: MongoFlightInventoryAdapter },

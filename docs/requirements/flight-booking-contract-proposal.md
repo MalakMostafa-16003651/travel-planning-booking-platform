@@ -7,7 +7,7 @@ exactly. Section 7 records which decisions the team adopted. Anything the team
 changes here is updated in the `adapters/` folder or `flight-booking.rules.ts`.
 
 Sources: `Final_ SP1_Reviewed_Requirements.xlsx` (authoritative), the project PDF
-section 8.4, and the team's naming rules. Bonus FLT-27 and FLT-28 are out of scope.
+section 8.4, and the team's naming rules. FLT-28 is being added under the approved design below; FLT-27 requires its separate shared payment-interface agreement.
 
 ## 1. Requirements owned by Person 4
 
@@ -197,4 +197,17 @@ Malak approved private safe-integer `bookingVersion` counters on Airline, Flight
 
 Flight acquisition order: User gate for paid confirmation, then sorted unique Airlines, sorted unique Flights, cabin inventory. Holds require active airlines/Scheduled future flights. New confirmation rejects deactivated airlines/cancelled flights; Payments handles the existing late-success compensation. Historical confirmation replay does not acquire new gates or invalidate confirmed bookings. User cancellation acquires Flight gates without requiring an active airline. If provider flight cancellation committed first, the user path records AIRLINE cancellation and full refund; if user cancellation committed first, its policy result is preserved. Failed held/booked seat release aborts every inventory and booking write; refunds run only after committed cancellation. Expired-payment recovery uses existing Payment outcome fields and the shared payment-owned pipeline, with no new money logic in booking modules.
 
-This section describes the feature-branch implementation, not a merged release. Test outcomes and PR URL are in Malak's continuous log. R2 multiple-airport round-trip pairing remains a separate business/interface decision.
+These provider gates were merged in PR82. R2 airport/time pairing and Person7 tests were merged in PR87. Current test outcomes and later work are recorded in Malak's continuous log.
+
+
+## Approved FLT-28 seat selection - 2026-11-11
+
+Status: implemented on the feature branch;18/18 seat tests and162/162 affected integration checks pass, PR review pending. Malak approved the shared FlightSeatAssignment schema and narrow booking/cabin integrations. FLT-27 is separate pending work, with no flight-change/payment contract implemented here.
+
+- GET /api/flight-bookings/:id/seat-map returns cabin capacity, occupied seat numbers, each segment's modifiable flag and only the current owner's selections. It does not expose other passenger/booking identities or allocate an array up to cabin capacity.
+- PUT /api/flight-bookings/:id/seats accepts { selections: [{ flightId, passengerId, seatNumber }] }. It atomically replaces the owner's selections on future segments; [] clears those selections. Already-departed leg history is preserved. Both routes use the existing USER auth/role/origin guards; other owners receive404.
+- Adults/children may select one free integer seat from1 through the cabin capacity for each segment of an unexpired Pending hold or Confirmed future flight. Infants receive no seat. Selection is free and does not change the booking fare or aggregate cabin inventory counts.
+- The private flightseatassignments collection has userId, flightBookingId, flightId, cabinId, passengerId, seatNumber, optional expiresAt and timestamps. Unique seat and booking/passenger/flight indexes prevent duplicates. Pending selections inherit the booking hold deadline; confirmed rows omit expiresAt. TTL is cleanup only: reads and reclamation check expiry explicitly.
+- Flight transaction gates serialize selection with cabin capacity edits and flight cancellation. A cabin cannot shrink below its highest active assigned seat or booked+held count. Final booking writes enforce both actual departure and hold deadlines. Conflicts roll back the whole replacement and return409.
+- Paid confirmation retains selections and removes their expiry in the same transaction. Hold expiry, owner cancellation and airline cancellation release assignments with the existing inventory/booking transaction. Booking details expose optional seatSelections, and the owner e-ticket includes the chosen seats.
+- No new public status, environment variable, cabin layout convention or seat price is introduced. Ismail reuses lifecycle hooks; Gamila retains existing cabin fields and capacity rules. Seat numbers are a simple approved1..capacity model, not airline row/letter layouts.

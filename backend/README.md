@@ -293,11 +293,15 @@ integration; itinerary Flights/Hotels search adapters remain pending.
 | GET | `/api/flight-bookings/:id` | One of your bookings, with `refund` (`PENDING`, `REFUNDED` or `FAILED`, from Payments) once a refund exists. |
 | GET | `/api/flight-bookings/:id/cancellation-quote` | The refund you would receive. Changes nothing. |
 | POST | `/api/flight-bookings/:id/cancel` | Cancels a Confirmed booking and requests its refund. |
-| GET | `/api/flight-bookings/:id/e-ticket` | PDF e-ticket for a Confirmed booking. |
+| GET | `/api/flight-bookings/:id/e-ticket` | PDF e-ticket for a Confirmed booking, including selected seats. |
+| GET | `/api/flight-bookings/:id/seat-map` | Own booking: capacity, occupied numbers and own selections. |
+| PUT | `/api/flight-bookings/:id/seats` | Replace future-segment selections atomically; `selections: []` clears them. |
 
 All routes need a login and role `USER` (shared `AuthGuard` and `RolesGuard`). Another user's booking returns **404**. Amounts are integer minor units of USD.
 
 **Cancellation deadline (FLT-26):** the refund is quoted inside the cancellation transaction, and the write only matches while the outbound departure is still in the future by database time (`$$NOW`). A slow airline-policy lookup therefore can never commit a cancellation after departure.
+
+**Seat selection (FLT-28):** adults/children may choose free numbered seats1..cabin capacity during an unexpired hold or before a Confirmed flight departs; infants have no seat. Send `{ "selections": [{ "flightId": "...", "passengerId": "...", "seatNumber": 3 }] }`. It is free, owner-only and transactional. A conflict returns409 without losing earlier selections. Confirmation retains seats; expiry and cancellation release them. Cabin capacity cannot shrink below an assigned seat. This bonus does not implement FLT-27 flight changes.
 
 **Overselling** is prevented by one conditional cabin write: `heldSeats` only increases if `totalSeats - bookedSeats - heldSeats` still covers the request. Hold, confirm, cancel and expiry run in MongoDB transactions, so a round trip reserves both cabins or neither. Transactions need a replica set: Atlas always has one, and the tests start one.
 

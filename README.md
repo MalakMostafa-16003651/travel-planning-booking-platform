@@ -8,7 +8,9 @@ Database: MongoDB Atlas
 
 ## Current implementation
 
-ACC-01 user registration is the first implemented backend feature. It
+The backend includes user registration, login/logout, profile updates, password changes/reset, verification, account deactivation, reusable guards and role/ownership enforcement. The detailed authentication sequence below records the implemented features; the current [ownership matrix](docs/requirements/milestone-1-ownership-matrix.md) tracks all eight modules, open audit findings and optional bonuses.
+
+ACC-01 registration
 accepts name, email, password, and terms-and-privacy consent; creates a `USER`
 account with `ACTIVE` status; stores a salted password hash; and returns only
 public account fields. ACC-04 adds login for the agreed roles, protected access and

@@ -60,6 +60,7 @@ export class MongoFlightInventoryAdapter implements FlightInventoryPort {
       cabinClass: cabin.cabinClass,
       price: cabin.price,
       baggageMaxWeightKg: cabin.baggageMaxWeightKg,
+      totalSeats: cabin.totalSeats,
       availableSeats: cabin.totalSeats - cabin.bookedSeats - cabin.heldSeats,
     };
   }
