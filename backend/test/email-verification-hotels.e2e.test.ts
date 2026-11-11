@@ -1,3 +1,4 @@
+import { configureTestBookableRoom } from './hotel-test-data';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { after, before, beforeEach, describe, it, mock } from 'node:test';
@@ -54,7 +55,7 @@ describe('ACC-02 real hotel booking verification integration', { concurrency: fa
     await http().post('/api/hotel-bookings').set('Cookie', cookie).send(input).expect(403);
     assert.equal(await connection.collection('hotelbookings').countDocuments(), 0);
     assert.equal(await connection.collection('roomavailabilities').countDocuments(), 0);
-    await verify(); const response = await http().post('/api/hotel-bookings').set('Cookie', cookie).send(input).expect(201);
+    await verify(); await configureTestBookableRoom(connection,input.rooms[0].roomId,input.hotelId); const response = await http().post('/api/hotel-bookings').set('Cookie', cookie).send(input).expect(201);
     assert.equal(response.body.status, 'PENDING'); assert.equal(response.body.userId, userId);
   });
   it('blocks direct internal hotel holds as well as HTTP access', async () => {
@@ -74,7 +75,7 @@ describe('ACC-02 real hotel booking verification integration', { concurrency: fa
     assert.deepEqual(availability.bookedRanges, []);
   });
   it('retains read access to an existing reservation after verification is absent', async () => {
-    await verify(); const held = await http().post('/api/hotel-bookings').set('Cookie', cookie).send(input).expect(201);
+    await verify(); await configureTestBookableRoom(connection,input.rooms[0].roomId,input.hotelId); const held = await http().post('/api/hotel-bookings').set('Cookie', cookie).send(input).expect(201);
     await app.get<Model<User>>(getModelToken(User.name)).updateOne({ _id: new Types.ObjectId(userId) }, { $unset: { emailVerifiedAt: '' } });
     const read = await http().get('/api/hotel-bookings/' + held.body.hotelBookingId).set('Cookie', cookie).expect(200);
     assert.equal(read.body.hotelBookingId, held.body.hotelBookingId);

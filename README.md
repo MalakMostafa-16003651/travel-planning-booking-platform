@@ -39,10 +39,7 @@ The [flight booking contract proposal](docs/requirements/flight-booking-contract
 records what flight booking and seat holds need from Flights and Payments, along with
 the decisions still open for the team.
 
-The [hotel contract proposal](docs/requirements/hotel-contract-proposal.md) records
-the proposed Hotel/Room/RoomAvailability schemas, the HTL-01 through HTL-22
-endpoints, and what Hotels needs from and exports to Payments and the (not yet
-built) hotel-booking module.
+The [approved hotel contract](docs/requirements/hotel-contract-proposal.md) records required hotel/room metadata, positive bookable ranges, reservation-safe updates and ten-item search/inventory responses. The PR103 implementation integrates the existing hotel-booking module; review is pending. Existing rooms need explicit positive availability before accepting new holds.
 
 ## Student workflow record
 

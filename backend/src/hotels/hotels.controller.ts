@@ -1,3 +1,5 @@
+import { AvailableRoomsPageDto, RoomAvailabilityPageDto } from './dto/hotel-inventory-response.dto';
+import { SetRoomBookableRangesDto } from './dto/set-room-bookable-ranges.dto';
 import { Header } from '@nestjs/common';
 import { HotelReservationsPageDto } from './dto/hotel-reservations-response.dto';
 import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put, Query, Req, StreamableFile, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
@@ -42,7 +44,7 @@ import { MAX_HOTEL_PHOTOS, MAX_PHOTO_BYTES } from './hotels.rules';
 import { Hotel } from './schemas/hotel.schema';
 import { Room } from './schemas/room.schema';
 import { RoomAvailability } from './schemas/room-availability.schema';
-import { HotelsService, HotelSearchPage, RoomAvailabilityOverview, UploadedPhoto } from './hotels.service';
+import { HotelsService, HotelSearchPage, AvailableRoomsPage, RoomAvailabilityPage, UploadedPhoto } from './hotels.service';
 import { OptionalAuthGuard } from './optional-auth.guard';
 
 @ApiTags('Hotels')
@@ -154,9 +156,9 @@ export class HotelsController {
 
   @Get(':id/rooms/available')
   @ApiOperation({ summary: 'List this hotel\'s individually available rooms for a stay (HTL-15)' })
-  @ApiOkResponse({ description: 'Rooms with no blocked or booked overlap for the stay, cheapest first', type: Object, isArray: true })
+  @ApiOkResponse({ type: AvailableRoomsPageDto })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: 'Hotel not found or not active.' })
-  getAvailableRooms(@Param('id') id: string, @Query() query: AvailableRoomsQueryDto): Promise<Room[]> {
+  getAvailableRooms(@Param('id') id: string, @Query() query: AvailableRoomsQueryDto): Promise<AvailableRoomsPage> {
     return this.hotels.getAvailableRooms(id, query);
   }
 
@@ -164,7 +166,7 @@ export class HotelsController {
   @UseGuards(AuthGuard, RolesGuard)
   @Roles(UserRole.HOTEL_MODERATOR)
   @ApiCookieAuth('accessToken')
-  @ApiOperation({ summary: 'Block dates for a room of the moderator\'s own hotel (HTL-04)' })
+  @ApiOperation({ summary: 'Block dates for a room of the moderator\'s own hotel (HTL-06)' })
   @ApiCreatedResponse({ description: 'The room\'s availability record, with the new blocked range', type: Object })
   @ApiUnauthorizedResponse({ type: ApiErrorDto })
   @ApiForbiddenResponse({ type: ApiErrorDto })
@@ -196,12 +198,28 @@ export class HotelsController {
     return this.hotels.updateBlockedRange(req.user!.userId, id, roomId, body);
   }
 
+  @Put(':id/rooms/:roomId/bookable-ranges')
+  @UseGuards(AuthGuard,RolesGuard)
+  @Roles(UserRole.HOTEL_MODERATOR)
+  @ApiCookieAuth('accessToken')
+  @Header('Cache-Control','no-store')
+  @ApiOperation({summary:'HTL-04/05: replace non-overlapping bookable dates for your room',description:'Half-open dates. Adjacent ranges merge. Empty ranges close new holds. Confirmed/live Pending reservation dates cannot be removed.'})
+  @ApiOkResponse({description:'Updated positive availability.',type:Object})
+  @ApiConflictResponse({type:ApiErrorDto,description:'Would remove protected reservation dates.'})
+  @ApiUnauthorizedResponse({type:ApiErrorDto})
+  @ApiForbiddenResponse({type:ApiErrorDto})
+  @ApiNotFoundResponse({type:ApiErrorDto})
+  setBookableRanges(@Req()req:AuthenticatedRequest,@Param('id')id:string,@Param('roomId')roomId:string,@Body()body:SetRoomBookableRangesDto):Promise<RoomAvailability> {
+    return this.hotels.setBookableRanges(req.user!.userId,id,roomId,body);
+  }
+
   @Get(':id/availability')
+  @Header('Cache-Control','no-store')
   @UseGuards(AuthGuard, RolesGuard)
   @Roles(UserRole.HOTEL_MODERATOR)
   @ApiCookieAuth('accessToken')
-  @ApiOperation({ summary: 'List every active room\'s blocked/booked ranges for the moderator\'s own hotel (HTL-08)' })
-  @ApiOkResponse({ description: 'One entry per active room', type: Object, isArray: true })
+  @ApiOperation({ summary: 'HTL-08: ten rooms per page, daily Available/Booked/Blocked states and booking references' })
+  @ApiOkResponse({ type: RoomAvailabilityPageDto })
   @ApiUnauthorizedResponse({ type: ApiErrorDto })
   @ApiForbiddenResponse({ type: ApiErrorDto })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: ':id is not the caller\'s assigned hotel.' })
@@ -209,7 +227,7 @@ export class HotelsController {
     @Req() req: AuthenticatedRequest,
     @Param('id') id: string,
     @Query() query: HotelAvailabilityQueryDto,
-  ): Promise<RoomAvailabilityOverview[]> {
+  ): Promise<RoomAvailabilityPage> {
     return this.hotels.getHotelAvailability(req.user!.userId, id, query);
   }
 

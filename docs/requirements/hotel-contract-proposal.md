@@ -1,196 +1,51 @@
 # Hotels, Rooms and Availability: shared contract
 
-Status: **proposal, not yet agreed.** Person 5 (Lama) owns `backend/src/hotels`.
+Status: approved by Malak on 2026-11-11; backend implementation on feature/FLT-28-seat-selection-and-flight-changes, PR103 into develop, pending review. Lama owns Hotels; Osama owns reservations/reviews. This replaces the stale pre-booking proposal. Source requirements are preserved in the Milestone 1 ownership matrix.
 
-Audit update (2026-11-07): this proposal does not yet cover the complete official
-hotel requirements. Reconcile it with the
-[Milestone 1 ownership matrix](milestone-1-ownership-matrix.md) before HotelBooking
-is built against it. The reviewed workbook also requires hotel photos/star
-class/amenities, room type/beds/name uniqueness, positive bookable ranges,
-reservation-safe room deactivation, country-only search, rating filters/sorting
-and complete room/availability responses. This notice records those gaps; it
-does not approve a replacement shared schema. Lama and Osama must coordinate
-the corrected availability/reservation interface under the team's existing rules.
+## Profiles and room metadata
 
-This mirrors the pattern Person 3 used for Person 4 (see the
-[flight booking contract](flight-booking-contract-proposal.md)): the schemas and
-collection/field names below are the integration surface. HotelBooking (Person 6)
-does not exist yet; this module is built so Person 6 can write their own adapter
-against these collections later, the same way `MongoFlightInventoryAdapter` reads
-`flights`/`cabininventories` without Person 3 writing it for them.
+Admin POST /api/hotels requires name, city, address, starClass (integer 1–5), and amenities (up to50 unique trimmed strings,1–100 characters each; [] is valid). countryCode disambiguates the official city catalog; description is optional. The assigned hotel moderator can PATCH their hotel. Existing photos, policy and audit flows are retained.
 
-Sources: the project PDF (14 pages, section 8.5/8.6; the 2026-11-06 revision
-highlights HTL-09/HTL-10 and the provider-deactivation note in section 8.2), the
-reviewed requirements workbook (HTL-01 through HTL-26), and the team's naming
-rules in `docs/work-logs/16003651.md` section 4.
+POST /api/hotels/:id/rooms requires name, type (1–80 trimmed characters), beds (positive safe integer), capacity and pricePerNight (positive safe integers). A trimmed room name is case-insensitively unique within its hotel, including inactive/legacy rooms. Concurrent creates/edits serialize through the existing Hotel/Room booking gates and a partial unique collation index covers completed records. Legacy duplicates/metadata are preserved: complete or rename them explicitly; no migration invents room types, bed counts or hotel stars.
 
-## 1. Requirements owned by Person 5
+Hotel detail/search expose averageRating and ratingCount from the shared visible-review reader. Hidden reviews do not contribute. ReviewsService.getRatingStats retains its interface by delegating to the same reader; no stored duplicate average or circular Hotels/Reviews module import is introduced. Detail is not a combined reviews/dated-room endpoint: those use their existing dedicated APIs.
 
-| ID | Required behavior |
-| --- | --- |
-| HTL-01 | Hotel profile: name, destination (city/country), description, address. Admin creates (mirrors `POST /api/airlines`); the assigned moderator edits their own. |
-| HTL-02 | Public hotel detail view. |
-| HTL-03, HTL-05, HTL-06 | Create/update/remove individually bookable rooms: capacity, pricing. Removal is a soft deactivation, not a hard delete, so existing/past bookings keep a valid reference. |
-| HTL-04, HTL-05, HTL-06 | Moderator-set blocked dates per room. |
-| HTL-08 | Read a room's availability/blocked ranges for a date window. |
-| HTL-09, HTL-10 | **Highlighted PDF change.** `PUT /api/hotels/:id/policies`: cancellation tiers and check-in/check-out times. |
-| HTL-11, HTL-12, HTL-15 | Search hotels by destination/dates/guest count with filtering and sorting; list a hotel's available rooms for a stay. |
-| HTL-22 | Moderator view of their hotel's reservations. Depends on Person 6's `HotelBooking`; built last, behind a pending adapter (see section 5). |
-| ACC-15 (shared) | `isActive` on `Hotel`, exactly like `Airline.isActive`. A deactivated hotel is hidden from search/detail for guests and cannot be newly booked; its existing Confirmed reservations remain valid (highlighted PDF note, section 8.2). Toggling `isActive` is Person 2's admin endpoint; Person 5 only reads/enforces it. |
+## Positive availability and existing reservations
 
-Out of scope here: HTL-16/18/20/21/23/24/26 (reservations and reviews) belong to
-Person 6.
+RoomAvailability remains one document per room with roomId, hotelId, timestamps, blockedRanges and bookedRanges. It now also stores bookableRanges: [{startDate,endDate}]. Dates are real YYYY-MM-DD and half-open: checkout is exclusive. Overlapping positive ranges fail400; adjacent ranges merge. A new/legacy room with no configured positive ranges is closed to NEW holds and absent from availability search.
 
-## 2. API
+The assigned moderator replaces positive availability with:
 
-| Method | Endpoint | Requirement | Who |
-| --- | --- | --- | --- |
-| POST | `/api/hotels` | HTL-01 | ADMIN |
-| GET | `/api/hotels/:id` | HTL-02 | anyone (404 if inactive and caller is not the assigned moderator/admin) |
-| PATCH | `/api/hotels/:id` | HTL-01 | assigned HOTEL_MODERATOR, own hotel only |
-| PUT | `/api/hotels/:id/policies` | HTL-09, HTL-10 | assigned HOTEL_MODERATOR |
-| POST | `/api/hotels/:id/rooms` | HTL-03 | assigned HOTEL_MODERATOR |
-| PATCH | `/api/hotels/:id/rooms/:roomId` | HTL-05 | assigned HOTEL_MODERATOR |
-| DELETE | `/api/hotels/:id/rooms/:roomId` | HTL-06 | assigned HOTEL_MODERATOR (soft deactivate) |
-| POST | `/api/hotels/:id/rooms/:roomId/availability` | HTL-04 | assigned HOTEL_MODERATOR (block dates) |
-| PATCH | `/api/hotels/:id/rooms/:roomId/availability` | HTL-05, HTL-06 | assigned HOTEL_MODERATOR (unblock/edit) |
-| GET | `/api/hotels/:id/availability` | HTL-08 | assigned HOTEL_MODERATOR |
-| GET | `/api/hotels/:id/rooms/available` | HTL-15 | anyone, given `checkIn`/`checkOut`/`guests` |
-| GET | `/api/hotels/search` | HTL-11, HTL-12 | anyone |
-| GET | `/api/hotels/:id/reservations` | HTL-22 | assigned HOTEL_MODERATOR (deferred, see section 5) |
+PUT /api/hotels/:id/rooms/:roomId/bookable-ranges
+{"ranges":[{"startDate":"2026-12-01","endDate":"2027-01-01"}]}
 
-`:id` routes are used literally, as the PDF lists them, rather than Airlines'
-`/me` pattern: ownership is enforced by comparing `:id` to the moderator's
-assigned `hotelId`, so a stale `:id` from another hotel returns 404/403 the same
-way `getOwnedScheduledFlight` does for flights.
+[] closes new stays. A transaction acquires existing Hotel then sorted Room write gates, reads canonical reservations and refuses409 if any confirmed or live Pending stay loses coverage. Concurrent close versus hold cannot both succeed. Confirmed stays, their frozen price/policies and live pre-upgrade confirmation are retained; configuration changes do not silently cancel them.
 
-## 3. Schemas (Person 5)
+Osama's existing RoomInventoryAdapter is reused/exported. New holds require full positive containment and no blocked/live-held/booked overlap. Expired holds are ignored by public reads immediately; holds and moderator block/edit paths remove elapsed HELD entries before their conditional writes. BOOKED ranges are never removed by expiry cleanup. Multi-room operations retain their existing transaction. Confirming an existing live hold does not require newly invented availability.
 
-### Hotel (`hotels`)
+Existing moderator block/edit/unblock endpoints remain:
+POST /api/hotels/:id/rooms/:roomId/availability
+PATCH /api/hotels/:id/rooms/:roomId/availability
+These exclusions are separate from configuring positive ranges. Existing room deactivation and provider/account gates remain in place.
 
-| Field | Meaning |
-| --- | --- |
-| `name` | Trimmed, 2-120 chars. |
-| `cityId`, `countryCode` | Resolved through the shared `ReferenceDataService` (`resolveCity`), the same official catalog itineraries already use, so ITN-25 and hotel search agree on what a "city" is. |
-| `address` | Free text. |
-| `description` | Optional, max 2000 chars. |
-| `isActive` | Default `true`. Mirrors `Airline.isActive`; ACC-15 toggles it. |
-| `checkInTime`, `checkOutTime` | `HH:mm`, defaults `14:00`/`11:00`. |
-| `cancellationPolicy.tiers[]` | `{ daysBeforeCheckIn, refundPercentage }`, same shape as `Airline.cancellationTiers`. |
+## Search and read responses
 
-### Room (`rooms`)
+GET /api/hotels/search accepts city OR countryCode, or both; destinations resolve against the official catalog. Required checkIn/checkOut/guests and optional rooms (default1) retain strict valid/future stay checks. A hotel must have enough active rooms free for the entire stay whose combined capacity covers guests. Price quote/filtering uses a room capable of participating in that selection. minPrice/maxPrice are inclusive USD minor-unit nightly amounts. minRating is1–5; unrated hotels are excluded when set. sort supports NAME, PRICE_ASC, PRICE_DESC and RATING_DESC (unrated last). Responses remain ten-item pages and now include starClass/amenities and visible rating aggregates.
 
-| Field | Meaning |
-| --- | --- |
-| `hotelId` | Ref `Hotel`, indexed. |
-| `name` | e.g. "Deluxe King", free text (no official room-type enum in the workbook). |
-| `capacity` | Max guests, integer ≥ 1. |
-| `pricePerNight` | Integer minor units, same open currency question as `CabinInventory.price` (PAY-04, pending with Person 8). |
-| `isActive` | Soft-delete flag for HTL-06. |
+GET /api/hotels/:id/rooms/available accepts checkIn/checkOut and optional guests/page. Response is now {items,page,pageSize:10,total,totalPages}, replacing the bare array. Each item includes roomId (plus retained _id alias), name/type/beds/capacity, pricePerNight, totalStayPrice and currency USD. totalStayPrice = nights × pricePerNight in integer minor units, with unsafe totals rejected. Metadata may be absent on uncompleted legacy records.
 
-### RoomAvailability (`roomavailabilities`) — one document per room
+GET /api/hotels/:id/availability is assigned-moderator-only. It accepts from/to/page; omitted dates choose a30-day UTC window, maximum366 days. Response is {items,page,pageSize:10,total,totalPages,from,to}. All hotel rooms, including inactive rooms, are paginated. Each item includes roomId/name/isActive, positive/raw overlapping ranges and days[]:
+- AVAILABLE: active, configured and unoccupied.
+- BOOKED: confirmed reservation or live Pending hold. hotelBookingId and canonical bookingStatus are included; bookingReference appears only when one actually exists. A hold never receives an invented confirmed reference.
+- BLOCKED: inactive, explicitly blocked or outside configured bookable dates.
 
-Each room is individually bookable (PDF 6.3), so availability is a yes/no per
-date range rather than a seat count. Proposed shape, **one document per
-`roomId`** (unique index), so a hold/release is a single conditional write
-exactly like `CabinInventory`'s seat counters:
+Reservation references are joined through HotelBookingsService.availabilityReferences with hotel ownership in the query. No guest contact or payment details are exposed. The existing moderator reservations endpoint remains confirmed-reservations-only and uses its agreed multi-room adapter; the inventory calendar separately represents live holds.
 
-```ts
-{
-  roomId: ObjectId,           // unique
-  hotelId: ObjectId,          // denormalized, for moderator queries
-  blockedRanges: [{ startDate, endDate, reason? }],   // moderator-set, HTL-04/05/06
-  bookedRanges:  [{ startDate, endDate, status: 'HELD' | 'BOOKED', holdExpiresAt?, hotelBookingId }],
-}
-```
+## Teammate handoff and deployment
 
-`startDate`/`endDate` are `YYYY-MM-DD`, half-open (`endDate` is checkout, the
-night before is the last booked night). A range overlaps `[startDate, endDate)`
-when `existing.startDate < endDate AND existing.endDate > startDate`.
+Lama: send required metadata on create; explicitly complete old records and configure bookable ranges; read items on available-room/calendar pages. No blanket production availability is seeded.
+Osama: reuse the adapter/gates and canonical reservation queries; maintain positive coverage and half-open dates; retain frozen price/policy snapshots, existing hold conversion, release/refund logic and references.
+Kiki: existing shared hotel-search adapter remains the integration surface. Country-only/rating support adds capabilities without copying search logic.
+Arwa: hotel-create requests now include starClass/amenities; existing audit transaction remains.
 
-Person 6's future hold (mirroring `reserveSeats`) is one atomic update:
-
-```ts
-roomavailabilities.updateOne(
-  {
-    roomId,
-    blockedRanges: { $not: { $elemMatch: { startDate: { $lt: endDate }, endDate: { $gt: startDate } } } },
-    bookedRanges:  { $not: { $elemMatch: { startDate: { $lt: endDate }, endDate: { $gt: startDate } } } },
-  },
-  { $push: { bookedRanges: { startDate, endDate, status: 'HELD', holdExpiresAt, hotelBookingId } } },
-);
-```
-
-No overlap exists → the filter matches → the push happens. An overlap exists →
-`modifiedCount === 0` → booking fails with 409, nothing changes. A multi-room
-booking (HTL-16/18, "handled consistently as one operation") wraps one such
-update per room in a single MongoDB transaction, the same way round-trip flight
-holds touch two cabins in one transaction.
-
-Person 5 writes `blockedRanges` (HTL-04/05/06) and reads both arrays for
-HTL-08/HTL-15/search. Person 5 never writes `bookedRanges`; that belongs to
-Person 6's booking module once it exists, same division as
-Person 3/`cabininventories.heldSeats`.
-
-## 4. What Person 5 needs from others
-
-### ModeratorAssignment (Person 2, still pending — see `docs/work-logs/16003651.md` line 809)
-
-Same temporary pattern as `AirlinesService.getAssignedAirlineId`: read the raw
-`moderatorassignments` collection (`moderatorId`, `hotelId`), documented in the
-[authentication contract](authentication-contract-proposal.md#moderatorassignment).
-`HotelsService.getAssignedHotelId(moderatorId)` is the Hotels-side copy of that
-adapter; it moves to a shared service if/when Person 2 ships one.
-
-### ReferenceDataService (Person 7, shipped)
-
-`resolveCity(name, countryCode?)`, `assertCountries(codes)` from
-`backend/src/reference-data`. Hotel destinations and search queries both resolve
-through this service so ITN-25 and `GET /api/hotels/search` agree on what counts
-as a matching city.
-
-### Person 8 (Payments, not shipped)
-
-Same open question as flights: `pricePerNight`'s currency (PAY-04). Using
-integer minor units as a placeholder, consistent with `CabinInventory.price`.
-
-## ACC-11 integration update - 2026-11-08
-
-Malak approved the multi-room HTL-22 response while implementing ACC-11. The feature branch replaces the pending reservation binding with HotelBookingsReservationsAdapter, reusing Osama's HotelBookingsService.listForHotel and projected guest names from UsersService. Ownership is checked first. The response has rooms[], guestCount, bookingReference, userId/guestName, dates/status/currency, totalAmount in minor units and the existing page/pageSize/total/totalPages. Single roomId and guests are replaced by the approved fields. No database schema changes. The exact contract is backend/src/hotels/ports/hotel-reservations.port.ts and its Swagger DTO. Older pending-adapter wording below is historical; this change becomes shared develop behavior after PR review/merge. Other availability/booking questions remain open.
-
-## 5. What Person 5 exports for others
-
-### Person 6 (HotelBooking, not shipped)
-
-- The `rooms` and `roomavailabilities` collections/fields in section 3, to read
-  and write directly (their own adapter owns `bookedRanges`).
-- `HotelsService.getAssignedHotelId(moderatorId)` for their moderator-scoped
-  reservation views.
-- `cancelReservationsForRoom`-style hooks are **not** built yet; add them when
-  Person 6's module exists, the same way Person 3 left room for Person 4's
-  `cancelBookingsForFlight`.
-
-Until Person 6 ships, HTL-22 (`GET /api/hotels/:id/reservations`) follows the
-itinerary precedent: a `HotelReservationsPort` with a `PendingReservationsAdapter`
-that throws 503, swapped for a real adapter once Person 6's service exists.
-
-### Person 7 (Itineraries, shipped, already waiting on this)
-
-`ItineraryHotelSearch { city, countryCode?, checkIn, checkOut, guests, rooms, page? }`
-from `backend/src/itineraries/ports/travel-search.port.ts` must be satisfiable by
-`HotelsService.search(...)`. Section 2's `GET /api/hotels/search` query shape
-matches those fields exactly so Person 7's adapter is a direct pass-through once
-written; no changes requested to that port.
-
-## 6. Decisions needed
-
-| # | Question | Who | Proposal |
-| --- | --- | --- | --- |
-| 1 | Is the one-document-per-room `blockedRanges`/`bookedRanges` shape acceptable, instead of a document-per-date calendar? | Person 6 | Yes — it keeps holds to one conditional write, matching the flights precedent, and avoids a multi-year date-row seed. |
-| 2 | Currency for `pricePerNight`? | Person 8 | Integer minor units, same placeholder status as flights (PAY-04 still open). |
-| 3 | Room type: free text or an enum? | Team | Free text; the workbook does not define a fixed room-type list. |
-| 4 | Who flips `Hotel.isActive`? | Person 2 | Admin endpoint writes the field directly, same as the (also unbuilt) Airline equivalent; Hotels only enforces it. |
-| 5 | `AI_PROMPTS.txt` vs `docs/work-logs/`: same open team question as the other contracts. | Team leader | Follow whatever the TA confirms for the rest of the team. |
-
-
-Session publication (2026-11-08): [PR55](https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/pull/55) contains the approved ACC-11 integration and ACC-07 backend. The team leader requested merging the saved edits. Use the PR record for the final merge state; tests/setup limits remain as documented. Before merging Osama's separate fix/HTL-22-reservations-port-shape branch, reconcile its per-room roomId/guests output with this approved rooms[]/guestCount/bookingReference contract.
+No new role, public booking status, environment variable or separate workflow file is added. Test fixtures explicitly configure positive dates in isolated MongoDB; they do not open Atlas rooms. Validation evidence and the review outcome are recorded in Malak's single work log. Full acceptance of unrelated hotel detail/media/delete criteria remains tracked separately in the matrix.

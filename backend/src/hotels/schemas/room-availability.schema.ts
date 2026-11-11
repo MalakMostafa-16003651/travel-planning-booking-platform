@@ -1,3 +1,4 @@
+import { isCalendarDate } from '../hotel-availability.rules';
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Schema as MongooseSchema, Types } from 'mongoose';
 
@@ -50,6 +51,13 @@ export class BookedRange {
 
 export const BookedRangeSchema = SchemaFactory.createForClass(BookedRange);
 
+@Schema({ _id: false })
+export class BookableRange {
+  @Prop({ type: String, required: true, validate: isCalendarDate }) startDate!: string;
+  @Prop({ type: String, required: true, validate: isCalendarDate }) endDate!: string;
+}
+export const BookableRangeSchema = SchemaFactory.createForClass(BookableRange);
+
 export type RoomAvailabilityDocument = HydratedDocument<RoomAvailability>;
 
 /**
@@ -65,6 +73,10 @@ export class RoomAvailability {
 
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'Hotel', required: true, index: true })
   hotelId!: Types.ObjectId;
+
+  /** Empty/missing means closed to NEW holds; historical reservations remain valid. */
+  @Prop({ type: [BookableRangeSchema], default: [] })
+  bookableRanges!: BookableRange[];
 
   @Prop({ type: [BlockedRangeSchema], default: [] })
   blockedRanges!: BlockedRange[];

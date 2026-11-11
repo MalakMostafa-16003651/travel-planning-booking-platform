@@ -1,3 +1,4 @@
+import { configureTestBookableRoom } from './hotel-test-data';
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import { getModelToken } from '@nestjs/mongoose';
@@ -191,6 +192,7 @@ describe('ACC-07a/GEN-07 atomic administrator actions', { concurrency: false }, 
     const rooms = fixture.app.get<Model<Room>>(getModelToken(Room.name));
     const hotel = await hotels.create({ name: 'Held Hotel', city: 'Cairo', countryCode: 'EG', address: 'Test' });
     const room = await rooms.create({ hotelId: hotel._id, name: 'Room', capacity: 2, pricePerNight: 10000 });
+    await configureTestBookableRoom(fixture.connection,room._id,hotel._id);
     const hold = await fixture.http().post('/api/hotel-bookings').set('Cookie', user.cookie).send({ hotelId: hotel._id.toString(), checkIn: '2027-12-20', checkOut: '2027-12-22', rooms: [{ roomId: room._id.toString(), adults: 1, childrenAges: [] }] }).expect(201);
     const confirmedId = (await collection('hotelbookings').insertOne({ hotelId: hotel._id, userId: new Types.ObjectId(user.userId), status: 'CONFIRMED', rooms: [] })).insertedId;
     await fixture.http().patch(`/api/admin/providers/hotel/${hotel._id}/deactivate`).set('Cookie', admin.cookie).send({}).expect(200);
