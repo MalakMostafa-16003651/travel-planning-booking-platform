@@ -8,6 +8,7 @@ import { ApiErrorDto } from '../common/dto/api-error.dto';
 import { UserRole } from '../common/enums/user-role.enum';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { IdParamDto } from './dto/id-param.dto';
+import { PaymentResponseDto } from './dto/payment-response.dto';
 import { PaymentsService } from './payments.service';
 
 @ApiTags('Payments')
@@ -73,7 +74,7 @@ export class PaymentsController {
   @Header('Cache-Control', 'no-store')
   @ApiCookieAuth('accessToken')
   @ApiOperation({ summary: 'PAY-01: view a payment (a PENDING one is checked with Stripe)', description: 'The owner or an ADMIN.' })
-  @ApiOkResponse({ description: 'The Payment.' })
+  @ApiOkResponse({ type: PaymentResponseDto, description: 'The Payment. amount is in major units (dollars).' })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'Invalid id.' })
   @ApiUnauthorizedResponse({ type: ApiErrorDto, description: 'Missing, invalid or expired session.' })
   @ApiForbiddenResponse({ type: ApiErrorDto, description: 'Role not allowed.' })

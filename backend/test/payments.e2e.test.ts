@@ -199,6 +199,18 @@ describe('PAY-01 payments and Stripe webhook', { concurrency: false }, () => {
     assert.deepEqual(results.map((r) => r.status).sort(), [200, 409]);
   });
 
+  it('answers concurrent payment starts with the same payment and cancels any extra PaymentIntent', async () => {
+    await accept();
+    const results = await Promise.all([1, 2, 3, 4, 5, 6].map(() => pay()));
+    assert.deepEqual(results.map((r) => r.status), [201, 201, 201, 201, 201, 201]);
+    const stored = await payments().find({ flightBookingId: new Types.ObjectId(bookingId) }).toArray();
+    assert.equal(stored.length, 1);
+    for (const r of results) assert.equal(r.body.payment._id, stored[0]._id.toString());
+    // Only the saved Payment's intent can still be paid.
+    const open = [...stripe.intents.values()].filter((intent) => intent.status !== 'canceled');
+    assert.deepEqual(open.map((intent) => intent.id), [stored[0].stripePaymentIntentId]);
+  });
+
   it('never confirms a wrong amount and never retries it', async () => {
     const { paymentId, intentId } = await startPayment();
     await webhook('payment_intent.succeeded', stripe.succeed(intentId, 100)).expect(200);
