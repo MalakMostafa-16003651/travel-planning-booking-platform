@@ -16,4 +16,5 @@ export class AccountPageDto {
   @ApiProperty({ example: 1 }) page!: number;
   @ApiProperty({ example: 10 }) pageSize!: number;
   @ApiProperty({ example: 57 }) total!: number;
+  @ApiProperty({ example: 6, description: 'Number of pages for this filter (0 when there are no results).' }) totalPages!: number;
 }

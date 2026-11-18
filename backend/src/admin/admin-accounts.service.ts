@@ -44,7 +44,7 @@ export class AdminAccountsService {
         .sort({ createdAt: -1, _id: -1 }).skip((page - 1) * ACCOUNTS_PAGE_SIZE).limit(ACCOUNTS_PAGE_SIZE).lean().exec(),
       this.users.countDocuments(filter).exec(),
     ]);
-    return { items: rows.map(toDto), page, pageSize: ACCOUNTS_PAGE_SIZE, total };
+    return { items: rows.map(toDto), page, pageSize: ACCOUNTS_PAGE_SIZE, total, totalPages: Math.ceil(total / ACCOUNTS_PAGE_SIZE) };
   }
 
   /** ACC-15 (moderators) / ACC-16 (users): an ACTIVE account becomes SUSPENDED and can no longer log in. */

@@ -19,6 +19,7 @@ export class ReportPageDto {
   @ApiProperty({ example: 1 }) page!: number;
   @ApiProperty({ example: 10 }) pageSize!: number;
   @ApiProperty({ example: 4 }) total!: number;
+  @ApiProperty({ example: 1, description: 'Number of pages for this filter (0 when there are no results).' }) totalPages!: number;
 }
 
 export class ContentModerationResultDto {

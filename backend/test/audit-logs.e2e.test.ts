@@ -56,6 +56,7 @@ describe('GEN-07 audit logs', { concurrency: false }, () => {
     }
     const first = await list().expect(200);
     assert.equal(first.body.total, 12);
+    assert.equal(first.body.totalPages, 2);
     assert.equal(first.body.items.length, 10);
     assert.equal(first.body.items[0].details, 'entry 11');
     assert.equal(first.body.items[9].details, 'entry 2');

@@ -58,6 +58,7 @@ describe('ACC-14/15/16 account management', { concurrency: false }, () => {
     for (let index = 0; index < 9; index += 1) await fixture.login(`extra${index}@example.com`);
     const first = await accounts().expect(200);
     assert.equal(first.body.total, 12);
+    assert.equal(first.body.totalPages, 2);
     assert.equal(first.body.items.length, 10);
     assert.equal(first.body.items[0].email, 'extra8@example.com');
     assert.equal((await accounts('?page=2').expect(200)).body.items.length, 2);

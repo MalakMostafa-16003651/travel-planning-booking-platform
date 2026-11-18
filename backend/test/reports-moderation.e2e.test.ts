@@ -90,6 +90,7 @@ describe('GEN-09/GEN-10 reports and moderation', { concurrency: false }, () => {
     const response = await fixture.http().get('/api/admin/reports').set('Cookie', admin.cookie).expect(200);
     assert.equal(response.body.total, 2);
     assert.equal(response.body.pageSize, 10);
+    assert.equal(response.body.totalPages, 1);
     assert.equal(response.body.items[0].targetType, 'COMMENT');
     assert.equal(response.body.items[0].userName, 'Second Reader');
     assert.equal(response.body.items[1].userName, 'Careful Reader');
@@ -263,12 +264,15 @@ describe('GEN-09/GEN-10 reports and moderation', { concurrency: false }, () => {
     await viewPost().expect(404);
 
     const visible = await moderate('patch', `post/${postId}/unhide`).expect(200);
+    // The uppercase targetType used in reports (POST) is accepted as well.
+    assert.equal((await moderate('patch', `POST/${postId}/hide`).expect(200)).body.state, 'HIDDEN');
+    await moderate('patch', `Post/${postId}/unhide`).expect(200);
     assert.equal(visible.body.state, 'VISIBLE');
     await viewPost().expect(200);
 
     const deleted = await moderate('delete', `comment/${commentId}`).expect(200);
     assert.equal(deleted.body.state, 'DELETED');
-    assert.deepEqual(await auditActions(), ['CONTENT_DELETED', 'CONTENT_HIDDEN', 'CONTENT_UNHIDDEN']);
+    assert.deepEqual(await auditActions(), ['CONTENT_DELETED', 'CONTENT_HIDDEN', 'CONTENT_HIDDEN', 'CONTENT_UNHIDDEN', 'CONTENT_UNHIDDEN']);
   });
 
   it('GEN-10/GEN-13: rejects invalid moderation requests without side effects', async () => {
