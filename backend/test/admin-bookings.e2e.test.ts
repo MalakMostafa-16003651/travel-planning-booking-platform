@@ -77,6 +77,7 @@ describe('ACC-17 admin bookings view', { concurrency: false }, () => {
     }
     const first = await list().expect(200);
     assert.equal(first.body.total, 12);
+    assert.equal(first.body.totalPages, 2);
     assert.equal(first.body.items.length, 10);
     assert.equal(first.body.items[0].bookingReference, 'REF011');
     assert.equal((await list('?page=2').expect(200)).body.items.length, 2);
@@ -142,6 +143,7 @@ describe('ACC-17 admin bookings view', { concurrency: false }, () => {
     const first = await list().expect(200);
     assert.equal(first.body.total, 14);
     assert.equal(first.body.pageSize, 10);
+    assert.equal(first.body.totalPages, 2);
     assert.deepEqual(first.body.items.map((item: { bookingReference: string }) => item.bookingReference),
       ['H6', 'F6', 'H5', 'F5', 'H4', 'F4', 'H3', 'F3', 'H2', 'F2']);
     assert.deepEqual(first.body.items.slice(0, 2).map((item: { type: string }) => item.type), ['HOTEL', 'FLIGHT']);

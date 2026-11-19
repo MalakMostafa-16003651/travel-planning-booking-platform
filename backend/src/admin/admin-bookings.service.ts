@@ -8,6 +8,9 @@ import { User, UserDocument } from '../users/schemas/user.schema';
 import { AdminBookingDto, AdminBookingPageDto } from './dto/admin-booking-response.dto';
 import { ListAdminBookingsQueryDto } from './dto/list-admin-bookings-query.dto';
 
+/** One page before totalPages is added in list(). */
+type BookingPage = Omit<AdminBookingPageDto, 'totalPages'>;
+
 /** GEN-05: every list uses page size 10 (the same as both owners' lists). */
 const PAGE_SIZE = 10;
 
@@ -18,7 +21,7 @@ class PagedSource {
   private finished = false;
   private knownTotal: number | undefined;
 
-  constructor(private readonly load: (page: number) => Promise<AdminBookingPageDto>) {}
+  constructor(private readonly load: (page: number) => Promise<BookingPage>) {}
 
   async peek(): Promise<AdminBookingDto | undefined> {
     if (this.buffer.length === 0 && !this.finished) {
@@ -62,9 +65,10 @@ export class AdminBookingsService {
     if (Object.keys(errors).length > 0) throw new BadRequestException({ message: 'Validation failed', errors });
 
     const page = query.page ?? 1;
-    if (query.type === 'FLIGHT') return this.listFlight(query, from, to, page);
-    if (query.type === 'HOTEL') return this.listHotel(query, from, to, page);
-    return this.listCombined(query, from, to, page);
+    const result = query.type === 'FLIGHT' ? await this.listFlight(query, from, to, page)
+      : query.type === 'HOTEL' ? await this.listHotel(query, from, to, page)
+        : await this.listCombined(query, from, to, page);
+    return { ...result, totalPages: Math.ceil(result.total / PAGE_SIZE) };
   }
 
   /**
@@ -72,7 +76,7 @@ export class AdminBookingsService {
    * and 10 per page. Both owners' lists are already sorted newest first (by _id), so their pages
    * are merged in order and only as many pages as needed are read.
    */
-  private async listCombined(query: ListAdminBookingsQueryDto, from: Date | undefined, to: Date | undefined, page: number): Promise<AdminBookingPageDto> {
+  private async listCombined(query: ListAdminBookingsQueryDto, from: Date | undefined, to: Date | undefined, page: number): Promise<BookingPage> {
     const flights = new PagedSource((n) => this.listFlight(query, from, to, n));
     const hotels = new PagedSource((n) => this.listHotel(query, from, to, n));
     const first = page * PAGE_SIZE;
@@ -93,7 +97,7 @@ export class AdminBookingsService {
   }
 
   /** ACC-17 for flights, through Person 4's listForAdmin. */
-  private async listFlight(query: ListAdminBookingsQueryDto, from: Date | undefined, to: Date | undefined, page: number): Promise<AdminBookingPageDto> {
+  private async listFlight(query: ListAdminBookingsQueryDto, from: Date | undefined, to: Date | undefined, page: number): Promise<BookingPage> {
     const result = await this.flightBookings.listForAdmin({ status: query.status, from, to, page });
     const [names, airlines] = await Promise.all([
       this.users.find({ _id: { $in: unique(result.items.map((item) => item.userId)) } }, { name: 1, email: 1 }).lean().exec(),
@@ -127,7 +131,7 @@ export class AdminBookingsService {
    * ACC-17 for hotels. Person 6's listForAdmin filters on the check-in calendar date and
    * accepts YYYY-MM-DD only, so ISO date-times are reduced to their UTC date first.
    */
-  private async listHotel(query: ListAdminBookingsQueryDto, from: Date | undefined, to: Date | undefined, page: number): Promise<AdminBookingPageDto> {
+  private async listHotel(query: ListAdminBookingsQueryDto, from: Date | undefined, to: Date | undefined, page: number): Promise<BookingPage> {
     const result = await this.hotelBookings.listForAdmin({
       status: query.status,
       from: from ? toDateOnly(from) : undefined,

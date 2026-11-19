@@ -35,6 +35,7 @@ describe('GEN-01 in-app notifications', { concurrency: false }, () => {
     assert.equal(response.body.total, 1);
     assert.equal(response.body.unreadCount, 1);
     assert.equal(response.body.pageSize, 10);
+    assert.equal(response.body.totalPages, 1);
     const [notification] = response.body.items;
     assert.equal(notification.type, 'BOOKING_CONFIRMED');
     assert.equal(notification.message, 'Your flight booking ABC123 is confirmed.');

@@ -82,6 +82,6 @@ export class AuditLogsService {
       details: row.details,
       createdAt: row.createdAt,
     }));
-    return { items, page, pageSize: AUDIT_LOGS_PAGE_SIZE, total };
+    return { items, page, pageSize: AUDIT_LOGS_PAGE_SIZE, total, totalPages: Math.ceil(total / AUDIT_LOGS_PAGE_SIZE) };
   }
 }

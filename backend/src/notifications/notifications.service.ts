@@ -64,7 +64,7 @@ export class NotificationsService {
       this.notifications.countDocuments(filter).exec(),
       this.countUnread(userId),
     ]);
-    return { items: rows.map(toDto), page, pageSize: NOTIFICATIONS_PAGE_SIZE, total, unreadCount };
+    return { items: rows.map(toDto), page, pageSize: NOTIFICATIONS_PAGE_SIZE, total, totalPages: Math.ceil(total / NOTIFICATIONS_PAGE_SIZE), unreadCount };
   }
 
   /** GEN-01: unread count for the notification badge. */

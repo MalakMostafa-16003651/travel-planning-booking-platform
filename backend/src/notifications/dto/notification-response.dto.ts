@@ -15,6 +15,7 @@ export class NotificationPageDto {
   @ApiProperty({ example: 1 }) page!: number;
   @ApiProperty({ example: 10 }) pageSize!: number;
   @ApiProperty({ example: 3 }) total!: number;
+  @ApiProperty({ example: 1, description: 'Number of pages for this filter (0 when there are no results).' }) totalPages!: number;
   @ApiProperty({ example: 2, description: 'Unread notifications in the whole inbox, not just this page.' }) unreadCount!: number;
 }
 
