@@ -331,6 +331,21 @@ describe('Hotels E2E', { concurrency: false }, () => {
       assert.equal(await connection.collection('roomavailabilities').countDocuments({ roomId: new Types.ObjectId(room._id) }), 0);
     });
 
+    it('a 409 from a combined edit leaves the room untouched, including isActive (from the test report)', async () => {
+      const other = await createRoom({ name: 'Already Taken' });
+      const room = await createRoom({ name: 'Edit Me' });
+
+      await http()
+        .patch(`/api/hotels/${hotelId}/rooms/${room._id}`)
+        .set('Cookie', moderatorCookie)
+        .send({ isActive: false, name: other.name })
+        .expect(409);
+
+      const stored = await connection.collection('rooms').findOne({ _id: new Types.ObjectId(room._id) });
+      assert.equal(stored!.isActive, true, 'the rejected edit must not have deactivated the room');
+      assert.equal(stored!.name, 'Edit Me', 'the rejected edit must not have renamed the room either');
+    });
+
     it('refuses to delete a room that was ever reserved, even after its reservation ended (HTL-06)', async () => {
       const room = await createRoom();
       await connection.collection('hotelbookings').insertOne({ rooms: [{ roomId: new Types.ObjectId(room._id) }], status: 'EXPIRED' });
