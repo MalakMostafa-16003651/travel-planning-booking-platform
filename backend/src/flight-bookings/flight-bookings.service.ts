@@ -107,7 +107,13 @@ export class FlightBookingsService {
     const owner = { userId: new Types.ObjectId(userId) };
     const now = new Date();
     const filters: Record<FlightBookingGroup, QueryFilter<FlightBooking>> = {
-      [FlightBookingGroup.UPCOMING]: { ...owner, status: { $in: [BookingStatus.PENDING, BookingStatus.CONFIRMED] }, lastDepartureAt: { $gt: now } },
+      // FLT-25: a hold is upcoming only while it is live, so an expired hold drops out at once, before the
+      // sweep marks it EXPIRED. The page and its total use this same filter.
+      [FlightBookingGroup.UPCOMING]: {
+        ...owner,
+        lastDepartureAt: { $gt: now },
+        $or: [{ status: BookingStatus.CONFIRMED }, { status: BookingStatus.PENDING, holdExpiresAt: { $gt: now } }],
+      },
       [FlightBookingGroup.PAST]: {
         ...owner,
         $or: [{ status: BookingStatus.COMPLETED }, { status: BookingStatus.CONFIRMED, lastDepartureAt: { $lte: now } }],
