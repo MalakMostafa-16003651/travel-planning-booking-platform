@@ -34,7 +34,7 @@ import { BlockRoomDatesDto } from './dto/block-room-dates.dto';
 import { CreateHotelDto } from './dto/create-hotel.dto';
 import { CreateRoomDto } from './dto/create-room.dto';
 import { HotelAvailabilityQueryDto } from './dto/hotel-availability-query.dto';
-import { PageQueryDto } from './dto/page-query.dto';
+import { HotelPageQueryDto } from './dto/page-query.dto';
 import { SearchHotelsQueryDto } from './dto/search-hotels-query.dto';
 import { UpdateHotelDto } from './dto/update-hotel.dto';
 import { UpdateHotelPoliciesDto } from './dto/update-hotel-policies.dto';
@@ -295,7 +295,7 @@ export class HotelsController {
   getReservations(
     @Req() req: AuthenticatedRequest,
     @Param('id') id: string,
-    @Query() query: PageQueryDto,
+    @Query() query: HotelPageQueryDto,
   ): Promise<HotelReservationsPage> {
     return this.hotels.getReservations(req.user!.userId, id, query.page ?? 1);
   }
