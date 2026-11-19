@@ -60,6 +60,8 @@ export interface HotelSearchResult {
   checkOutTime: string;
   /** The cheapest qualifying room's nightly price, integer minor units. */
   fromPrice: number;
+  /** PAY-04: always PLATFORM_CURRENCY; made explicit per the test report, matching available-rooms' shape. */
+  currency: string;
   availableRooms: number;
   starClass?: number;
   amenities?: string[];
@@ -283,12 +285,14 @@ export class HotelsService {
     return room;
   }
 
-  /** HTL-05. */
+  /**
+   * HTL-05/HTL-06. One transaction for the whole edit, deactivation included: a reused test report
+   * found that {isActive:false, name:<duplicate>} left the room deactivated even though the request
+   * as a whole returned 409, because deactivation used to run as its own earlier transaction.
+   */
   async updateRoom(moderatorId: string, hotelId: string, roomId: string, input: UpdateRoomDto): Promise<Room> {
     const values=[input.name,input.type,input.beds,input.capacity,input.pricePerNight,input.isActive];
     if(!values.some(v=>v!==undefined))throw new BadRequestException('At least one room field must be supplied');
-    // HTL-06: deactivation keeps its own reservation check and gate; then the other fields are applied.
-    if(input.isActive===false)await this.deactivateRoom(moderatorId,hotelId,roomId);
     const room=await this.getOwnRoom(moderatorId,hotelId,roomId);
     const set:Record<string,unknown>={};
     if(input.name!==undefined)set.name=input.name.trim();
@@ -296,11 +300,19 @@ export class HotelsService {
     if(input.beds!==undefined)set.beds=input.beds;
     if(input.capacity!==undefined)set.capacity=input.capacity;
     if(input.pricePerNight!==undefined)set.pricePerNight=input.pricePerNight;
-    if(input.isActive===true)set.isActive=true;
+    if(input.isActive!==undefined)set.isActive=input.isActive;
     if(!Object.keys(set).length)return room;
     try {
       return await this.connection.transaction(async session=>{
-        await this.inventory.acquireBookingGate(room.hotelId.toString(),[room._id.toString()],session,false);
+        // Deactivation keeps its own lock-free reservation check (no acquireBookingGate before it): a
+        // concurrent hold's own gate acquisition then conflicts with this transaction's eventual write
+        // to the same room document at commit time, which is what forces the retry-and-recheck a
+        // GEN-13 concurrency test (R4) exercises deliberately. Taking the gate first would instead
+        // deadlock that hold against this still-open transaction.
+        if(input.isActive===false&&await this.hotelBookings.roomHasActiveReservations(room._id.toString(),session)) {
+          throw new ConflictException('This room has an active reservation and cannot be deactivated');
+        }
+        if(input.isActive!==false)await this.inventory.acquireBookingGate(room.hotelId.toString(),[room._id.toString()],session,false);
         if(input.name!==undefined||input.type!==undefined||input.beds!==undefined)await this.assertRoomNameUnique(room.hotelId,String(set.name??room.name),room._id,session);
         const updated=await this.rooms.findByIdAndUpdate(room._id,{$set:set},{returnDocument:'after',runValidators:true,session}).exec();
         if(!updated)throw new NotFoundException('Room not found for this hotel');
@@ -343,16 +355,6 @@ export class HotelsService {
       if (reserved) throw new ConflictException('This room has been reserved before and cannot be deleted; deactivate it instead');
       await this.rooms.deleteOne({ _id: room._id }, { session }).exec();
       await this.roomAvailabilities.deleteOne({ roomId: room._id }, { session }).exec();
-    });
-  }
-
-  async deactivateRoom(moderatorId: string, hotelId: string, roomId: string): Promise<void> {
-    const room = await this.getOwnRoom(moderatorId, hotelId, roomId);
-    await this.connection.transaction(async (session) => {
-      if (await this.hotelBookings.roomHasActiveReservations(room._id.toString(), session)) {
-        throw new ConflictException('This room has an active reservation and cannot be deactivated');
-      }
-      await this.rooms.updateOne({ _id: room._id }, { $set: { isActive: false } }, { session }).exec();
     });
   }
 
@@ -536,6 +538,7 @@ export class HotelsService {
         checkInTime: hotel.checkInTime,
         checkOutTime: hotel.checkOutTime,
         fromPrice,
+        currency: PLATFORM_CURRENCY,
         availableRooms: freeRooms.length,
         starClass:hotel.starClass,amenities:hotel.amenities,averageRating:rating?.averageRating??null,ratingCount:rating?.ratingCount??0,
       });
