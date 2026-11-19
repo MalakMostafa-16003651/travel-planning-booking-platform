@@ -101,6 +101,7 @@ describe('Flights polish: search defaults, local times, inactive airline, my fli
     const base = { departureAirportCode: 'CAI', arrivalAirportCode: 'DXB', departureDate: '2027-12-10', adults: 1 };
     const result = await http().get('/api/flights/search').query(base).expect(200);
     assert.equal(result.body.total, 0);
+    assert.equal(result.body.totalPages, 0);
     assert.equal(result.body.pageSize, 10);
     // The passenger rules still apply with the defaults filled in.
     await http().get('/api/flights/search').query({ ...base, infants: 2 }).expect(400);
@@ -162,6 +163,7 @@ describe('Flights polish: search defaults, local times, inactive airline, my fli
     const all = await http().get('/api/flights/mine').set('Cookie', moderatorCookie).expect(200);
     assert.equal(all.body.total, 2);
     assert.equal(all.body.pageSize, 10);
+    assert.equal(all.body.totalPages, 1);
     assert.deepEqual(all.body.items.map((item: { flightNumber: string }) => item.flightNumber).sort(), ['TA100', 'TA200']);
     const cancelled = await http().get('/api/flights/mine').query({ status: 'CANCELLED' }).set('Cookie', moderatorCookie).expect(200);
     assert.equal(cancelled.body.total, 0);
