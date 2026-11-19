@@ -12,7 +12,7 @@ export class BaggagePolicyDto {
   maxExtraBagsPerPassenger!: number;
 }
 
-export class CancellationTierDto {
+export class AirlineCancellationTierDto {
   @ApiProperty({ example: 14 })
   @IsInt() @Min(0)
   daysBeforeDeparture!: number;
@@ -27,14 +27,14 @@ export class UpdateAirlinePoliciesDto {
   @ValidateIf((_object, value) => value !== undefined) @ValidateNested() @Type(() => BaggagePolicyDto)
   baggagePolicy?: BaggagePolicyDto;
 
-  @ApiPropertyOptional({ type: [CancellationTierDto] })
-  @ValidateIf((_object, value) => value !== undefined) @IsArray() @ValidateNested({ each: true }) @Type(() => CancellationTierDto)
-  cancellationTiers?: CancellationTierDto[];
+  @ApiPropertyOptional({ type: [AirlineCancellationTierDto] })
+  @ValidateIf((_object, value) => value !== undefined) @IsArray() @ValidateNested({ each: true }) @Type(() => AirlineCancellationTierDto)
+  cancellationTiers?: AirlineCancellationTierDto[];
 }
 
 /** FLT-09 via PUT /api/airlines/:id/cancellation-policy: replaces the whole tier list. */
 export class CancellationPolicyDto {
-  @ApiProperty({ type: [CancellationTierDto], description: 'Each tier has a unique daysBeforeDeparture. An empty list means no refund (0%).' })
-  @IsArray() @ValidateNested({ each: true }) @Type(() => CancellationTierDto)
-  cancellationTiers!: CancellationTierDto[];
+  @ApiProperty({ type: [AirlineCancellationTierDto], description: 'Each tier has a unique daysBeforeDeparture. An empty list means no refund (0%).' })
+  @IsArray() @ValidateNested({ each: true }) @Type(() => AirlineCancellationTierDto)
+  cancellationTiers!: AirlineCancellationTierDto[];
 }
