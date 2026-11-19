@@ -12,7 +12,7 @@ import { OptionalAuthGuard } from '../itineraries/optional-auth.guard';
 import { MAX_IMAGE_BYTES, MAX_IMAGES_PER_POST } from './blog.rules';
 import { BlogService } from './blog.service';
 import { CommentsService } from './comments.service';
-import { AttachPostItineraryDto, CreateBlogPostDto, ListPostsQueryDto, PageQueryDto, PostIdParamDto, PostImageParamsDto, UpdateBlogPostDto } from './dto/blog-post.dto';
+import { AttachPostItineraryDto, BlogPageQueryDto, CreateBlogPostDto, ListPostsQueryDto, PostIdParamDto, PostImageParamsDto, UpdateBlogPostDto } from './dto/blog-post.dto';
 import { CreateCommentDto } from './dto/comment.dto';
 import { LikesService } from './likes.service';
 import { PostImagesService, UploadedImage } from './post-images.service';
@@ -61,7 +61,7 @@ export class BlogController {
   @ApiOkResponse({ description: '{ items, page, pageSize, total, totalPages }' })
   @ApiUnauthorizedResponse({ type: ApiErrorDto, description: 'Missing, invalid or expired session.' })
   @ApiForbiddenResponse({ type: ApiErrorDto, description: 'Only role USER has posts.' })
-  listMine(@Query() query: PageQueryDto, @Req() request: AuthenticatedRequest) {
+  listMine(@Query() query: BlogPageQueryDto, @Req() request: AuthenticatedRequest) {
     return this.blog.listMine(request.user!, query.page);
   }
 
@@ -146,7 +146,7 @@ export class BlogController {
   @ApiOkResponse({ description: '{ items, page, pageSize, total, totalPages }' })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'Invalid id or page.' })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: 'No such post you may read.' })
-  listComments(@Param() params: PostIdParamDto, @Query() query: PageQueryDto, @Req() request: AuthenticatedRequest) {
+  listComments(@Param() params: PostIdParamDto, @Query() query: BlogPageQueryDto, @Req() request: AuthenticatedRequest) {
     return this.comments.listForPost(params.id, query.page, request.user);
   }
 
