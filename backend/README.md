@@ -52,9 +52,9 @@ Use the configured port in both URLs if `PORT` is changed. Startup requires a wo
 
 | Field | Rules |
 | --- | --- |
-| `name` | A name string; surrounding whitespace is trimmed. |
+| `name` | A nonempty name string of at most 120 characters after surrounding whitespace is trimmed. |
 | `email` | A valid email address; surrounding whitespace is trimmed and letters are converted to lowercase before storage. It must be unique. |
-| `password` | At least eight characters, including at least one Unicode letter and one Unicode decimal digit. |
+| `password` | 8 to 128 characters, including at least one Unicode letter and one Unicode decimal digit. The same limits apply when setting replacement or temporary passwords. |
 | `termsAccepted` | Must be the literal boolean `true`. Missing consent, `false`, and the string `"true"` are rejected. |
 
 Unknown fields are rejected. The caller cannot choose `role`, `status`, or a user ID during registration. The backend assigns role `USER` and account status `ACTIVE`.
@@ -201,7 +201,7 @@ administrator or run setup against shared Atlas.
 }
 ```
 
-Name is trimmed and must remain nonempty. Phone input is trimmed and must have international syntax: + followed by 8–15 digits, starting nonzero; this checks format, not whether the number exists. Currency is trimmed/uppercased and must exist in the shared catalog. Omitted fields remain unchanged; null/blank values, unknown fields, email/role/status/ID changes and empty patches return 400. Every supplied field validates before any update. A successful request returns 200 with the profile, no authentication-cookie changes and `Cache-Control: no-store`. Both GET/PATCH enforce current eligibility and the server-captured credential version; concurrent patches change only their supplied fields.
+Name is trimmed and must remain nonempty and at most 120 characters. Phone input is trimmed and must have international syntax: + followed by 8–15 digits, starting nonzero; this checks format, not whether the number exists. Currency is trimmed/uppercased and must exist in the shared catalog. Omitted fields remain unchanged; null/blank values, unknown fields, email/role/status/ID changes and empty patches return 400. Every supplied field validates before any update. A successful request returns 200 with the profile, no authentication-cookie changes and `Cache-Control: no-store`. Both GET/PATCH enforce current eligibility and the server-captured credential version; concurrent patches change only their supplied fields.
 
 `GET /api/currencies` is public and returns a sorted array of `{ "code": "EGP", "name": "Egyptian pound" }` entries. The shared MongoDB collection is `currencies`: unique uppercase three-letter `code`, `name`, `_id` and timestamps. Initial codes **AED, EGP, EUR, GBP, JPY, SAR, USD** come from the PDF-linked [Countries.csv reference](https://docs.google.com/spreadsheets/d/1SlKUTRqlHuBJAMC-Z-QOZzSrzKpGHT_TgQUI5gVm-BA/edit?gid=2042930643); readable currency names are maintained in the seed constant. These values form the initial team catalog, while later additions need shared coordination.
 

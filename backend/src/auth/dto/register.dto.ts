@@ -1,13 +1,14 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { Equals, IsBoolean, IsEmail, IsNotEmpty, IsString } from 'class-validator';
+import { Equals, IsBoolean, IsEmail, IsNotEmpty, IsString, MaxLength } from 'class-validator';
 import { CompliantPassword } from '../password-policy.decorator';
 
 export class RegisterDto {
-  @ApiProperty({ example: 'Alex Traveler' })
+  @ApiProperty({ example: 'Alex Traveler', maxLength: 120 })
   @Transform(({ value }: { value: unknown }) => typeof value === 'string' ? value.trim() : value)
   @IsString({ message: 'Name must be a string' })
   @IsNotEmpty({ message: 'Name is required' })
+  @MaxLength(120, { message: 'Name must be at most 120 characters' })
   name!: string;
 
   @ApiProperty({ example: 'alex@example.com', format: 'email' })
@@ -19,8 +20,9 @@ export class RegisterDto {
     example: 'Travel123',
     format: 'password',
     minLength: 8,
+    maxLength: 128,
     writeOnly: true,
-    description: 'At least 8 characters, including a letter and a digit (ACC-01).',
+    description: '8 to 128 characters, including a letter and a digit (ACC-01).',
   })
   @CompliantPassword()
   password!: string;

@@ -6,7 +6,7 @@ export class ResetPasswordDto {
   @IsString({ message: 'Reset token must be a string' })
   @Matches(/^[a-f0-9]{64}$/, { message: 'Reset token has an invalid format' })
   token!: string;
-  @ApiProperty({ format: 'password', writeOnly: true, minLength: 8, description: 'At least eight characters including a letter and digit; differs from the current password.' })
+  @ApiProperty({ format: 'password', writeOnly: true, minLength: 8, maxLength: 128, description: '8 to 128 characters including a letter and digit; differs from the current password.' })
   @CompliantPassword('New password')
   newPassword!: string;
 }
