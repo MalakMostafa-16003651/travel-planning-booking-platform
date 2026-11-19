@@ -79,9 +79,12 @@ export class CommentsService {
     await this.deleteComment(comment);
   }
 
-  /** For reports (GEN-09): false for unknown or invalid ids. */
+  /** For reports (GEN-09): true only for a visible comment on a post the public can see. */
   async commentExists(commentId: string): Promise<boolean> {
-    return isValidObjectId(commentId) && await this.comments.countDocuments({ _id: commentId }).exec() > 0;
+    if (!isValidObjectId(commentId)) return false;
+    const comment = await this.comments.findById(commentId, { postId: 1, isHidden: 1 }).exec();
+    if (!comment || comment.isHidden) return false;
+    return this.blog.postExists(comment.postId.toString());
   }
 
   private async getOwnedComment(commentId: string, viewer: Viewer): Promise<CommentDocument> {

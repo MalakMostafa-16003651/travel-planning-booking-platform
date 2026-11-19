@@ -361,7 +361,10 @@ describe('BLG-01/02/03/04/08/09/12 blog posts', { concurrency: false }, () => {
     const postId = await fixture.post(author);
     assert.equal(await blog.postExists(postId), true);
     assert.equal(await blog.postExists('nope'), false);
+    // GEN-09: drafts and hidden posts cannot be reported, so a report never reveals them.
+    assert.equal(await blog.postExists(await fixture.post(author, { status: 'DRAFT' })), false);
     assert.equal((await blog.setPostHidden(postId, true)).isHidden, true);
+    assert.equal(await blog.postExists(postId), false);
     await blog.adminDeletePost(postId);
     assert.equal(await blog.postExists(postId), false);
     await assert.rejects(blog.adminDeletePost(postId), { status: 404 });

@@ -183,9 +183,14 @@ export class BlogService {
     await this.deletePost(post);
   }
 
-  /** For reports (GEN-09): false for unknown or invalid ids. */
+  /**
+   * For reports (GEN-09): true only for a post the public can see. Drafts, hidden posts and posts of
+   * deactivated authors answer false, so a report cannot reveal content the reporter cannot read.
+   */
   async postExists(postId: string): Promise<boolean> {
-    return isValidObjectId(postId) && await this.posts.countDocuments({ _id: postId }).exec() > 0;
+    if (!isValidObjectId(postId)) return false;
+    const post = await this.posts.findById(postId).exec();
+    return !!post && await this.isPublic(post);
   }
 
   // Shared with comments, likes and images.
