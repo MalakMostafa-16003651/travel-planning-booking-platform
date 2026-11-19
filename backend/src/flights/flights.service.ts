@@ -321,6 +321,8 @@ async onModuleInit(): Promise<void> {
         'Flight airport reference is missing',
       );
     }
+    const oldDepartureAirport = departureAirport;
+    const oldArrivalAirport = arrivalAirport;
 
     // FLT-05: airports may change only while the flight has no booking (checked again in the transaction below).
     if (input.departureAirportCode !== undefined || input.arrivalAirportCode !== undefined) {
@@ -340,19 +342,25 @@ async onModuleInit(): Promise<void> {
     const airportsChanged = !departureAirport._id.equals(flight.departureAirportId)
       || !arrivalAirport._id.equals(flight.arrivalAirportId);
 
+    // When only an airport changes, keep the clock time the moderator already published (local time at the
+    // airport) instead of keeping the UTC instant, which would silently shift the local time.
     const departureAt = input.departureLocalDateTime
       ? localDateTimeToUtc(
           input.departureLocalDateTime,
           departureAirport.timeZone,
         )
-      : flight.departureAt;
+      : !departureAirport._id.equals(flight.departureAirportId)
+        ? localDateTimeToUtc(utcToLocalDateTime(flight.departureAt, oldDepartureAirport.timeZone), departureAirport.timeZone)
+        : flight.departureAt;
 
     const arrivalAt = input.arrivalLocalDateTime
       ? localDateTimeToUtc(
           input.arrivalLocalDateTime,
           arrivalAirport.timeZone,
         )
-      : flight.arrivalAt;
+      : !arrivalAirport._id.equals(flight.arrivalAirportId)
+        ? localDateTimeToUtc(utcToLocalDateTime(flight.arrivalAt, oldArrivalAirport.timeZone), arrivalAirport.timeZone)
+        : flight.arrivalAt;
 
     if (arrivalAt <= departureAt) {
       throw new BadRequestException(
@@ -447,7 +455,7 @@ async onModuleInit(): Promise<void> {
         await this.notifications.notifyMany(
           confirmedUserIds,
           NotificationType.FLIGHT_SCHEDULE_CHANGED,
-          `Flight ${updatedFlight.flightNumber} has a new schedule: departs ${departureAt.toISOString()} and arrives ${arrivalAt.toISOString()} (UTC).`,
+          `Flight ${updatedFlight.flightNumber} has a new schedule: departs ${departureAirport.code} at ${utcToLocalDateTime(departureAt, departureAirport.timeZone).slice(0, 16).replace('T', ' ')} and arrives ${arrivalAirport.code} at ${utcToLocalDateTime(arrivalAt, arrivalAirport.timeZone).slice(0, 16).replace('T', ' ')} (local airport times).`,
         );
       } catch {
         this.logger.error(`Could not create schedule-change notifications for flight ${flight._id.toString()}`);
@@ -567,7 +575,7 @@ async onModuleInit(): Promise<void> {
   // ===== Branch 4: FLT-11 / FLT-12 / FLT-15 flight search =====
 
   private async searchOneWay(input: FlightSearchDto): Promise<any[]> {
-    const passengerCount = input.adults + input.children;
+    const passengerCount = input.adults + (input.children ?? 0);
     if (input.minPrice !== undefined && input.maxPrice !== undefined && input.minPrice > input.maxPrice) throw new BadRequestException('minPrice cannot be greater than maxPrice');
     await this.markDeparted();
     const [departureAirport, arrivalAirport] = await Promise.all([
