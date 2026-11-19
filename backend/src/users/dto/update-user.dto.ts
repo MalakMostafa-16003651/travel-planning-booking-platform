@@ -1,13 +1,14 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsNotEmpty, IsString, Matches, ValidateIf } from 'class-validator';
+import { IsNotEmpty, IsString, Matches, MaxLength, ValidateIf } from 'class-validator';
 
 export class UpdateUserDto {
-  @ApiPropertyOptional({ description: 'Display name; surrounding whitespace is trimmed.' })
+  @ApiPropertyOptional({ maxLength: 120, description: 'Display name; surrounding whitespace is trimmed.' })
   @Transform(({ value }: { value: unknown }) => typeof value === 'string' ? value.trim() : value)
   @ValidateIf((_object, value: unknown) => value !== undefined)
   @IsString({ message: 'Name must be a string' })
   @IsNotEmpty({ message: 'Name is required' })
+  @MaxLength(120, { message: 'Name must be at most 120 characters' })
   name?: string;
 
   @ApiPropertyOptional({
