@@ -94,3 +94,51 @@ Changes, all with tests (test/pdf-api-coverage.e2e.test.ts):
   - Added this file.
 The output was reviewed against the requirement text and the existing tests before use.
 ================================================
+Date: 2026-11-04
+Student: 16002979 (Person 4)
+Tool: Claude Code (Anthropic)
+Related Requirement: FLT-12, FLT-19, FLT-21, FLT-22, FLT-23, FLT-25, FLT-26, GEN-11
+
+Prompt:
+(with the project PDF, the team's 8-person split and naming rules attached)
+I have part(4)
+
+How the output was used:
+Read the reviewed workbook and the PDF and wrote the shared flight booking contract,
+since Flights and Payments did not exist yet. After I chose "Build against proposal",
+built the flight-bookings module with transactional seat holds, confirmation,
+e-ticket, booking lists, cancellation and an expiry job, with tests (PR #8).
+Details: docs/work-logs/16002979.md sections 1-2.
+================================================
+Date: 2026-11-10
+Student: 16002979 (Person 4)
+Tool: Claude Code (Anthropic)
+Related Requirement: FLT-22, FLT-23, FLT-26, PAY-01, PAY-03, GEN-01
+
+Prompt:
+(with Omar's handoff, the 09 Nov milestone review and Kiki's ITN-27 request attached)
+Here are all the things the team members need me to finish, so proceed with what we
+haven't finished, check what the team members did and apply to what they did ... and
+then make the PR requests with a nice neat descriptions.
+
+How the output was used:
+Bound the real Payments and Notifications services, added refund status to booking
+details, fixed the cancellation-after-departure race (review finding F8) and answered
+Kiki's ITN-27 questions in the contract (PR #68). Details: docs/work-logs/16002979.md
+section 3.
+================================================
+Date: 2026-11-19
+Student: 16002979 (Person 4)
+Tool: Claude Code (Anthropic)
+Related Requirement: FLT-25, FLT-22, GEN-05
+
+Prompt:
+(with the 19 Nov "Remaining owner actions" handoff attached)
+I am ismail, handle what needs to be handled and do a PR ofc
+
+How the output was used:
+Changed the Upcoming flight booking list to show pending holds only while they are
+live, so an expired hold disappears before the cleanup job runs, with the same filter
+for the total. Added a test, checked that it fails without the fix, and opened a PR
+into develop. Details: docs/work-logs/16002979.md section 4.
+================================================
