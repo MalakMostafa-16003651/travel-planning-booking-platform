@@ -77,6 +77,33 @@ async onModuleInit(): Promise<void> {
     return this.bookings.listBookingsForFlight(flight._id.toString(), page);
   }
 
+  /** Moderator screens: the flights of the moderator's own airline, newest departure first, 10 per page. */
+  async listOwnFlights(moderatorId: string, page = 1, status?: FlightStatus) {
+    const airlineId = await this.airlines.getAssignedAirlineId(moderatorId);
+    await this.markDeparted();
+    const filter: QueryFilter<Flight> = { airlineId, ...(status ? { status } : {}) };
+    const [total, flights, airline] = await Promise.all([
+      this.flights.countDocuments(filter).exec(),
+      this.flights.find(filter).sort({ departureAt: -1, _id: -1 }).skip((page - 1) * SEARCH_PAGE_SIZE).limit(SEARCH_PAGE_SIZE).exec(),
+      this.airlinesModel.findById(airlineId).exec(),
+    ]);
+    if (!airline) throw new NotFoundException('Assigned airline not found');
+    const airportIds = [...new Set(flights.flatMap((flight) => [flight.departureAirportId.toString(), flight.arrivalAirportId.toString()]))].map((id) => new Types.ObjectId(id));
+    const [airports, cabins] = await Promise.all([
+      this.airports.find({ _id: { $in: airportIds } }).exec(),
+      this.cabins.find({ flightId: { $in: flights.map((flight) => flight._id) } }).sort({ price: 1 }).exec(),
+    ]);
+    const airportById = new Map(airports.map((airport) => [airport._id.toString(), airport]));
+    const items = flights.flatMap((flight) => {
+      const departure = airportById.get(flight.departureAirportId.toString());
+      const arrival = airportById.get(flight.arrivalAirportId.toString());
+      if (!departure || !arrival) return [];
+      const own = cabins.filter((cabin) => cabin.flightId.equals(flight._id));
+      return [this.flightView(flight, airline, departure, arrival, own)];
+    });
+    return { items, page, pageSize: SEARCH_PAGE_SIZE, total };
+  }
+
   // FLT-30: Update flights that have departed
 
   async markDeparted(): Promise<void> {
@@ -163,7 +190,7 @@ async onModuleInit(): Promise<void> {
       input.departureLocalDateTime.slice(0, 10);
 
     try {
-      return await this.flights.create({
+      const created = await this.flights.create({
         airlineId,
         flightNumber: input.flightNumber,
         status: FlightStatus.SCHEDULED,
@@ -173,6 +200,8 @@ async onModuleInit(): Promise<void> {
         arrivalAirportId: arrivalAirport._id,
         departureLocalDate,
       });
+      // Same fields as before (_id, departureAt, ...) plus the readable flight view (flightId, airline and airport names, local times).
+      return { ...created.toObject(), ...this.flightView(created, airline, departureAirport, arrivalAirport, []) };
     } catch (error) {
       if ((error as { code?: number }).code === 11000) {
         throw new ConflictException(
@@ -259,6 +288,12 @@ async onModuleInit(): Promise<void> {
       throw new NotFoundException(
         'Flight not found for your airline',
       );
+    }
+
+    // A deactivated airline can no longer create or edit flights and cabins (cancelling stays possible).
+    const owner = await this.airlinesModel.findById(airlineId, { isActive: 1 }).exec();
+    if (!owner || !owner.isActive) {
+      throw new ForbiddenException('Your assigned airline is not active');
     }
 
     if (
@@ -679,6 +714,8 @@ async onModuleInit(): Promise<void> {
       this.airports.findById(flight.arrivalAirportId).exec(), this.cabins.find({ flightId: flight._id }).sort({ price: 1 }).exec(),
     ]);
     if (!airline || !departure || !arrival) throw new NotFoundException('Flight reference data is incomplete');
+    // Search already hides deactivated airlines; the public detail page does the same.
+    if (!airline.isActive) throw new NotFoundException('Flight not found');
     return this.flightView(flight, airline, departure, arrival, cabins);
   }
 
