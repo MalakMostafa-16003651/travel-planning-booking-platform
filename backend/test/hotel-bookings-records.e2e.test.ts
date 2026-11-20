@@ -101,6 +101,29 @@ describe('HTL-20 hotel reservation records', { concurrency: false }, () => {
     assert.equal((await get(alice).expect(200)).body.total, 5);
   });
 
+  it('HTL-20: Upcoming excludes expired and missing-expiry holds before cleanup, including counts and pages', async () => {
+    const now = new Date();
+    const active = booking(alice.userId, { status: BookingStatus.PENDING, bookingReference: undefined,
+      paymentId: undefined, holdExpiresAt: new Date(now.getTime() + 600_000) });
+    const [expired] = await bookings.create([booking(alice.userId, { status: BookingStatus.PENDING,
+      bookingReference: undefined, paymentId: undefined, holdExpiresAt: new Date(now.getTime() - 1) })]);
+    const { holdExpiresAt: _expiry, ...legacyHold } = active;
+    await fixture.connection.collection(bookings.collection.name).insertOne({ ...legacyHold, _id: new Types.ObjectId() });
+    await bookings.create([booking(bob.userId), booking(alice.userId, { checkIn: '2020-01-01', checkOut: '2020-01-04' })]);
+    await bookings.create(Array.from({ length: 10 }, () => booking(alice.userId)));
+    await bookings.create([active]);
+    const first = await get(alice, '?group=UPCOMING').expect(200);
+    const second = await get(alice, '?group=UPCOMING&page=2').expect(200);
+    assert.equal(first.body.total, 11);
+    assert.equal(second.body.total, 11);
+    assert.equal(first.body.items.length, 10);
+    assert.equal(second.body.items.length, 1);
+    const items = [...first.body.items, ...second.body.items];
+    assert.equal(items.filter((item: { status: string }) => item.status === 'PENDING').length, 1);
+    assert.equal(items.some((item: { hotelBookingId: string }) => item.hotelBookingId === expired._id.toString()), false);
+    assert.equal((await bookings.findById(expired._id).orFail()).status, BookingStatus.PENDING);
+  });
+
   it('GEN-05: lists newest first, 10 per page', async () => {
     for (let index = 0; index < 12; index += 1) {
       await bookings.create([booking(alice.userId, { hotelName: `Hotel ${index}` })]);
