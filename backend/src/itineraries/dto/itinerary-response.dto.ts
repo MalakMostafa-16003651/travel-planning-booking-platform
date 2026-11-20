@@ -164,7 +164,7 @@ export class ItinerarySummaryDto {
   @ApiProperty({ example: 'USD' }) currency!: string;
   @ApiPropertyOptional({ type: ClonedFromDto }) clonedFrom?: ClonedFromDto;
   @ApiPropertyOptional({ nullable: true }) publishedAt?: Date | null;
-  @ApiPropertyOptional({ description: 'GEN-10: present (true) only when an administrator has hidden it. Only its owner can still see it.' })
+  @ApiPropertyOptional({ description: 'GEN-10: present (true) only when an administrator has hidden it. Only its owner and administrators can still see it.' })
   isHidden?: boolean;
   @ApiProperty() createdAt!: Date;
   @ApiProperty() updatedAt!: Date;

@@ -4,13 +4,13 @@ import { MAX_AMOUNT, TransportMode } from '../itinerary.rules';
 import { CURRENCY_CODE, Trim, TrimUpper } from './transforms';
 
 export class CreateTransportCostDto {
-  @ApiProperty({ example: 'Cairo' })
+  @ApiProperty({ example: 'Cairo', description: 'A city from the official reference catalog (any country), matched case-insensitively and stored with its official name.' })
   @Trim()
   @IsString({ message: 'fromCity must be text' })
   @Length(1, 100, { message: 'fromCity must be 1 to 100 characters' })
   fromCity!: string;
 
-  @ApiProperty({ example: 'Luxor' })
+  @ApiProperty({ example: 'London', description: 'A city from the official reference catalog (any country), matched case-insensitively and stored with its official name.' })
   @Trim()
   @IsString({ message: 'toCity must be text' })
   @Length(1, 100, { message: 'toCity must be 1 to 100 characters' })

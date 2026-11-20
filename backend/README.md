@@ -277,8 +277,8 @@ booking adapter's BSON identifiers; field/collection names are unchanged.
 The flights.e2e suite imports the actual root AppModule with an isolated test
 configuration (no .env), disables only periodic booking maintenance, and verifies
 Swagger/routes, guards, ownership, UTC storage, conflicts, rollback and concurrent
-batches against its own temporary replica set. This does not certify real search
-integration; itinerary Flights/Hotels search adapters remain pending.
+batches against its own temporary replica set. Itinerary Flights/Hotels search (ITN-25, ITN-26)
+uses the real Flights and Hotels search services; see the Itineraries section.
 
 ## Flight booking and inventory holds
 
@@ -322,13 +322,14 @@ Changes/booking responses use integer USD minor units; payment/policy amounts us
 | --- | --- | --- | --- |
 | POST | `/api/itineraries` | USER | Create. Currency defaults to `preferredCurrency`, else USD. |
 | GET | `/api/itineraries` | signed in | Your itineraries, page size 10. |
-| GET | `/api/itineraries/:id` | owner, or anyone if public | Full itinerary with days, city stops and transport costs. |
+| GET | `/api/itineraries/hidden` | ADMIN | Hidden public itineraries to review or unhide (GEN-10), page size 10. |
+| GET | `/api/itineraries/:id` | owner, anyone if public, ADMIN also if hidden public | Full itinerary with days, city stops and transport costs. |
 | PATCH / DELETE | `/api/itineraries/:id` | owner | Update (including `visibility`) or delete. |
 | POST | `/api/itineraries/:id/days` | owner | Append a day, or insert at `position`. |
 | PATCH | `/api/itineraries/:id/days/reorder` | owner | Body `{ "dayIds": [...] }` with every day once. |
 | PATCH / DELETE | `/api/itineraries/:id/days/:dayId` | owner | Edit or remove a day. |
 | POST | `/api/itineraries/:id/days/:dayId/activities` | owner | Add an activity. |
-| PATCH / DELETE | `/api/activities/:id` | owner | Edit or remove an activity. |
+| PATCH / DELETE | `/api/activities/:id` | owner | Edit or remove an activity. `{ "cost": null }` removes the cost and its currency. |
 | POST | `/api/activities/:id/images` | owner | Multipart field `image`: JPEG or PNG, at most 5 MB, 5 per activity. |
 | GET / DELETE | `/api/activities/:id/images/:imageId` | read: like the itinerary; delete: owner | Download or remove an image. |
 | POST | `/api/itineraries/:id/days/:dayId/budgets` | owner | FOOD, ACCOMMODATION, ACTIVITIES or LOCAL_TRANSPORT. |
@@ -363,7 +364,7 @@ Changes/booking responses use integer USD minor units; payment/policy amounts us
 
 **Attractions.** An activity's optional `attractionId` must be one of the shared catalog's ids (`GET /api/attractions`, `att-1` to `att-8`), and that attraction must be in the city of the activity's day; otherwise create and update return 400. Changing a day's city is rejected with 400 while one of its activities points at an attraction in the old city. Send `"attractionId": null` in `PATCH /api/activities/{activityId}` to remove an attraction (an empty string is rejected).
 
-**Moderation hooks (GEN-09, GEN-10).** `ItinerariesService.itineraryExists`, `setItineraryHidden` and `adminDeleteItinerary` are for the reports module. Only PUBLIC itineraries can be reported. A hidden itinerary is shown only to its owner (flagged `isHidden`), and only an administrator can unhide it.
+**Moderation hooks (GEN-09, GEN-10).** `ItinerariesService.itineraryExists`, `setItineraryHidden` and `adminDeleteItinerary` are for the reports module. Only PUBLIC itineraries can be reported. A hidden itinerary is shown only to its owner and administrators (flagged `isHidden`): admins can open it by id (`GET /api/itineraries/:id`, its budget summary and images) and list all hidden ones with `GET /api/itineraries/hidden`, so they can review and unhide them. Private itineraries stay owner-only, admins included. The public view and cloning still return 404 for hidden ones.
 
 For a manual Swagger check: log in, create an itinerary, add days in Cairo, Cairo and London, then reorder them and confirm day numbers, dates and `cityGroups` follow. Add budget entries in EGP and USD and call `budget-summary?currency=EUR`. Make the itinerary PUBLIC, log in as a second user, then search for it and clone it.
 
@@ -425,7 +426,7 @@ From backend run `npm.cmd run seed:references` after review to initialize the of
 
 For Person 7 (Kiki): import `ReferenceDataModule` into the consuming module and inject `ReferenceDataService`. Call `await references.findAttraction(attractionId)`: it returns the official seeded attraction or `null` for an unknown/unseeded ID. Fields are `attractionId`, `name`, `cityId`, plus internal `_id` and timestamps; the public list returns only the first three. Preserve original IDs `att-1` through `att-8` and city IDs (including `new_york`); do not use MongoDB `_id` as `Activity.attractionId`. Kiki owns activity validation and should reject unknown references with 400 in both `addActivity` and `updateActivity` after this catalog PR is merged and the shared database is seeded. `ItinerariesService` already injects the shared service as `references`; reuse that instance. Existing activity records are not rewritten by this change. The source is `Attractions.csv` in the same official workbook linked in `reference-seeds.ts`, mapping `attraction_id` / `city_id` to the agreed camelCase names.
 
-Itinerary titles are limited to 100 characters and itineraries to 60 days. Countries/cities must be in the official catalog and days must belong to selected countries. Activity cost/currency are optional, with non-negative two-decimal cost; they contribute to Activities totals and survive cloning. Transport creation requires an owned dayId; deleting that day removes its transport entries. Day/city totals include transport without adding it twice to the grand total. Legacy unlinked transport rows are preserved; updating an unlinked entry requires an explicit owned dayId. Parent reads/edits continue to work without a destructive migration.
+Itinerary titles are limited to 100 characters and itineraries to 60 days. Countries/cities must be in the official catalog and days must belong to selected countries. Activity cost/currency are optional, with non-negative two-decimal cost (on `PATCH`, `cost: null` removes both, omitting `cost` keeps it, and 0 is a valid cost); they contribute to Activities totals and survive cloning. Transport `fromCity`/`toCity` must be cities from the official catalog (any country, matched case-insensitively and stored with the official name); rows saved before this rule still load and stay editable. Transport creation requires an owned dayId; deleting that day removes its transport entries. Day/city totals include transport without adding it twice to the grand total. Legacy unlinked transport rows are preserved; updating an unlinked entry requires an explicit owned dayId. Parent reads/edits continue to work without a destructive migration.
 
 UsersService.getAccountStatuses and getDisplayNames replace the temporary itinerary status/name adapters. Both are internal projected lookups; no public account directory is added. Public visibility fails closed; proven owner responses do not repeat the owner status lookup.
 

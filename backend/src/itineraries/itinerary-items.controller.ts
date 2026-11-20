@@ -28,7 +28,7 @@ export class ItineraryItemsController {
   @Patch('activities/:id')
   @UseGuards(AuthGuard)
   @ApiCookieAuth('accessToken')
-  @ApiOperation({ summary: 'ITN-10: update an activity', description: 'Send an empty string to clear an optional field.' })
+  @ApiOperation({ summary: 'ITN-10: update an activity', description: 'Send an empty string to clear an optional text field. Send cost: null to remove the cost (and its currency) so it no longer counts in budget totals; omitting cost keeps it, and 0 is a valid cost.' })
   @ApiOkResponse({ type: ItineraryDto })
   @ApiBadRequestResponse({ type: ApiErrorDto })
   @ApiUnauthorizedResponse({ type: ApiErrorDto })
