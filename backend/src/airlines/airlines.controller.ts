@@ -27,6 +27,7 @@ export class AirlinesController {
   @UseGuards(AuthGuard, RolesGuard)
   @Roles(UserRole.AIRLINE_MODERATOR)
   @ApiCookieAuth('accessToken')
+  @ApiOperation({ summary: 'FLT-01: view my assigned airline (airline moderator)' })
   @ApiOkResponse({ description: 'The moderator assigned airline' })
   me(@Req() req: AuthenticatedRequest): Promise<Airline> { return this.airlines.getMine(req.user!.userId); }
 

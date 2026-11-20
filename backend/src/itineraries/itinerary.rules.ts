@@ -39,8 +39,8 @@ export const MAX_BUDGETS_PER_DAY = 50; // assumed
 export const MAX_TRANSPORT_COSTS = 100; // assumed
 /** ITN-27 (bonus): bounds the live booking lookups one response or summary makes. */
 export const MAX_LINKED_BOOKINGS = 20;
-export const MAX_IMAGES_PER_ACTIVITY = 5; // assumed
-export const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // assumed, GEN-08
+export const MAX_IMAGES_PER_ACTIVITY = 5; // GEN-08
+export const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // GEN-08
 export const MAX_AMOUNT = 1_000_000_000;
 
 export const DAY_MS = 24 * 60 * 60 * 1000;
