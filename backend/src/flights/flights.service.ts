@@ -101,7 +101,7 @@ async onModuleInit(): Promise<void> {
       const own = cabins.filter((cabin) => cabin.flightId.equals(flight._id));
       return [this.flightView(flight, airline, departure, arrival, own)];
     });
-    return { items, page, pageSize: SEARCH_PAGE_SIZE, total };
+        return { items, page, pageSize: SEARCH_PAGE_SIZE, total, totalPages: Math.ceil(total / SEARCH_PAGE_SIZE) };
   }
 
   // FLT-30: Update flights that have departed
@@ -653,9 +653,9 @@ async onModuleInit(): Promise<void> {
   }
 
   /** GEN-05: 10 results per page; `total: 0` means "no flights found". */
-  private paginate<T>(all: T[], page = 1): { items: T[]; page: number; pageSize: number; total: number } {
+  private paginate<T>(all: T[], page = 1): { items: T[]; page: number; pageSize: number; total: number; totalPages: number } {
     const start = (page - 1) * SEARCH_PAGE_SIZE;
-    return { items: all.slice(start, start + SEARCH_PAGE_SIZE), page, pageSize: SEARCH_PAGE_SIZE, total: all.length };
+    return { items: all.slice(start, start + SEARCH_PAGE_SIZE), page, pageSize: SEARCH_PAGE_SIZE, total: all.length, totalPages: Math.ceil(all.length / SEARCH_PAGE_SIZE) };
   }
 
    async search(input: FlightSearchDto) {
