@@ -159,3 +159,20 @@ Renamed the itinerary page query DTO. A follow-up prompt ("do it") chose to limi
 transport-cost cities to the official city catalog. Details: docs/work-logs/16001313.md,
 entry of 2026-11-20.
 ================================================
+Date: 2026-11-20
+Student: 16001313 (Person 7)
+Tool: Claude Code (Anthropic)
+Related Requirement: all mandatory and bonus IDs (post-release audit)
+
+Prompt:
+(with the updated project description and the requirements workbook attached)
+cross reference against the pdfs and make sure all is right and correct and that
+all requirements were fulfilled correctly and nothing is out of place, the entire
+milestone 1
+
+How the output was used:
+Checked every PDF endpoint and every workbook rule against main, re-ran the full
+test suite, fixed three small Swagger gaps and two code comments, and reported what
+the team still has to do. Details: docs/work-logs/16001313.md, audit entry of
+2026-11-20.
+================================================

@@ -27,7 +27,7 @@ export class ReferenceDataController {
 
   @Get('attractions')
   @Header('Cache-Control', 'no-store')
-  @ApiOperation({ summary: 'List official supported attractions (PDF section 5.1)' })
+  @ApiOperation({ summary: 'GEN-12/ITN-10: list official supported attractions (PDF section 5.1)' })
   @ApiOkResponse({ type: AttractionDto, isArray: true })
   @ApiInternalServerErrorResponse({ type: ApiErrorDto })
   async attractions(): Promise<AttractionDto[]> {
