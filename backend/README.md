@@ -288,7 +288,7 @@ integration; itinerary Flights/Hotels search adapters remain pending.
 | --- | --- | --- |
 | POST | `/api/flight-bookings` | Validates and prices a booking. Reserves and stores nothing. |
 | POST | `/api/flight-bookings/hold` | Reserves seats and creates a `PENDING` booking for 10 minutes. |
-| GET | `/api/flight-bookings` | Your bookings; `group=UPCOMING`, `PAST` or `CANCELLED`, page size 10. |
+| GET | `/api/flight-bookings` | Your bookings; `group=UPCOMING`, `PAST` or `CANCELLED`, page size 10. Upcoming lists Confirmed bookings and only live holds: an expired hold drops out at once, before the cleanup job runs, and `total` uses the same filter. |
 | GET | `/api/flight-bookings/:id` | One of your bookings, with `refund` (`PENDING`, `REFUNDED` or `FAILED`, from Payments) once a refund exists. |
 | GET | `/api/flight-bookings/:id/cancellation-quote` | The refund you would receive. Changes nothing. |
 | POST | `/api/flight-bookings/:id/cancel` | Cancels a Confirmed booking and requests its refund. |
