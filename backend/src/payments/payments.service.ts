@@ -80,7 +80,11 @@ export class PaymentsService {
       return { payment, clientSecret: intent.client_secret };
     } catch (error) {
       if ((error as { code?: number }).code === DUPLICATE_KEY) {
-        if (bookingType === 'flight-change') { const winner = await this.payments.findOne(bookingRef(bookingType, bookingId)).exec(); if (winner) return this.reuseExisting(winner); }
+        // Another request for this booking saved its Payment first. Flight changes share one intent through
+        // the idempotency key; for the others, cancel this extra intent so it can never be paid.
+        if (bookingType !== 'flight-change') await this.stripe.cancelPaymentIntent(intent.id).catch(() => undefined);
+        const winner = await this.payments.findOne(bookingRef(bookingType, bookingId)).exec();
+        if (winner) return this.reuseExisting(winner);
         throw new ConflictException('A payment for this booking is already in progress');
       }
       throw error;

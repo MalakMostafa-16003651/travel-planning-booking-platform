@@ -1,4 +1,4 @@
-import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional, OmitType, PartialType } from '@nestjs/swagger';
 import { IsOptional, IsString, Length, Matches, MaxLength, IsNumber, Min, Max, ValidateIf } from 'class-validator';
 import { CURRENCY_CODE, TIME_OF_DAY, Trim, TrimUpper } from './transforms';
 import { MAX_AMOUNT } from '../itinerary.rules';
@@ -53,4 +53,20 @@ export class CreateActivityDto {
   currency?: string;
 }
 
-export class UpdateActivityDto extends PartialType(CreateActivityDto, { skipNullProperties: false }) {}
+/**
+ * Same fields as create, all optional. `cost: null` removes the cost (and its currency), so the
+ * activity no longer counts in budget totals; omitting `cost` keeps the stored value, and 0 is a
+ * valid cost. `currency: null` is accepted only together with `cost: null`.
+ */
+export class UpdateActivityDto extends PartialType(OmitType(CreateActivityDto, ['cost', 'currency'] as const), { skipNullProperties: false }) {
+  @ApiPropertyOptional({ minimum: 0, nullable: true, description: 'New activity cost. null removes the cost and its currency; omit to keep it.' })
+  @ValidateIf((_object, value) => value !== undefined && value !== null)
+  @IsNumber({ allowNaN: false, allowInfinity: false, maxDecimalPlaces: 2 })
+  @Min(0) @Max(MAX_AMOUNT)
+  cost?: number | null;
+
+  @ApiPropertyOptional({ nullable: true, description: 'Cost currency from the shared catalog. null is accepted only with cost: null.' })
+  @ValidateIf((_object, value) => value !== undefined && value !== null)
+  @TrimUpper() @Matches(CURRENCY_CODE)
+  currency?: string | null;
+}

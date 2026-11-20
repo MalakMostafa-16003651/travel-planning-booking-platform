@@ -188,7 +188,7 @@ export class AuthController {
   @UseGuards(AuthGuard)
   @Header('Cache-Control', 'no-store')
   @ApiCookieAuth('accessToken')
-  @ApiOperation({ summary: 'ACC-19 foundation: view the currently authenticated user' })
+  @ApiOperation({ summary: 'ACC-04/ACC-19: view the currently authenticated user' })
   @ApiOkResponse({ type: AuthenticatedUserDto })
   @ApiUnauthorizedResponse({ type: ApiErrorDto, description: 'Missing, invalid, expired, revoked, inactive, or ineligible session.' })
   me(@Req() request: AuthenticatedRequest): AuthenticatedUserDto {

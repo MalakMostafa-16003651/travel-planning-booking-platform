@@ -541,6 +541,39 @@ describe('ACC-01 registration and ACC-04/05/06 authentication', { concurrency: f
     assert.equal(await users.countDocuments(), 1);
   });
 
+  it('accepts a trimmed 120-character name and preserves an exact 128-character password', async () => {
+    const name = 'N'.repeat(120);
+    const password = ` A1${'x'.repeat(124)} `;
+    const registered = await request(app.getHttpServer()).post('/api/auth/register')
+      .send(registration({ name: `  ${name}  `, password })).expect(201);
+    assert.equal(registered.body.name, name);
+    const stored = await users.findById(registered.body.userId).orFail().lean().exec();
+    assert.equal(stored.name, name);
+    await request(app.getHttpServer()).post('/api/auth/login')
+      .send({ email: 'traveler@example.com', password }).expect(200);
+  });
+
+  it('rejects 121-character names and 129-character passwords before hashing or creating an account', async (context) => {
+    const hash = context.mock.method(app.get(PasswordService), 'hash', async () => {
+      throw new Error('Invalid account input must not reach password hashing');
+    });
+    try {
+      for (const [field, value] of [
+        ['name', 'N'.repeat(121)],
+        ['password', `A1${'x'.repeat(127)}`],
+      ]) {
+        const response = await request(app.getHttpServer()).post('/api/auth/register')
+          .send(registration({ [field]: value }));
+        assertValidationError(response, field);
+        assertNoAuthCookies(response);
+      }
+      assert.equal(hash.mock.callCount(), 0);
+      assert.equal(await users.countDocuments(), 0);
+    } finally {
+      hash.mock.restore();
+    }
+  });
+
   it('rejects passwords that are too short or lack a letter or digit', async () => {
     for (const password of ['abc1234', 'abcdefgh', '12345678', '']) {
       const response = await request(app.getHttpServer())
@@ -2450,6 +2483,25 @@ describe('ACC-01 registration and ACC-04/05/06 authentication', { concurrency: f
     assert.ok(currency.body.phoneNumber === '+201000000012');
     assert.equal(currency.body.preferredCurrency, 'EUR');
     for (const response of [named, phone, currency]) assertNoAuthCookies(response);
+  });
+
+  it('accepts a trimmed 120-character profile name and rejects an oversized name without partial updates', async () => {
+    const fixture = await registerAndLogin();
+    const name = 'N'.repeat(120);
+    const accepted = await patchProfile(fixture.cookies.cookieHeader, { name: `  ${name}  ` }).expect(200);
+    assert.equal(accepted.body.name, name);
+    const before = await credentialState(fixture.registered.body.userId);
+    const rejected = await patchProfile(fixture.cookies.cookieHeader, {
+      name: `${name}N`, phoneNumber: '+201000000019',
+    });
+    assertValidationError(rejected, 'name');
+    assertNoAuthCookies(rejected);
+    const after = await credentialState(fixture.registered.body.userId);
+    assert.equal(after.name, name);
+    assert.equal(after.phoneNumber, before.phoneNumber);
+    assert.equal(after.passwordHash, before.passwordHash);
+    assert.equal(after.credentialVersion, before.credentialVersion);
+    assert.equal(after.updatedAt.getTime(), before.updatedAt.getTime());
   });
 
   it('accepts profile phone boundaries and rejects malformed international numbers without partial writes', async () => {

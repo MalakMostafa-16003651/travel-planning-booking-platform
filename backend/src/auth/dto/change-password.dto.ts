@@ -11,8 +11,9 @@ export class ChangePasswordDto {
   @ApiProperty({
     format: 'password',
     minLength: 8,
+    maxLength: 128,
     writeOnly: true,
-    description: 'At least 8 characters, including a letter and a digit (ACC-01). Used exactly as supplied.',
+    description: '8 to 128 characters, including a letter and a digit (ACC-01). Used exactly as supplied.',
   })
   @CompliantPassword('New password')
   newPassword!: string;

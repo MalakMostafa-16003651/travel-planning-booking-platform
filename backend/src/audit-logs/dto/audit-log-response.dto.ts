@@ -17,4 +17,5 @@ export class AuditLogPageDto {
   @ApiProperty({ example: 1 }) page!: number;
   @ApiProperty({ example: 10 }) pageSize!: number;
   @ApiProperty({ example: 42 }) total!: number;
+  @ApiProperty({ example: 5, description: 'Number of pages for this filter (0 when there are no results).' }) totalPages!: number;
 }

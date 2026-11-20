@@ -69,7 +69,18 @@ describe('FlightsService - cabin transaction', () => {
 
     );
 
-    await Promise.all([flights.init(), cabins.init()]);
+    await Promise.all([
+  flights.init(),
+  cabins.init(),
+  airlinesModel.init(),
+]);
+
+await airlinesModel.create({
+  _id: airlineId,
+  name: 'Test Airline',
+  code: 'TST',
+  isActive: true,
+});
   }, { timeout: 30 * 60_000 });
 
   after(async () => {

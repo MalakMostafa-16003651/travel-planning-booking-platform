@@ -478,6 +478,22 @@ describe('Flight booking and inventory holds', { concurrency: false }, () => {
       await request(app.getHttpServer()).get('/api/flight-bookings?group=OTHER').set('Cookie', traveler).expect(400);
     });
 
+    it('drops an expired hold from Upcoming and its count before the cleanup job runs', async () => {
+      const confirmed = await confirmedBooking(await seedFlight());
+      const active = (await hold([await seedFlight()]).expect(201)).body.flightBookingId as string;
+      const expired = (await hold([await seedFlight()]).expect(201)).body.flightBookingId as string;
+      // The hold has ended but the one-minute sweep has not marked it EXPIRED yet.
+      await bookings.updateOne({ _id: expired }, { $set: { holdExpiresAt: new Date(Date.now() - 1000) } }).exec();
+      assert.equal((await bookings.findById(expired).orFail().exec()).status, BookingStatus.PENDING);
+
+      const upcoming = (await request(app.getHttpServer())
+        .get('/api/flight-bookings?group=UPCOMING').set('Cookie', traveler).expect(200)).body;
+
+      const ids = upcoming.items.map((item: { flightBookingId: string }) => item.flightBookingId);
+      assert.deepEqual([...ids].sort(), [active, confirmed].sort());
+      assert.equal(upcoming.total, 2);
+    });
+
     it('paginates at 10 rows (GEN-05)', async () => {
       const flight = await seedFlight({ seats: 20 });
       for (let index = 0; index < 11; index += 1) await hold([flight]).expect(201);

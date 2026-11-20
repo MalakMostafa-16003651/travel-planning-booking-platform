@@ -69,6 +69,7 @@ export class ReportsService {
       page,
       pageSize: REPORTS_PAGE_SIZE,
       total,
+      totalPages: Math.ceil(total / REPORTS_PAGE_SIZE),
     };
   }
 

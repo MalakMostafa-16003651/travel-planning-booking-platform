@@ -52,9 +52,9 @@ Use the configured port in both URLs if `PORT` is changed. Startup requires a wo
 
 | Field | Rules |
 | --- | --- |
-| `name` | A name string; surrounding whitespace is trimmed. |
+| `name` | A nonempty name string of at most 120 characters after surrounding whitespace is trimmed. |
 | `email` | A valid email address; surrounding whitespace is trimmed and letters are converted to lowercase before storage. It must be unique. |
-| `password` | At least eight characters, including at least one Unicode letter and one Unicode decimal digit. |
+| `password` | 8 to 128 characters, including at least one Unicode letter and one Unicode decimal digit. The same limits apply when setting replacement or temporary passwords. |
 | `termsAccepted` | Must be the literal boolean `true`. Missing consent, `false`, and the string `"true"` are rejected. |
 
 Unknown fields are rejected. The caller cannot choose `role`, `status`, or a user ID during registration. The backend assigns role `USER` and account status `ACTIVE`.
@@ -201,7 +201,7 @@ administrator or run setup against shared Atlas.
 }
 ```
 
-Name is trimmed and must remain nonempty. Phone input is trimmed and must have international syntax: + followed by 8–15 digits, starting nonzero; this checks format, not whether the number exists. Currency is trimmed/uppercased and must exist in the shared catalog. Omitted fields remain unchanged; null/blank values, unknown fields, email/role/status/ID changes and empty patches return 400. Every supplied field validates before any update. A successful request returns 200 with the profile, no authentication-cookie changes and `Cache-Control: no-store`. Both GET/PATCH enforce current eligibility and the server-captured credential version; concurrent patches change only their supplied fields.
+Name is trimmed and must remain nonempty and at most 120 characters. Phone input is trimmed and must have international syntax: + followed by 8–15 digits, starting nonzero; this checks format, not whether the number exists. Currency is trimmed/uppercased and must exist in the shared catalog. Omitted fields remain unchanged; null/blank values, unknown fields, email/role/status/ID changes and empty patches return 400. Every supplied field validates before any update. A successful request returns 200 with the profile, no authentication-cookie changes and `Cache-Control: no-store`. Both GET/PATCH enforce current eligibility and the server-captured credential version; concurrent patches change only their supplied fields.
 
 `GET /api/currencies` is public and returns a sorted array of `{ "code": "EGP", "name": "Egyptian pound" }` entries. The shared MongoDB collection is `currencies`: unique uppercase three-letter `code`, `name`, `_id` and timestamps. Initial codes **AED, EGP, EUR, GBP, JPY, SAR, USD** come from the PDF-linked [Countries.csv reference](https://docs.google.com/spreadsheets/d/1SlKUTRqlHuBJAMC-Z-QOZzSrzKpGHT_TgQUI5gVm-BA/edit?gid=2042930643); readable currency names are maintained in the seed constant. These values form the initial team catalog, while later additions need shared coordination.
 
@@ -277,8 +277,8 @@ booking adapter's BSON identifiers; field/collection names are unchanged.
 The flights.e2e suite imports the actual root AppModule with an isolated test
 configuration (no .env), disables only periodic booking maintenance, and verifies
 Swagger/routes, guards, ownership, UTC storage, conflicts, rollback and concurrent
-batches against its own temporary replica set. This does not certify real search
-integration; itinerary Flights/Hotels search adapters remain pending.
+batches against its own temporary replica set. Itinerary Flights/Hotels search (ITN-25, ITN-26)
+uses the real Flights and Hotels search services; see the Itineraries section.
 
 ## Flight booking and inventory holds
 
@@ -288,7 +288,7 @@ integration; itinerary Flights/Hotels search adapters remain pending.
 | --- | --- | --- |
 | POST | `/api/flight-bookings` | Validates and prices a booking. Reserves and stores nothing. |
 | POST | `/api/flight-bookings/hold` | Reserves seats and creates a `PENDING` booking for 10 minutes. |
-| GET | `/api/flight-bookings` | Your bookings; `group=UPCOMING`, `PAST` or `CANCELLED`, page size 10. |
+| GET | `/api/flight-bookings` | Your bookings; `group=UPCOMING`, `PAST` or `CANCELLED`, page size 10. Upcoming lists Confirmed bookings and only live holds: an expired hold drops out at once, before the cleanup job runs, and `total` uses the same filter. |
 | GET | `/api/flight-bookings/:id` | One of your bookings, with `refund` (`PENDING`, `REFUNDED` or `FAILED`, from Payments) once a refund exists. |
 | GET | `/api/flight-bookings/:id/cancellation-quote` | The refund you would receive. Changes nothing. |
 | POST | `/api/flight-bookings/:id/cancel` | Cancels a Confirmed booking and requests its refund. |
@@ -322,13 +322,14 @@ Changes/booking responses use integer USD minor units; payment/policy amounts us
 | --- | --- | --- | --- |
 | POST | `/api/itineraries` | USER | Create. Currency defaults to `preferredCurrency`, else USD. |
 | GET | `/api/itineraries` | signed in | Your itineraries, page size 10. |
-| GET | `/api/itineraries/:id` | owner, or anyone if public | Full itinerary with days, city stops and transport costs. |
+| GET | `/api/itineraries/hidden` | ADMIN | Hidden public itineraries to review or unhide (GEN-10), page size 10. |
+| GET | `/api/itineraries/:id` | owner, anyone if public, ADMIN also if hidden public | Full itinerary with days, city stops and transport costs. |
 | PATCH / DELETE | `/api/itineraries/:id` | owner | Update (including `visibility`) or delete. |
 | POST | `/api/itineraries/:id/days` | owner | Append a day, or insert at `position`. |
 | PATCH | `/api/itineraries/:id/days/reorder` | owner | Body `{ "dayIds": [...] }` with every day once. |
 | PATCH / DELETE | `/api/itineraries/:id/days/:dayId` | owner | Edit or remove a day. |
 | POST | `/api/itineraries/:id/days/:dayId/activities` | owner | Add an activity. |
-| PATCH / DELETE | `/api/activities/:id` | owner | Edit or remove an activity. |
+| PATCH / DELETE | `/api/activities/:id` | owner | Edit or remove an activity. `{ "cost": null }` removes the cost and its currency. |
 | POST | `/api/activities/:id/images` | owner | Multipart field `image`: JPEG or PNG, at most 5 MB, 5 per activity. |
 | GET / DELETE | `/api/activities/:id/images/:imageId` | read: like the itinerary; delete: owner | Download or remove an image. |
 | POST | `/api/itineraries/:id/days/:dayId/budgets` | owner | FOOD, ACCOMMODATION, ACTIVITIES or LOCAL_TRANSPORT. |
@@ -363,7 +364,7 @@ Changes/booking responses use integer USD minor units; payment/policy amounts us
 
 **Attractions.** An activity's optional `attractionId` must be one of the shared catalog's ids (`GET /api/attractions`, `att-1` to `att-8`), and that attraction must be in the city of the activity's day; otherwise create and update return 400. Changing a day's city is rejected with 400 while one of its activities points at an attraction in the old city. Send `"attractionId": null` in `PATCH /api/activities/{activityId}` to remove an attraction (an empty string is rejected).
 
-**Moderation hooks (GEN-09, GEN-10).** `ItinerariesService.itineraryExists`, `setItineraryHidden` and `adminDeleteItinerary` are for the reports module. Only PUBLIC itineraries can be reported. A hidden itinerary is shown only to its owner (flagged `isHidden`), and only an administrator can unhide it.
+**Moderation hooks (GEN-09, GEN-10).** `ItinerariesService.itineraryExists`, `setItineraryHidden` and `adminDeleteItinerary` are for the reports module. Only PUBLIC itineraries can be reported. A hidden itinerary is shown only to its owner and administrators (flagged `isHidden`): admins can open it by id (`GET /api/itineraries/:id`, its budget summary and images) and list all hidden ones with `GET /api/itineraries/hidden`, so they can review and unhide them. Private itineraries stay owner-only, admins included. The public view and cloning still return 404 for hidden ones.
 
 For a manual Swagger check: log in, create an itinerary, add days in Cairo, Cairo and London, then reorder them and confirm day numbers, dates and `cityGroups` follow. Add budget entries in EGP and USD and call `budget-summary?currency=EUR`. Make the itinerary PUBLIC, log in as a second user, then search for it and clone it.
 
@@ -386,13 +387,13 @@ payment confirmation, cancellation or account-deactivation eligibility.
 | GET | `/api/hotels/:id` | anyone | View a hotel. A deactivated hotel (`isActive: false`) returns 404 for everyone except its assigned moderator and admins, so ACC-15 deactivation hides it without revealing its existence. |
 | PATCH | `/api/hotels/:id` | assigned HOTEL_MODERATOR | Edit the moderator's own hotel. `:id` must match their `moderatorassignments` record, the same adapter pattern `AirlinesService.getAssignedAirlineId` uses, with `hotelId` in place of `airlineId`. A mismatched or missing assignment returns 404/403 the same way `FlightsService.getOwnedScheduledFlight` hides another airline's flight. |
 | POST | `/api/hotels/:id/rooms` | assigned HOTEL_MODERATOR | Add a room (name, capacity, `pricePerNight` in integer minor units) to the moderator's own hotel. |
-| PATCH | `/api/hotels/:id/rooms/:roomId` | assigned HOTEL_MODERATOR | Edit a room. 404 if the room does not exist or does not belong to the caller's own hotel. |
-| DELETE | `/api/hotels/:id/rooms/:roomId` | assigned HOTEL_MODERATOR | Soft-deactivates the room (`isActive: false`, 204 No Content) rather than removing the document, so a room referenced by a past/eventual booking keeps a valid id. 409 if the room has an active reservation (Osama's `HotelBookingsService.roomHasActiveReservations`: an unexpired hold or a confirmed stay not yet checked out) — the check and the write share one transaction, so a hold cannot be created in between. |
+| PATCH | `/api/hotels/:id/rooms/:roomId` | assigned HOTEL_MODERATOR | Edit a room's name/type/beds/capacity/price, or deactivate/reactivate it with `isActive`. Deactivation, the name-uniqueness check and the field write share one transaction: a request refused with 409 (duplicate name, or an active reservation per Osama's `HotelBookingsService.roomHasActiveReservations`) leaves the room completely untouched, including `isActive`. |
+| DELETE | `/api/hotels/:id/rooms/:roomId` | assigned HOTEL_MODERATOR | Permanently deletes the room (204 No Content). Allowed only for a room that has never been reserved; 409 otherwise, with a hint to deactivate instead via `PATCH ... { isActive: false }`, which excludes it from search but keeps the document. |
 | POST | `/api/hotels/:id/rooms/:roomId/availability` | assigned HOTEL_MODERATOR | Block a `startDate`/`endDate` range (half-open: `endDate` is checkout) for one room. 409 if it overlaps an existing blocked or booked range. |
 | PATCH | `/api/hotels/:id/rooms/:roomId/availability` | assigned HOTEL_MODERATOR | Edit a blocked range's dates (`blockedRangeId` + new `startDate`/`endDate`), or unblock it (`blockedRangeId` + `remove: true`). |
-| GET | `/api/hotels/:id/availability` | assigned HOTEL_MODERATOR | Every active room's blocked/booked ranges, optionally windowed by `from`/`to`. |
+| GET | `/api/hotels/:id/availability` | assigned HOTEL_MODERATOR | HTL-08: ten rooms per page. Each room's `isActive`, configured `bookableRanges`, legacy `blockedRanges`/`bookedRanges`, and a day-by-day projection (`days[]`: `date`, `status` of `AVAILABLE`/`BOOKED`/`BLOCKED`, and for a booked day `bookingReference`/`hotelBookingId`/`bookingStatus`), windowed by `from`/`to`. |
 | PUT | `/api/hotels/:id/policies` | assigned HOTEL_MODERATOR | Update `checkInTime`/`checkOutTime` (`HH:mm`), `cancellationTiers`, or both. Tiers are stored sorted by `daysBeforeCheckIn` descending; duplicate thresholds are rejected, the same rule `AirlinesService.updatePoliciesMine` uses for `cancellationTiers`. |
-| GET | `/api/hotels/search` | anyone | `city` (resolved through `ReferenceDataService`), optional `countryCode`, `checkIn`/`checkOut`, `guests`, optional `rooms`/`minPrice`/`maxPrice`/`sort`/`page`. Field names match `ItineraryHotelSearch` in `itineraries/ports/travel-search.port.ts` exactly, so Person 7's eventual adapter is a direct pass-through. Only active hotels with at least `rooms` unblocked rooms whose combined capacity (best `rooms` by capacity) covers `guests` are returned, page size 10. Exact room assignment stays a booking-time concern. |
+| GET | `/api/hotels/search` | anyone | `city` and/or `countryCode`, `checkIn`/`checkOut`, `guests`, optional `rooms`/`minPrice`/`maxPrice`/`minRating`/`sort` (`NAME` default, `PRICE_ASC`, `PRICE_DESC`, `RATING_DESC`)/`page`. Field names match `ItineraryHotelSearch` in `itineraries/ports/travel-search.port.ts`, so Person 7's adapter is a direct pass-through. Only active hotels with at least `rooms` unblocked rooms whose combined capacity (best `rooms` by capacity) covers `guests` are returned, page size 10; `minRating` (1-5) excludes hotels with no visible reviews. Each result carries `fromPrice`/`currency` (always `PLATFORM_CURRENCY`), `starClass`/`amenities`, and `averageRating`/`ratingCount` from Osama's `ReviewsService.getRatingStats`. Exact room assignment stays a booking-time concern. |
 | GET | `/api/hotels/:id/rooms/available` | anyone | `checkIn`/`checkOut`, optional `guests`. Individual rooms (not a hotel-level summary) with no blocked/booked overlap for the stay and (if `guests` given) enough capacity, cheapest first. |
 | GET | `/api/hotels/:id/reservations` | assigned HOTEL_MODERATOR | Ownership is checked before the real HotelBookingsService query (404/403 for another/missing assignment). Returns guest name when available, rooms[], guestCount, bookingReference, dates, status and frozen totalAmount in minor units; ten per page. Payment/policy/private profile details are excluded. |
 | POST | `/api/hotels/:id/photos` | assigned HOTEL_MODERATOR | Add a photo (multipart field `photo`): JPG or PNG decided by the file's own bytes via the shared `detectImageExtension` (`common/files/image-type.ts`, the same sniffer airlines' logo upload uses), at most 5 MB, at most 5 per hotel. Returns the hotel with its photo URLs. |
@@ -425,7 +426,7 @@ From backend run `npm.cmd run seed:references` after review to initialize the of
 
 For Person 7 (Kiki): import `ReferenceDataModule` into the consuming module and inject `ReferenceDataService`. Call `await references.findAttraction(attractionId)`: it returns the official seeded attraction or `null` for an unknown/unseeded ID. Fields are `attractionId`, `name`, `cityId`, plus internal `_id` and timestamps; the public list returns only the first three. Preserve original IDs `att-1` through `att-8` and city IDs (including `new_york`); do not use MongoDB `_id` as `Activity.attractionId`. Kiki owns activity validation and should reject unknown references with 400 in both `addActivity` and `updateActivity` after this catalog PR is merged and the shared database is seeded. `ItinerariesService` already injects the shared service as `references`; reuse that instance. Existing activity records are not rewritten by this change. The source is `Attractions.csv` in the same official workbook linked in `reference-seeds.ts`, mapping `attraction_id` / `city_id` to the agreed camelCase names.
 
-Itinerary titles are limited to 100 characters and itineraries to 60 days. Countries/cities must be in the official catalog and days must belong to selected countries. Activity cost/currency are optional, with non-negative two-decimal cost; they contribute to Activities totals and survive cloning. Transport creation requires an owned dayId; deleting that day removes its transport entries. Day/city totals include transport without adding it twice to the grand total. Legacy unlinked transport rows are preserved; updating an unlinked entry requires an explicit owned dayId. Parent reads/edits continue to work without a destructive migration.
+Itinerary titles are limited to 100 characters and itineraries to 60 days. Countries/cities must be in the official catalog and days must belong to selected countries. Activity cost/currency are optional, with non-negative two-decimal cost (on `PATCH`, `cost: null` removes both, omitting `cost` keeps it, and 0 is a valid cost); they contribute to Activities totals and survive cloning. Transport `fromCity`/`toCity` must be cities from the official catalog (any country, matched case-insensitively and stored with the official name); rows saved before this rule still load and stay editable. Transport creation requires an owned dayId; deleting that day removes its transport entries. Day/city totals include transport without adding it twice to the grand total. Legacy unlinked transport rows are preserved; updating an unlinked entry requires an explicit owned dayId. Parent reads/edits continue to work without a destructive migration.
 
 UsersService.getAccountStatuses and getDisplayNames replace the temporary itinerary status/name adapters. Both are internal projected lookups; no public account directory is added. Public visibility fails closed; proven owner responses do not repeat the owner status lookup.
 
@@ -436,7 +437,7 @@ ITN-25 hotel criteria now include guests and rooms. ITN-26 takes departureAirpor
 
 ## ACC-11 booking access
 
-GET `/api/flights/:flightId/bookings` reuses FlightBookingsService.listBookingsForFlight after checking the authenticated AIRLINE_MODERATOR's assigned airline. Returns safe booking references, passenger names, cabin, seat count and status, ten per page. Reads are available for past/cancelled flights without changing flight status. Passport/document numbers, birth dates and payment details are excluded. Remaining seats per category and CSV export are still separate FLT-29 work.
+GET `/api/flights/:flightId/bookings` reuses FlightBookingsService.listBookingsForFlight after checking the authenticated AIRLINE_MODERATOR's assigned airline. Returns safe booking references, passenger names, cabin, seat count and status, ten per page. Reads are available for past/cancelled flights without changing flight status. Passport/document numbers, birth dates and payment details are excluded. Remaining seats per category are returned as `seatsRemaining` on each cabin of `GET /api/flights/:flightId`, and the passenger list is exported with `GET /api/flights/:flightId/bookings/export.csv` (FLT-29, moderator of that airline only).
 
 Both provider routes use the shared cookie AuthGuard and RolesGuard, authoritative ModeratorAssignment records, validated pagination and Cache-Control: no-store. Ordinary users keep their own /api/flight-bookings and /api/hotel-bookings views. Admins inspect bookings through /api/admin/bookings?type=FLIGHT or type=hotel. Private itineraries remain owner-only, including against admins/moderators. Cross-module regressions are in test/acc11-booking-access.e2e.test.ts.
 
@@ -569,6 +570,9 @@ Behaviour fixed in the same audit:
 - **GEN-02:** an empty `PATCH` of a flight, cabin or airline profile is a 400 validation error. It used to return 200 without changing anything: with this TypeScript target, every declared optional DTO field exists as an `undefined` key, so `Object.keys()` was never empty. `common/validation/defined-fields.ts` checks for supplied values instead.
 - **HTL-02:** `GET /api/hotels/:id` adds `reviews` (newest first, first page of 10) next to `averageRating`/`ratingCount`. With `checkIn` and `checkOut` (and optional `guests`) it also returns `availableRooms` for that stay; without dates, `availableRooms` is null. Only one date is a 400.
 - **HTL-06:** `DELETE /api/hotels/:id/rooms/:roomId` permanently deletes a room only if no reservation of any status ever referenced it; otherwise it returns 409. `PATCH /api/hotels/:id/rooms/:roomId` with `{ "isActive": false }` deactivates a room (409 while it has a Confirmed or unexpired Pending Payment reservation) and `{ "isActive": true }` reactivates it. Deletion takes the room's booking gate, so it cannot race a new hold.
+- **HTL-05/HTL-06 (test report, 18 Nov):** `PATCH /api/hotels/:id/rooms/:roomId` combining `isActive: false` with another field (e.g. a duplicate `name`) used to deactivate the room even though the request as a whole returned 409, because deactivation ran as its own earlier transaction. The whole edit — reservation check, name-uniqueness check and field write — now shares one transaction, so a 409 leaves the room completely untouched.
+- **GEN-08 (test report, 18 Nov):** hotel photo responses (`POST/GET/DELETE .../photos`, and any hotel response with photos) now include each photo's `url`, matching what the README/Swagger already claimed; previously only the raw `_id` was returned.
+- **HTL-12 (test report, 18 Nov):** search results now include `currency` (always `PLATFORM_CURRENCY`), matching `getAvailableRooms`' existing shape.
 - **FLT-05:** `PATCH /api/flights/:id` accepts `departureAirportCode`/`arrivalAirportCode` while the flight has no booking and no flight-change hold. The check and the write share one transaction with the flight's booking gate; once any booking exists, it returns 409.
 - **FLT-11/FLT-12:** flight search accepts a same-day round trip (`returnDate` equal to `departureDate`); only return flights that leave after the outbound lands are offered. Impossible dates such as `2027-02-30` are rejected with 400.
 - The flight-cancellation response and the Swagger description no longer describe integrations as missing.

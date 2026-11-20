@@ -91,6 +91,22 @@ export class Hotel {
   declare updatedAt: Date;
 }
 
+/**
+ * A reused test report found that the API returns each photo's id without the URL the README/Swagger
+ * already claimed it did (GET /api/hotels/:id/photos/:photoId). Adds url, keeps _id for callers (and
+ * this module's own tests) that already key off it.
+ */
+function addPhotoUrls(doc: { _id: Types.ObjectId }, ret: { bookingVersion?: unknown; photos?: unknown }) {
+  hideBookingVersion(doc, ret);
+  if (Array.isArray(ret.photos)) {
+    ret.photos = ret.photos.map((photo: { _id: Types.ObjectId }) => ({
+      ...photo,
+      url: `/api/hotels/${doc._id.toString()}/photos/${photo._id.toString()}`,
+    }));
+  }
+  return ret;
+}
+
 export const HotelSchema = SchemaFactory.createForClass(Hotel);
-HotelSchema.set('toJSON', { transform: hideBookingVersion });
-HotelSchema.set('toObject', { transform: hideBookingVersion });
+HotelSchema.set('toJSON', { transform: addPhotoUrls });
+HotelSchema.set('toObject', { transform: addPhotoUrls });

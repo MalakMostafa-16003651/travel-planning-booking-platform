@@ -24,13 +24,13 @@ export class HotelBookingRoomDto {
   }
 }
 
-export class CancellationTierDto {
+export class HotelBookingCancellationTierDto {
   @ApiProperty({ example: 7 }) daysBeforeCheckIn!: number;
   @ApiProperty({ example: 50 }) refundPercentage!: number;
 }
 
 export class HotelPolicySnapshotDto {
-  @ApiProperty({ type: [CancellationTierDto] }) cancellationTiers!: CancellationTierDto[];
+  @ApiProperty({ type: [HotelBookingCancellationTierDto] }) cancellationTiers!: HotelBookingCancellationTierDto[];
   @ApiProperty({ example: '14:00' }) checkInTime!: string;
   @ApiProperty({ example: '11:00' }) checkOutTime!: string;
 }

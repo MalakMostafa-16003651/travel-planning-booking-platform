@@ -5,8 +5,9 @@ export class AdminResetPasswordDto {
   @ApiProperty({
     format: 'password',
     minLength: 8,
+    maxLength: 128,
     writeOnly: true,
-    description: 'Administrator-set temporary password: at least 8 characters, including a letter and a digit (ACC-01).',
+    description: 'Administrator-set temporary password: 8 to 128 characters, including a letter and a digit (ACC-01).',
   })
   @CompliantPassword('Temporary password')
   temporaryPassword!: string;

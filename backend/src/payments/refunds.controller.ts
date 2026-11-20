@@ -6,6 +6,7 @@ import { RolesGuard } from '../auth/roles.guard';
 import { ApiErrorDto } from '../common/dto/api-error.dto';
 import { UserRole } from '../common/enums/user-role.enum';
 import { IdParamDto } from './dto/id-param.dto';
+import { RefundResponseDto } from './dto/payment-response.dto';
 import { RefundsService } from './refunds.service';
 
 @ApiTags('Refunds')
@@ -22,7 +23,7 @@ export class RefundsController {
     summary: 'PAY-03: view a refund and its status (PENDING, REFUNDED or FAILED)',
     description: 'The owner or an ADMIN. The id is the refundId on the booking details. A PENDING refund is checked with Stripe first; if Stripe cannot be reached, the stored status is returned.',
   })
-  @ApiOkResponse({ description: 'The Refund.' })
+  @ApiOkResponse({ type: RefundResponseDto, description: 'The Refund. amount is in major units (dollars).' })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'Invalid id.' })
   @ApiUnauthorizedResponse({ type: ApiErrorDto, description: 'Missing, invalid or expired session.' })
   @ApiForbiddenResponse({ type: ApiErrorDto, description: 'Role not allowed.' })

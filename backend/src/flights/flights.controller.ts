@@ -16,6 +16,8 @@ import { UpdateCabinDto } from './dto/update-cabin.dto';
 import { FlightsService } from './flights.service';
 import { Get, Query } from '@nestjs/common';
 import { FlightSearchDto, RoundTripSearchDto } from './dto/flight-search.dto';
+import { MyFlightsQueryDto } from './dto/my-flights-query.dto';
+import { FlightResponseDto } from './dto/flight-response.dto';
 
 @ApiTags('Flights')
 @ApiUnauthorizedResponse({
@@ -41,6 +43,18 @@ export class FlightsController {
     private readonly flights: FlightsService,
   ) {}
 
+  // Moderator screens. Declared before ':flightId' so "mine" is not read as a flight id.
+  @Get('mine')
+  @Header('Cache-Control', 'no-store')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(UserRole.AIRLINE_MODERATOR)
+  @ApiCookieAuth('accessToken')
+  @ApiOperation({ summary: 'List the flights of your assigned airline, newest departure first, 10 per page (FLT-30)', description: 'Optional status filter: Scheduled, Cancelled or Departed.' })
+  @ApiOkResponse({ description: 'A page of the moderator\'s own flights, each with cabins, local times and seats remaining.' })
+  listMine(@Req() req: AuthenticatedRequest, @Query() query: MyFlightsQueryDto) {
+    return this.flights.listOwnFlights(req.user!.userId, query.page ?? 1, query.status);
+  }
+
   @Get(':flightId/bookings')
   @Header('Cache-Control', 'no-store')
   @UseGuards(AuthGuard, RolesGuard)
@@ -63,8 +77,8 @@ export class FlightsController {
     summary: 'Create a flight using airport-local date-times (FLT-03)',
   })
   @ApiCreatedResponse({
-    type: Object,
-    description: 'Created scheduled flight with UTC departure and arrival times.',
+    type: FlightResponseDto,
+    description: 'Created scheduled flight: flightId, airline and airport names, UTC and airport-local times (cabins are added next with POST /flights/{flightId}/cabins).',
   })
   create(
     @Req() req: AuthenticatedRequest,

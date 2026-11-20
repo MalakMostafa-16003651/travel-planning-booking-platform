@@ -8,7 +8,7 @@ export const MODERATOR_ROLES = [UserRole.AIRLINE_MODERATOR, UserRole.HOTEL_MODER
 export type ModeratorRole = (typeof MODERATOR_ROLES)[number];
 
 export class CreateModeratorDto {
-  @ApiProperty({ example: 'Nile Air Desk' })
+  @ApiProperty({ example: 'Nile Air Desk', maxLength: 120 })
   @Transform(({ value }: { value: unknown }) => typeof value === 'string' ? value.trim() : value)
   @IsString({ message: 'Name must be a string' })
   @IsNotEmpty({ message: 'Name is required' })
@@ -31,8 +31,9 @@ export class CreateModeratorDto {
   @ApiProperty({
     format: 'password',
     minLength: 8,
+    maxLength: 128,
     writeOnly: true,
-    description: 'Admin-set temporary password: at least 8 characters, including a letter and a digit. The moderator must change it at first login.',
+    description: 'Admin-set temporary password: 8 to 128 characters, including a letter and a digit. The moderator must change it at first login.',
   })
   @CompliantPassword('Temporary password')
   temporaryPassword!: string;

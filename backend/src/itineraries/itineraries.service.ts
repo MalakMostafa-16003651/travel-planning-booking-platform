@@ -219,10 +219,11 @@ export class ItinerariesService {
   async updateActivity(activityId: string, userId: string, input: UpdateActivityDto): Promise<ItineraryDto> {
     const { itinerary, day, activity } = await this.findOwnedActivity(activityId, userId);
     if (input.attractionId) await this.assertAttraction(input.attractionId, day);
-    const cost = await this.activityCost({ cost: input.cost ?? activity.cost, currency: input.currency ?? activity.currency }, itinerary.currency);
-    const next = { startTime: activity.startTime, endTime: activity.endTime, ...definedOnly(input) };
+    const { cost: costInput, currency: currencyInput, ...fields } = input;
+    const cost = await this.updatedActivityCost(activity, costInput, currencyInput, itinerary.currency);
+    const next = { startTime: activity.startTime, endTime: activity.endTime, ...definedOnly(fields) };
     assertTimes(next.startTime, next.endTime);
-    for (const [key, value] of Object.entries(definedOnly(input))) {
+    for (const [key, value] of Object.entries(definedOnly(fields))) {
       (activity as unknown as Record<string, unknown>)[key] = value === '' ? undefined : value;
     }
     activity.cost = cost.cost;
@@ -326,8 +327,12 @@ export class ItinerariesService {
       throw new ConflictException(`An itinerary can have at most ${MAX_TRANSPORT_COSTS} transport costs`);
     }
     findDay(itinerary, input.dayId, 'dayId');
+    const fromCity = await this.transportCity(input.fromCity, 'fromCity');
+    const toCity = await this.transportCity(input.toCity, 'toCity');
     itinerary.transportCosts.push({
       ...input,
+      fromCity,
+      toCity,
       currency,
       dayId: new Types.ObjectId(input.dayId),
     } as unknown as TransportCost);
@@ -337,6 +342,8 @@ export class ItinerariesService {
   async updateTransportCost(transportCostId: string, userId: string, input: UpdateTransportCostDto): Promise<ItineraryDto> {
     const changes: Record<string, unknown> = definedOnly(input);
     if (typeof changes.currency === 'string') changes.currency = await this.assertCurrency(changes.currency, 'currency');
+    if (typeof changes.fromCity === 'string') changes.fromCity = await this.transportCity(changes.fromCity, 'fromCity');
+    if (typeof changes.toCity === 'string') changes.toCity = await this.transportCity(changes.toCity, 'toCity');
     const itinerary = await this.findOwnedBy(
       { 'transportCosts._id': toObjectId(transportCostId, 'Transport cost not found') }, userId, 'Transport cost not found',
     );
@@ -654,6 +661,21 @@ export class ItinerariesService {
     if (result.matchedCount === 0) throw new NotFoundException(NOT_FOUND);
   }
 
+  /**
+   * GEN-10: hidden PUBLIC itineraries for administrators to review or unhide, most recently
+   * updated first, page size 10. Private itineraries are never listed (ACC-11).
+   */
+  async listHiddenForAdmin(page = 1): Promise<ItineraryPageDto> {
+    const filter: QueryFilter<Itinerary> = { visibility: ItineraryVisibility.PUBLIC, isHidden: true };
+    const [rows, total] = await Promise.all([
+      this.itineraries.find(filter, { ...SUMMARY_PROJECTION, isHidden: 1 }).sort({ updatedAt: -1, _id: -1 })
+        .skip((page - 1) * ITINERARY_PAGE_SIZE).limit(ITINERARY_PAGE_SIZE).lean<Itinerary[]>().exec(),
+      this.itineraries.countDocuments(filter).exec(),
+    ]);
+    const names = await this.attributionNames(rows);
+    return pageOf(rows.map((row) => ItinerarySummaryDto.from(row, names)), page, total);
+  }
+
   /** GEN-10: deletes an itinerary and its activity images. 404 if unknown. */
   async adminDeleteItinerary(itineraryId: string): Promise<void> {
     const id = toObjectId(itineraryId, NOT_FOUND);
@@ -806,8 +828,9 @@ export class ItinerariesService {
 
   /**
    * ACC-11: the owner can always read; nobody else (admins included) can read a private one.
-   * ACC-12: a public itinerary of a deactivated or missing author is hidden. Hidden and
-   * forbidden both look like "not found".
+   * GEN-10: admins can also read hidden public ones. ACC-12: for everyone else, a public
+   * itinerary of a deactivated or missing author is hidden. Hidden and forbidden both look
+   * like "not found".
    */
   private async findReadable(itineraryId: string, viewer: Viewer): Promise<ItineraryDocument> {
     const itinerary = await this.itineraries.findById(toObjectId(itineraryId, NOT_FOUND)).exec();
@@ -817,7 +840,11 @@ export class ItinerariesService {
 
   private async canRead(itinerary: ItineraryDocument, viewer: Viewer): Promise<boolean> {
     if (viewer && itinerary.userId.toString() === viewer.userId) return true;
-    if (itinerary.visibility !== ItineraryVisibility.PUBLIC || itinerary.isHidden) return false;
+    if (itinerary.visibility !== ItineraryVisibility.PUBLIC) return false;
+    // GEN-10: admins can inspect any PUBLIC itinerary, hidden or not, to review and unhide it
+    // (same rule as hidden blog posts). Private ones stay owner-only (ACC-11).
+    if (viewer?.role === UserRole.ADMIN) return true;
+    if (itinerary.isHidden) return false;
     const authorId = itinerary.userId.toString();
     return isVisibleStatus((await this.accountStatuses.getAccountStatuses([authorId])).get(authorId));
   }
@@ -919,6 +946,21 @@ export class ItinerariesService {
     }
   }
 
+  /**
+   * ITN-16: a transport city must be in the official city catalog, like day cities (PDF 5.1).
+   * Any catalog city is allowed, not only the itinerary's countries (e.g. travelling from home).
+   * Matched case-insensitively (or by cityId) and stored with its official name. Rows saved
+   * before this rule are left as they are and still load.
+   */
+  private async transportCity(name: string, field: 'fromCity' | 'toCity'): Promise<string> {
+    try {
+      return (await this.references.resolveCity(name)).name;
+    } catch (error) {
+      if (error instanceof BadRequestException) throw fieldError(field, `Unknown city ${name}. Choose a city from the official reference catalog`);
+      throw error;
+    }
+  }
+
   private async assertCurrency(code: string, field: string): Promise<string> {
     const normalized = code.trim().toUpperCase();
     if (!(await this.currencies.isSupported(normalized))) {
@@ -933,6 +975,21 @@ export class ItinerariesService {
     const user = await this.users.findById(userId, { preferredCurrency: 1 }).lean().exec();
     const preferred = user?.preferredCurrency?.toUpperCase();
     return preferred && (await this.currencies.isSupported(preferred)) ? preferred : fallback;
+  }
+
+  /**
+   * ITN-10: the cost after a PATCH. `cost: null` removes the cost and its currency; an omitted
+   * cost keeps the stored one (so a currency alone re-prices it); 0 is a real cost.
+   */
+  private async updatedActivityCost(
+    activity: Activity, cost: number | null | undefined, currency: string | null | undefined, fallback: string,
+  ): Promise<{ cost?: number; currency?: string }> {
+    if (cost === null) {
+      if (typeof currency === 'string') throw fieldError('currency', 'An activity currency requires a cost');
+      return {};
+    }
+    if (currency === null) throw fieldError('currency', 'currency can be null only when removing the cost with cost: null');
+    return this.activityCost({ cost: cost ?? activity.cost, currency: currency ?? activity.currency }, fallback);
   }
 
   private async activityCost(input: { cost?: number; currency?: string }, fallback: string): Promise<{ cost?: number; currency?: string }> {

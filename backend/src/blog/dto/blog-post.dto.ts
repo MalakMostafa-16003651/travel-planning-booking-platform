@@ -92,7 +92,7 @@ export class AttachPostItineraryDto {
 }
 
 /** GEN-05: page size is fixed at 10. */
-export class PageQueryDto {
+export class BlogPageQueryDto {
   @ApiPropertyOptional({ default: 1, minimum: 1 })
   @IsOptional()
   @Type(() => Number)
@@ -102,7 +102,7 @@ export class PageQueryDto {
 }
 
 /** BLG-12: `page` is for the posts, `itinerariesPage` for the public itineraries. */
-export class AuthorPageQueryDto extends PageQueryDto {
+export class AuthorPageQueryDto extends BlogPageQueryDto {
   @ApiPropertyOptional({ default: 1, minimum: 1, description: 'Page of the public itineraries (page size 10).' })
   @IsOptional()
   @Type(() => Number)
@@ -111,7 +111,7 @@ export class AuthorPageQueryDto extends PageQueryDto {
   itinerariesPage: number = 1;
 }
 
-export class ListPostsQueryDto extends PageQueryDto {
+export class ListPostsQueryDto extends BlogPageQueryDto {
   @ApiPropertyOptional({ description: 'BLG-09: keyword in the title, tags or author name. Results are ordered by likes + comments, newest first on ties.' })
   @IsOptional()
   @Transform(trim)

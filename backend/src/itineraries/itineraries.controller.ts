@@ -11,7 +11,7 @@ import { UserRole } from '../common/enums/user-role.enum';
 import { BudgetSummaryDto } from './dto/budget-summary.dto';
 import { CreateItineraryDto } from './dto/create-itinerary.dto';
 import { CreateItineraryDayDto, ReorderItineraryDaysDto, UpdateItineraryDayDto } from './dto/itinerary-day.dto';
-import { BudgetSummaryQueryDto, ItineraryFlightsQueryDto, ItineraryHotelsQueryDto, PageQueryDto, SearchPublicItinerariesQueryDto } from './dto/itinerary-queries.dto';
+import { BudgetSummaryQueryDto, ItineraryFlightsQueryDto, ItineraryHotelsQueryDto, ItineraryPageQueryDto, SearchPublicItinerariesQueryDto } from './dto/itinerary-queries.dto';
 import { ItineraryDto, ItineraryPageDto } from './dto/itinerary-response.dto';
 import { CreateActivityDto } from './dto/activity.dto';
 import { CreateBudgetEntryDto } from './dto/budget-entry.dto';
@@ -23,7 +23,7 @@ import { OptionalAuthGuard } from './optional-auth.guard';
 import { ItineraryFlightSearch, ItineraryHotelSearch } from './ports/travel-search.port';
 
 const NOT_FOUND_DOC = 'Not found, or not yours. Private itineraries are owner-only, including for admins (ACC-11).';
-const READ_NOT_FOUND_DOC = 'Not found, private and not yours, or the author is deactivated (ACC-11, ACC-12).';
+const READ_NOT_FOUND_DOC = 'Not found, private and not yours, hidden (except for admins, GEN-10), or the author is deactivated (ACC-11, ACC-12).';
 
 @ApiTags('Itineraries')
 @Controller('itineraries')
@@ -71,15 +71,32 @@ export class ItinerariesController {
   @ApiOperation({ summary: 'ITN-03: list your itineraries', description: 'Most recently updated first. Page size 10.' })
   @ApiOkResponse({ type: ItineraryPageDto })
   @ApiUnauthorizedResponse({ type: ApiErrorDto })
-  listMine(@Query() query: PageQueryDto, @Req() request: AuthenticatedRequest): Promise<ItineraryPageDto> {
+  listMine(@Query() query: ItineraryPageQueryDto, @Req() request: AuthenticatedRequest): Promise<ItineraryPageDto> {
     return this.itineraries.listMine(request.user!.userId, query.page);
+  }
+
+  @Get('hidden')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @Header('Cache-Control', 'no-store')
+  @ApiCookieAuth('accessToken')
+  @ApiOperation({
+    summary: 'GEN-10: list hidden public itineraries (admin)',
+    description: 'ADMIN only. Public itineraries an administrator has hidden, most recently updated first, page size 10, so they can be reviewed and unhidden. Private itineraries are never listed (ACC-11).',
+  })
+  @ApiOkResponse({ type: ItineraryPageDto })
+  @ApiBadRequestResponse({ type: ApiErrorDto })
+  @ApiUnauthorizedResponse({ type: ApiErrorDto })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'Only role ADMIN.' })
+  listHidden(@Query() query: ItineraryPageQueryDto): Promise<ItineraryPageDto> {
+    return this.itineraries.listHiddenForAdmin(query.page);
   }
 
   @Get(':id')
   @UseGuards(OptionalAuthGuard)
   @Header('Cache-Control', 'no-store')
   @ApiCookieAuth('accessToken')
-  @ApiOperation({ summary: 'ITN-03: view an itinerary', description: 'Owners see their own; anyone may see a public one.' })
+  @ApiOperation({ summary: 'ITN-03: view an itinerary', description: 'Owners see their own; anyone may see a public one. Admins can also see hidden public ones (GEN-10); private ones stay owner-only (ACC-11).' })
   @ApiOkResponse({ type: ItineraryDto })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: READ_NOT_FOUND_DOC })
   get(@Param('id') id: string, @Req() request: AuthenticatedRequest): Promise<ItineraryDto> {

@@ -77,6 +77,33 @@ async onModuleInit(): Promise<void> {
     return this.bookings.listBookingsForFlight(flight._id.toString(), page);
   }
 
+  /** Moderator screens: the flights of the moderator's own airline, newest departure first, 10 per page. */
+  async listOwnFlights(moderatorId: string, page = 1, status?: FlightStatus) {
+    const airlineId = await this.airlines.getAssignedAirlineId(moderatorId);
+    await this.markDeparted();
+    const filter: QueryFilter<Flight> = { airlineId, ...(status ? { status } : {}) };
+    const [total, flights, airline] = await Promise.all([
+      this.flights.countDocuments(filter).exec(),
+      this.flights.find(filter).sort({ departureAt: -1, _id: -1 }).skip((page - 1) * SEARCH_PAGE_SIZE).limit(SEARCH_PAGE_SIZE).exec(),
+      this.airlinesModel.findById(airlineId).exec(),
+    ]);
+    if (!airline) throw new NotFoundException('Assigned airline not found');
+    const airportIds = [...new Set(flights.flatMap((flight) => [flight.departureAirportId.toString(), flight.arrivalAirportId.toString()]))].map((id) => new Types.ObjectId(id));
+    const [airports, cabins] = await Promise.all([
+      this.airports.find({ _id: { $in: airportIds } }).exec(),
+      this.cabins.find({ flightId: { $in: flights.map((flight) => flight._id) } }).sort({ price: 1 }).exec(),
+    ]);
+    const airportById = new Map(airports.map((airport) => [airport._id.toString(), airport]));
+    const items = flights.flatMap((flight) => {
+      const departure = airportById.get(flight.departureAirportId.toString());
+      const arrival = airportById.get(flight.arrivalAirportId.toString());
+      if (!departure || !arrival) return [];
+      const own = cabins.filter((cabin) => cabin.flightId.equals(flight._id));
+      return [this.flightView(flight, airline, departure, arrival, own)];
+    });
+        return { items, page, pageSize: SEARCH_PAGE_SIZE, total, totalPages: Math.ceil(total / SEARCH_PAGE_SIZE) };
+  }
+
   // FLT-30: Update flights that have departed
 
   async markDeparted(): Promise<void> {
@@ -163,7 +190,7 @@ async onModuleInit(): Promise<void> {
       input.departureLocalDateTime.slice(0, 10);
 
     try {
-      return await this.flights.create({
+      const created = await this.flights.create({
         airlineId,
         flightNumber: input.flightNumber,
         status: FlightStatus.SCHEDULED,
@@ -173,6 +200,8 @@ async onModuleInit(): Promise<void> {
         arrivalAirportId: arrivalAirport._id,
         departureLocalDate,
       });
+      // Same fields as before (_id, departureAt, ...) plus the readable flight view (flightId, airline and airport names, local times).
+      return { ...created.toObject(), ...this.flightView(created, airline, departureAirport, arrivalAirport, []) };
     } catch (error) {
       if ((error as { code?: number }).code === 11000) {
         throw new ConflictException(
@@ -261,6 +290,12 @@ async onModuleInit(): Promise<void> {
       );
     }
 
+    // A deactivated airline can no longer create or edit flights and cabins (cancelling stays possible).
+    const owner = await this.airlinesModel.findById(airlineId, { isActive: 1 }).exec();
+    if (!owner || !owner.isActive) {
+      throw new ForbiddenException('Your assigned airline is not active');
+    }
+
     if (
       flight.status === FlightStatus.SCHEDULED &&
       flight.departureAt <= new Date()
@@ -321,6 +356,8 @@ async onModuleInit(): Promise<void> {
         'Flight airport reference is missing',
       );
     }
+    const oldDepartureAirport = departureAirport;
+    const oldArrivalAirport = arrivalAirport;
 
     // FLT-05: airports may change only while the flight has no booking (checked again in the transaction below).
     if (input.departureAirportCode !== undefined || input.arrivalAirportCode !== undefined) {
@@ -340,19 +377,25 @@ async onModuleInit(): Promise<void> {
     const airportsChanged = !departureAirport._id.equals(flight.departureAirportId)
       || !arrivalAirport._id.equals(flight.arrivalAirportId);
 
+    // When only an airport changes, keep the clock time the moderator already published (local time at the
+    // airport) instead of keeping the UTC instant, which would silently shift the local time.
     const departureAt = input.departureLocalDateTime
       ? localDateTimeToUtc(
           input.departureLocalDateTime,
           departureAirport.timeZone,
         )
-      : flight.departureAt;
+      : !departureAirport._id.equals(flight.departureAirportId)
+        ? localDateTimeToUtc(utcToLocalDateTime(flight.departureAt, oldDepartureAirport.timeZone), departureAirport.timeZone)
+        : flight.departureAt;
 
     const arrivalAt = input.arrivalLocalDateTime
       ? localDateTimeToUtc(
           input.arrivalLocalDateTime,
           arrivalAirport.timeZone,
         )
-      : flight.arrivalAt;
+      : !arrivalAirport._id.equals(flight.arrivalAirportId)
+        ? localDateTimeToUtc(utcToLocalDateTime(flight.arrivalAt, oldArrivalAirport.timeZone), arrivalAirport.timeZone)
+        : flight.arrivalAt;
 
     if (arrivalAt <= departureAt) {
       throw new BadRequestException(
@@ -447,7 +490,7 @@ async onModuleInit(): Promise<void> {
         await this.notifications.notifyMany(
           confirmedUserIds,
           NotificationType.FLIGHT_SCHEDULE_CHANGED,
-          `Flight ${updatedFlight.flightNumber} has a new schedule: departs ${departureAt.toISOString()} and arrives ${arrivalAt.toISOString()} (UTC).`,
+          `Flight ${updatedFlight.flightNumber} has a new schedule: departs ${departureAirport.code} at ${utcToLocalDateTime(departureAt, departureAirport.timeZone).slice(0, 16).replace('T', ' ')} and arrives ${arrivalAirport.code} at ${utcToLocalDateTime(arrivalAt, arrivalAirport.timeZone).slice(0, 16).replace('T', ' ')} (local airport times).`,
         );
       } catch {
         this.logger.error(`Could not create schedule-change notifications for flight ${flight._id.toString()}`);
@@ -567,7 +610,7 @@ async onModuleInit(): Promise<void> {
   // ===== Branch 4: FLT-11 / FLT-12 / FLT-15 flight search =====
 
   private async searchOneWay(input: FlightSearchDto): Promise<any[]> {
-    const passengerCount = input.adults + input.children;
+    const passengerCount = input.adults + (input.children ?? 0);
     if (input.minPrice !== undefined && input.maxPrice !== undefined && input.minPrice > input.maxPrice) throw new BadRequestException('minPrice cannot be greater than maxPrice');
     await this.markDeparted();
     const [departureAirport, arrivalAirport] = await Promise.all([
@@ -610,9 +653,9 @@ async onModuleInit(): Promise<void> {
   }
 
   /** GEN-05: 10 results per page; `total: 0` means "no flights found". */
-  private paginate<T>(all: T[], page = 1): { items: T[]; page: number; pageSize: number; total: number } {
+  private paginate<T>(all: T[], page = 1): { items: T[]; page: number; pageSize: number; total: number; totalPages: number } {
     const start = (page - 1) * SEARCH_PAGE_SIZE;
-    return { items: all.slice(start, start + SEARCH_PAGE_SIZE), page, pageSize: SEARCH_PAGE_SIZE, total: all.length };
+    return { items: all.slice(start, start + SEARCH_PAGE_SIZE), page, pageSize: SEARCH_PAGE_SIZE, total: all.length, totalPages: Math.ceil(all.length / SEARCH_PAGE_SIZE) };
   }
 
    async search(input: FlightSearchDto) {
@@ -671,6 +714,8 @@ async onModuleInit(): Promise<void> {
       this.airports.findById(flight.arrivalAirportId).exec(), this.cabins.find({ flightId: flight._id }).sort({ price: 1 }).exec(),
     ]);
     if (!airline || !departure || !arrival) throw new NotFoundException('Flight reference data is incomplete');
+    // Search already hides deactivated airlines; the public detail page does the same.
+    if (!airline.isActive) throw new NotFoundException('Flight not found');
     return this.flightView(flight, airline, departure, arrival, cabins);
   }
 

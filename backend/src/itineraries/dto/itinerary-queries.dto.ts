@@ -3,7 +3,7 @@ import { Transform, Type } from 'class-transformer';
 import { IsBoolean, IsISO8601, IsEnum, IsInt, IsMongoId, IsOptional, IsString, Length, Matches, Max, Min } from 'class-validator';
 import { COUNTRY_CODE, CURRENCY_CODE, DATE_ONLY, Trim, TrimUpper } from './transforms';
 
-export class PageQueryDto {
+export class ItineraryPageQueryDto {
   @ApiPropertyOptional({ example: 1, minimum: 1 })
   @IsOptional()
   @Type(() => Number)
@@ -21,7 +21,7 @@ export enum PublicItinerarySort {
 }
 
 /** ITN-20, ITN-21 */
-export class SearchPublicItinerariesQueryDto extends PageQueryDto {
+export class SearchPublicItinerariesQueryDto extends ItineraryPageQueryDto {
   @ApiPropertyOptional({ description: 'Matches title, description, country or city, case-insensitive.' })
   @IsOptional()
   @Trim()
@@ -72,7 +72,7 @@ export class BudgetSummaryQueryDto {
 }
 
 /** ITN-25: hotel search for a city stop, reusing HTL-11/HTL-12. */
-export class ItineraryHotelsQueryDto extends PageQueryDto {
+export class ItineraryHotelsQueryDto extends ItineraryPageQueryDto {
   @ApiProperty({ description: 'Any day of the stop to search hotels for. Check-in/out come from that stop.' })
   @IsMongoId({ message: 'dayId must be a valid id' })
   dayId!: string;
@@ -91,7 +91,7 @@ export class ItineraryHotelsQueryDto extends PageQueryDto {
 }
 
 /** ITN-26: origin airport to the first itinerary city's airports. */
-export class ItineraryFlightsQueryDto extends PageQueryDto {
+export class ItineraryFlightsQueryDto extends ItineraryPageQueryDto {
   @ApiProperty({ example: 'LHR', description: 'Chosen departure airport from the official airport catalog.' })
   @TrimUpper() @Matches(/^[A-Z]{3}$/)
   departureAirportCode!: string;

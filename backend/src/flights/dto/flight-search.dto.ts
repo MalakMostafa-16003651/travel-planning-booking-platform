@@ -16,8 +16,8 @@ class PassengerCountsConstraint implements ValidatorConstraintInterface {
 
     return (
       dto.adults >= 1 &&
-      dto.adults + dto.children + dto.infants <= 50 &&
-      dto.infants <= dto.adults
+      dto.adults + (dto.children ?? 0) + (dto.infants ?? 0) <= 50 &&
+      (dto.infants ?? 0) <= dto.adults
     );
   }
 
@@ -60,13 +60,13 @@ export class FlightSearchDto {
 @Matches(/^[A-Z]{3}$/)
 arrivalAirportCode!: string;
 
-  @ApiProperty({ example: false })
+  @ApiPropertyOptional({ example: false, default: false, description: 'Defaults to false (one-way). When true, returnDate is required.' })
   @Transform(({ value }) =>
     value === 'true' ? true : value === 'false' ? false : value,
   )
   @IsBoolean()
   @Validate(ReturnDateRequiredConstraint)
-  roundTrip!: boolean;
+  roundTrip: boolean = false;
 
   @ApiProperty({ example: '2026-12-10', description: 'Local date at the departure airport.' })
   @IsString()
@@ -89,19 +89,19 @@ arrivalAirportCode!: string;
   @Validate(PassengerCountsConstraint)
   adults!: number;
 
-  @ApiProperty({ example: 0, minimum: 0, maximum: 50 })
+  @ApiPropertyOptional({ example: 0, minimum: 0, maximum: 50, default: 0 })
   @Type(() => Number)
   @IsInt()
   @Min(0)
   @Max(50)
-  children!: number;
+  children: number = 0;
 
-  @ApiProperty({ example: 0, minimum: 0, maximum: 50 })
+  @ApiPropertyOptional({ example: 0, minimum: 0, maximum: 50, default: 0 })
   @Type(() => Number)
   @IsInt()
   @Min(0)
   @Max(50)
-  infants!: number;
+  infants: number = 0;
 
   @ApiPropertyOptional({ enum: CabinClass })
   @IsOptional()

@@ -152,6 +152,7 @@ describe('BLG-05/06/07 comments and likes', { concurrency: false }, () => {
     assert.equal(await comments.commentExists(commentId), true);
     assert.equal(await comments.commentExists('nope'), false);
     assert.equal((await comments.setCommentHidden(commentId, true)).isHidden, true);
+    assert.equal(await comments.commentExists(commentId), false);
     await comments.adminDeleteComment(commentId);
     assert.equal(await comments.commentExists(commentId), false);
     assert.equal((await post())!.commentsCount, 0);
