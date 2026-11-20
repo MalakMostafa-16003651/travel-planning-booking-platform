@@ -12,7 +12,7 @@ export class CurrenciesController {
   @Get()
   @Header('Cache-Control', 'no-store')
   @ApiOperation({
-    summary: 'List shared supported currencies',
+    summary: 'GEN-12/ITN-18: list shared supported currencies',
     description: 'Returns the shared currency catalog ordered by code for profile preferences (ACC-09) and itinerary budgets (ITN-18).',
   })
   @ApiOkResponse({ type: CurrencyDto, isArray: true })
