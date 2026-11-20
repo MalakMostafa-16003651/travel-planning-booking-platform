@@ -155,6 +155,7 @@ analyze all of this and do kiki's part thanks
 How the output was used:
 Let admins open hidden public itineraries by id and list them, kept private ones
 owner-only, and made PATCH {"cost": null} remove an activity cost and its currency.
-Renamed the itinerary page query DTO. Details: docs/work-logs/16001313.md, entry of
-2026-11-20.
+Renamed the itinerary page query DTO. A follow-up prompt ("do it") chose to limit
+transport-cost cities to the official city catalog. Details: docs/work-logs/16001313.md,
+entry of 2026-11-20.
 ================================================

@@ -327,8 +327,12 @@ export class ItinerariesService {
       throw new ConflictException(`An itinerary can have at most ${MAX_TRANSPORT_COSTS} transport costs`);
     }
     findDay(itinerary, input.dayId, 'dayId');
+    const fromCity = await this.transportCity(input.fromCity, 'fromCity');
+    const toCity = await this.transportCity(input.toCity, 'toCity');
     itinerary.transportCosts.push({
       ...input,
+      fromCity,
+      toCity,
       currency,
       dayId: new Types.ObjectId(input.dayId),
     } as unknown as TransportCost);
@@ -338,6 +342,8 @@ export class ItinerariesService {
   async updateTransportCost(transportCostId: string, userId: string, input: UpdateTransportCostDto): Promise<ItineraryDto> {
     const changes: Record<string, unknown> = definedOnly(input);
     if (typeof changes.currency === 'string') changes.currency = await this.assertCurrency(changes.currency, 'currency');
+    if (typeof changes.fromCity === 'string') changes.fromCity = await this.transportCity(changes.fromCity, 'fromCity');
+    if (typeof changes.toCity === 'string') changes.toCity = await this.transportCity(changes.toCity, 'toCity');
     const itinerary = await this.findOwnedBy(
       { 'transportCosts._id': toObjectId(transportCostId, 'Transport cost not found') }, userId, 'Transport cost not found',
     );
@@ -937,6 +943,21 @@ export class ItinerariesService {
       if (attraction && attraction.cityId !== cityId) {
         throw fieldError('city', `This day has an activity at ${attraction.name}, which is not in the new city. Remove or change that attraction first`);
       }
+    }
+  }
+
+  /**
+   * ITN-16: a transport city must be in the official city catalog, like day cities (PDF 5.1).
+   * Any catalog city is allowed, not only the itinerary's countries (e.g. travelling from home).
+   * Matched case-insensitively (or by cityId) and stored with its official name. Rows saved
+   * before this rule are left as they are and still load.
+   */
+  private async transportCity(name: string, field: 'fromCity' | 'toCity'): Promise<string> {
+    try {
+      return (await this.references.resolveCity(name)).name;
+    } catch (error) {
+      if (error instanceof BadRequestException) throw fieldError(field, `Unknown city ${name}. Choose a city from the official reference catalog`);
+      throw error;
     }
   }
 

@@ -504,6 +504,35 @@ describe('Itineraries, activities and budgeting', { concurrency: false }, () => 
         .send({ fromCity: 'A', toCity: 'B', mode: 'TRAIN', amount: 1, currency: 'USD', dayId: '665f1f77bcf86cd799439011' }).expect(400);
     });
 
+    it('accepts only official catalog cities for transport costs, stored with their official names (ITN-16)', async () => {
+      const id = await createItinerary(alice, { countries: ['EG'] });
+      const dayId = (await addDay(id, 'Cairo')).days[0].dayId;
+      const path = `/api/itineraries/${id}/transport-costs`;
+      const base = { mode: 'TRAIN', amount: 10, currency: 'USD', dayId };
+      const narnia = await http().post(path).set('Cookie', alice).send({ ...base, fromCity: 'Narnia', toCity: 'Cairo' }).expect(400);
+      assert.ok(narnia.body.errors.fromCity);
+      const unknownTo = await http().post(path).set('Cookie', alice).send({ ...base, fromCity: 'Cairo', toCity: 'Atlantis' }).expect(400);
+      assert.ok(unknownTo.body.errors.toCity);
+      assert.equal((await http().get(`/api/itineraries/${id}`).set('Cookie', alice).expect(200)).body.transportCosts.length, 0);
+
+      // Any catalog city is allowed (London is outside the itinerary's countries); names are normalized.
+      const created = (await http().post(path).set('Cookie', alice).send({ ...base, fromCity: '  lONDON ', toCity: 'cairo' }).expect(201)).body.transportCosts[0];
+      assert.equal(created.fromCity, 'London');
+      assert.equal(created.toCity, 'Cairo');
+
+      const costPath = `/api/transport-costs/${created.transportCostId}`;
+      await http().patch(costPath).set('Cookie', alice).send({ toCity: 'Narnia' }).expect(400);
+      const updated = (await http().patch(costPath).set('Cookie', alice).send({ toCity: 'paris' }).expect(200)).body.transportCosts[0];
+      assert.equal(updated.toCity, 'Paris');
+      assert.equal(updated.fromCity, 'London');
+
+      // A row saved before this rule keeps loading and can still be edited without touching its cities.
+      await connection.collection('itineraries').updateOne({ _id: new Types.ObjectId(id) }, { $set: { 'transportCosts.0.fromCity': 'Old Town' } });
+      const legacy = (await http().patch(costPath).set('Cookie', alice).send({ amount: 12 }).expect(200)).body.transportCosts[0];
+      assert.equal(legacy.fromCity, 'Old Town');
+      assert.equal(legacy.amount, 12);
+    });
+
     it('summarises per category, day, city and transport in the requested currency', async () => {
       const { id, body } = await budgetedItinerary();
       assert.equal(body.transportCosts[0].dayNumber, 2);
