@@ -330,8 +330,16 @@ export class HotelBookingsService {
   async listMine(userId: string, group: HotelBookingGroup | undefined, page = 1): Promise<HotelBookingPageDto> {
     const owner = { userId: new Types.ObjectId(userId) };
     const today = this.clock.today();
+    const now = new Date();
     const filters: Record<HotelBookingGroup, QueryFilter<HotelBooking>> = {
-      [HotelBookingGroup.UPCOMING]: { ...owner, status: { $in: [BookingStatus.PENDING, BookingStatus.CONFIRMED] }, checkOut: { $gt: today } },
+      [HotelBookingGroup.UPCOMING]: {
+        ...owner,
+        checkOut: { $gt: today },
+        $or: [
+          { status: BookingStatus.CONFIRMED },
+          { status: BookingStatus.PENDING, holdExpiresAt: { $gt: now } },
+        ],
+      },
       [HotelBookingGroup.PAST]: {
         ...owner,
         $or: [{ status: BookingStatus.COMPLETED }, { status: BookingStatus.CONFIRMED, checkOut: { $lte: today } }],

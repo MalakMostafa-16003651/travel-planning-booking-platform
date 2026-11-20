@@ -167,6 +167,10 @@ describe('GEN-09/GEN-10 reports and moderation', { concurrency: false }, () => {
     assert.equal((await resolve(first, 'HIDE').expect(200)).body.status, 'CONTENT_HIDDEN');
     assert.equal((await review())!.isHidden, true);
     assert.equal(await collection('reports').countDocuments({ targetType: 'REVIEW', status: 'CONTENT_HIDDEN' }), 2);
+    // Visibility is checked before duplicate-report handling, without creating another report.
+    await report(reporter, { targetType: 'REVIEW', targetId: reviewId.toString(), reason: 'Hidden review report' }).expect(404);
+    await report(author, { targetType: 'REVIEW', targetId: reviewId.toString(), reason: 'Hidden review report' }).expect(404);
+    assert.equal(await collection('reports').countDocuments({ targetType: 'REVIEW' }), 2);
 
     const shown = await moderate('patch', `review/${reviewId.toString()}/unhide`).expect(200);
     assert.equal(shown.body.state, 'VISIBLE');

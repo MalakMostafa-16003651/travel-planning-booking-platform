@@ -265,6 +265,10 @@ describe('HTL-23/HTL-24 hotel reviews and ratings', { concurrency: false }, () =
 
     await service.setReviewHidden(reviewId, true);
     assert.equal((await reviews.findById(reviewId).lean().exec())!.isHidden, true);
+    assert.equal(await service.reviewExists(reviewId), false);
+    await service.setReviewHidden(reviewId, false);
+    assert.equal(await service.reviewExists(reviewId), true);
+    await service.setReviewHidden(reviewId, true);
     await assert.rejects(service.setReviewHidden(new Types.ObjectId().toString(), true), { status: 404 });
     await assert.rejects(service.setReviewHidden('not-an-id', true), { status: 404 });
 

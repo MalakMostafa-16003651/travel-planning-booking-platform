@@ -155,9 +155,9 @@ export class ReviewsService {
 
   // GEN-09/GEN-10 (Person 2 connects these in ContentModerationService). No HTTP routes here.
 
-  /** False for unknown or invalid ids. */
+  /** GEN-09: only visible reviews can be reported; false for unknown or invalid ids. */
   async reviewExists(reviewId: string): Promise<boolean> {
-    return isValidObjectId(reviewId) && await this.reviews.countDocuments({ _id: reviewId }).exec() > 0;
+    return isValidObjectId(reviewId) && await this.reviews.countDocuments({ _id: reviewId, isHidden: false }).exec() > 0;
   }
 
   /** 404 if the review does not exist. */
