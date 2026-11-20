@@ -743,8 +743,6 @@ describe('Itineraries, activities and budgeting', { concurrency: false }, () => 
       assert.equal((await http().get('/api/itineraries/public/search').expect(200)).body.total, 0);
       await http().get(`/api/itineraries/public/${id}`).expect(404);
       await http().get(`/api/itineraries/${id}`).set('Cookie', bob).expect(404);
-      const admin = await login('admin@example.com', { role: UserRole.ADMIN });
-      await http().get(`/api/itineraries/${id}`).set('Cookie', admin).expect(404);
       await http().get(`/api/itineraries/${id}/budget-summary`).set('Cookie', bob).expect(404);
       await http().post(`/api/itineraries/${id}/clone`).set('Cookie', bob).expect(404);
       assert.equal((await itinerariesService.listPublicByAuthor(aliceId)).total, 0);
@@ -765,6 +763,48 @@ describe('Itineraries, activities and budgeting', { concurrency: false }, () => 
       assert.equal((await http().get('/api/itineraries/public/search').expect(200)).body.total, 1);
       await assert.rejects(itinerariesService.setItineraryHidden(new Types.ObjectId().toString(), true), NotFoundException);
       await assert.rejects(itinerariesService.setItineraryHidden('not-an-id', true), NotFoundException);
+    });
+
+    it('lets an administrator inspect hidden public itineraries by id and in a list, but never private ones (GEN-10)', async () => {
+      const hiddenId = await createItinerary(alice, { title: 'Reported trip', visibility: 'PUBLIC' });
+      const day = (await addDay(hiddenId, 'Cairo')).days[0].dayId;
+      const activityId = (await http().post(`/api/itineraries/${hiddenId}/days/${day}/activities`).set('Cookie', alice)
+        .send({ title: 'Karnak' }).expect(201)).body.days[0].activities[0].activityId;
+      const url = (await http().post(`/api/activities/${activityId}/images`).set('Cookie', alice).attach('image', PNG, 'k.png').expect(201))
+        .body.days[0].activities[0].images[0].url;
+      const visibleId = await createItinerary(alice, { title: 'Visible trip', visibility: 'PUBLIC' });
+      const privateId = await createItinerary(alice, { title: 'Private trip' });
+      await itinerariesService.setItineraryHidden(hiddenId, true);
+      const admin = await login('admin@example.com', { role: UserRole.ADMIN });
+
+      const seen = (await http().get(`/api/itineraries/${hiddenId}`).set('Cookie', admin).expect(200)).body;
+      assert.equal(seen.title, 'Reported trip');
+      assert.equal(seen.isHidden, true);
+      assert.equal('linkedBookings' in seen, false, 'linked bookings stay owner-only');
+      await http().get(`/api/itineraries/${hiddenId}/budget-summary`).set('Cookie', admin).expect(200);
+      await http().get(url).set('Cookie', admin).expect(200);
+      await http().get(`/api/itineraries/${visibleId}`).set('Cookie', admin).expect(200);
+      // Private stays owner-only, admins included (ACC-11); guests and other users still get 404.
+      await http().get(`/api/itineraries/${privateId}`).set('Cookie', admin).expect(404);
+      await http().get(`/api/itineraries/${hiddenId}`).expect(404);
+      await http().get(`/api/itineraries/${hiddenId}`).set('Cookie', bob).expect(404);
+      await http().get(url).set('Cookie', bob).expect(404);
+      // The public view and cloning are unchanged for admins.
+      await http().get(`/api/itineraries/public/${hiddenId}`).set('Cookie', admin).expect(404);
+
+      const list = (await http().get('/api/itineraries/hidden').set('Cookie', admin).expect(200)).body;
+      assert.deepEqual(list.items.map((item: { itineraryId: string }) => item.itineraryId), [hiddenId]);
+      assert.equal(list.items[0].isHidden, true);
+      assert.equal(list.total, 1);
+      assert.equal(list.totalPages, 1);
+      await http().get('/api/itineraries/hidden').set('Cookie', bob).expect(403);
+      await http().get('/api/itineraries/hidden').expect(401);
+      await http().get('/api/itineraries/hidden?page=0').set('Cookie', admin).expect(400);
+
+      await itinerariesService.setItineraryHidden(hiddenId, false);
+      const empty = (await http().get('/api/itineraries/hidden').set('Cookie', admin).expect(200)).body;
+      assert.equal(empty.total, 0);
+      assert.equal(empty.totalPages, 0);
     });
 
     it('hides activity images of a hidden itinerary from other viewers', async () => {
@@ -1162,6 +1202,38 @@ describe('Itineraries, activities and budgeting', { concurrency: false }, () => 
     assert.equal(summary.byCity[0].total, 25);
     const clone = (await http().post(`/api/itineraries/${id}/clone`).set('Cookie', bob).expect(201)).body;
     assert.deepEqual(clone.days[0].activities.map((a: { cost: number }) => a.cost), [10, 500, 0]);
+
+    // ITN-10: PATCH cost: null removes the cost and its currency, so it leaves the totals.
+    const lunch = (await http().get(`/api/itineraries/${id}`).set('Cookie', alice).expect(200)).body.days[0].activities[1];
+    const lunchPath = `/api/activities/${lunch.activityId}`;
+    await http().patch(lunchPath).set('Cookie', alice).send({ cost: null, currency: 'EGP' }).expect(400);
+    await http().patch(`/api/activities/${activity.activityId}`).set('Cookie', alice).send({ currency: null }).expect(400);
+    const removed = (await http().patch(lunchPath).set('Cookie', alice).send({ cost: null }).expect(200)).body.days[0].activities[1];
+    assert.equal('cost' in removed, false);
+    assert.equal('currency' in removed, false);
+    const stored = await connection.collection('itineraries').findOne({ _id: new Types.ObjectId(id) });
+    assert.equal(stored!.days[0].activities[1].cost ?? undefined, undefined);
+    assert.equal(stored!.days[0].activities[1].currency ?? undefined, undefined);
+    assert.equal((await http().get(`/api/itineraries/${id}/budget-summary?currency=USD`).set('Cookie', alice).expect(200)).body.totals.categories.ACTIVITIES, 10);
+    // Removing again is a no-op; cost: null plus currency: null is accepted.
+    await http().patch(lunchPath).set('Cookie', alice).send({ cost: null, currency: null }).expect(200);
+    // Omitting cost keeps it; 0 is still a valid cost.
+    const kept = (await http().patch(`/api/activities/${activity.activityId}`).set('Cookie', alice).send({ title: 'Museum visit' }).expect(200)).body.days[0].activities[0];
+    assert.equal(kept.cost, 10);
+    assert.equal(kept.currency, 'USD');
+    const zero = (await http().patch(`/api/activities/${activity.activityId}`).set('Cookie', alice).send({ cost: 0 }).expect(200)).body.days[0].activities[0];
+    assert.equal(zero.cost, 0);
+    assert.equal(zero.currency, 'USD');
+    // A removed cost can be set again.
+    const readded = (await http().patch(lunchPath).set('Cookie', alice).send({ cost: 7 }).expect(200)).body.days[0].activities[1];
+    assert.equal(readded.cost, 7);
+    assert.equal(readded.currency, 'USD');
+    await http().patch(lunchPath).set('Cookie', alice).send({ cost: 'x' }).expect(400);
+    await http().patch(lunchPath).set('Cookie', alice).send({ cost: -1 }).expect(400);
+    await http().patch(lunchPath).set('Cookie', alice).send({ cost: 7, currency: 'EGP' }).expect(200);
+    await http().patch(lunchPath).set('Cookie', alice).send({ cost: 10, currency: 'EGP' }).expect(200);
+    await http().patch(lunchPath).set('Cookie', alice).send({ cost: 500 }).expect(200);
+    await http().patch(`/api/activities/${activity.activityId}`).set('Cookie', alice).send({ cost: 10 }).expect(200);
     await http().patch('/api/users/me').set('Cookie', alice).send({ preferredCurrency: 'EGP' }).expect(200);
     const preferred = (await http().get(`/api/itineraries/${id}/budget-summary`).set('Cookie', alice).expect(200)).body;
     assert.equal(preferred.currency, 'EGP');

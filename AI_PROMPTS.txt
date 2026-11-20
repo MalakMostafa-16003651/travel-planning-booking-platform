@@ -142,3 +142,19 @@ live, so an expired hold disappears before the cleanup job runs, with the same f
 for the total. Added a test, checked that it fails without the fix, and opened a PR
 into develop. Details: docs/work-logs/16002979.md section 4.
 ================================================
+Date: 2026-11-20
+Student: 16001313 (Person 7)
+Tool: Claude Code (Anthropic)
+Related Requirement: GEN-10, ITN-10, ITN-14
+
+Prompt:
+(with the 19 Nov "Remaining owner actions" handoff, the 18 Nov full test report and the
+Person 2 and Person 3 requests attached)
+analyze all of this and do kiki's part thanks
+
+How the output was used:
+Let admins open hidden public itineraries by id and list them, kept private ones
+owner-only, and made PATCH {"cost": null} remove an activity cost and its currency.
+Renamed the itinerary page query DTO. Details: docs/work-logs/16001313.md, entry of
+2026-11-20.
+================================================
