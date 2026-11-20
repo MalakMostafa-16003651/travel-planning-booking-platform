@@ -277,8 +277,8 @@ booking adapter's BSON identifiers; field/collection names are unchanged.
 The flights.e2e suite imports the actual root AppModule with an isolated test
 configuration (no .env), disables only periodic booking maintenance, and verifies
 Swagger/routes, guards, ownership, UTC storage, conflicts, rollback and concurrent
-batches against its own temporary replica set. This does not certify real search
-integration; itinerary Flights/Hotels search adapters remain pending.
+batches against its own temporary replica set. Itinerary Flights/Hotels search (ITN-25, ITN-26)
+uses the real Flights and Hotels search services; see the Itineraries section.
 
 ## Flight booking and inventory holds
 
