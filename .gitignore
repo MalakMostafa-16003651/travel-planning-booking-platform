@@ -9,3 +9,8 @@ coverage/
 *.log
 .mongo-tmp/
 uploads/
+.next/
+*.tsbuildinfo
+playwright-report/
+test-results/
+frontend/next-env.d.ts
