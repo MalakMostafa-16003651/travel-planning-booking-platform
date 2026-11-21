@@ -6,7 +6,7 @@ GIU Software Project I — Winter 2026
 | --- | --- |
 | Backend (Milestone 1) | NestJS 12, TypeScript, Mongoose, Swagger UI |
 | Database | One shared MongoDB Atlas database (replica set; transactions are used) |
-| Frontend (Milestone 2) | Next.js (not part of Milestone 1) |
+| Frontend (Milestone 2) | Next.js App Router, TypeScript, Tailwind in `frontend/` |
 | Payments | Stripe **test mode** (PaymentIntents and Refunds; card data never reaches the backend) |
 | Exchange rates | FXRatesAPI, called only from the backend and cached daily in MongoDB |
 
@@ -18,6 +18,9 @@ gives every requirement ID with its full text, its owner and its current backend
 
 ```
 backend/            NestJS API (feature modules under backend/src, tests under backend/test)
+frontend/           Shared M2 frontend starter; see frontend/README.md
+docs/m2/            Route ownership, integration handoffs and team setup/review checklist
+docs/references/    Unchanged official workbook, revised description and unified M2 split
 docs/requirements/  ownership matrix and the agreed shared contracts between modules
 docs/work-logs/     one continuous workflow record per student
 AI_PROMPTS.txt      AI prompt log required by the project description (section 11.1)
@@ -85,10 +88,21 @@ Backend modules, by the team's eight-person split:
 
    Swagger UI: <http://localhost:3000/api/docs> (OpenAPI JSON at `/api/docs-json`). Log in with
    `POST /api/auth/login`; the browser then sends the httpOnly session cookies automatically (ACC-19).
-   All routes use the `/api` prefix. Money is in integer minor units of USD (PAY-04), and every list has
-   10 items per page (GEN-05).
+   All routes use the `/api` prefix. Booking/provider prices are integer USD minor units;
+   Payment/Refund and booking-policy top-level amounts are USD major units (PAY-04).
+   Lists use 10 items per page (GEN-05); consult each response DTO for its envelope.
 
 On Windows PowerShell, use `npm.cmd` instead of `npm`.
+
+## Milestone 2 frontend
+
+Run `npm ci` then `npm run dev` from `frontend/` and open
+<http://localhost:3001>. The browser calls the real API through a same-origin
+proxy to the backend on port 3000. Exact versions are locked. Follow the
+[frontend README](frontend/README.md) for environment, cookies and checks;
+[team setup](docs/m2/TEAM_SETUP.md) and [route/handoff registry](docs/m2/ROUTES_AND_HANDOFFS.md)
+keep ownership and review arrangements explicit. Team members branch from the
+latest `develop` after the foundation is merged, then open focused PRs into it.
 
 ## Tests
 

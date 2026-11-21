@@ -176,3 +176,16 @@ test suite, fixed three small Swagger gaps and two code comments, and reported w
 the team still has to do. Details: docs/work-logs/16001313.md, audit entry of
 2026-11-20.
 ================================================
+
+================================================
+Date: 2026-11-22
+Student: 16003651 (Malak, Person 1)
+Tool: OpenAI Codex desktop app; independent AI subtasks for contracts, UI primitives and auth review/tests
+Related requirements: M2 foundation; ACC-04/06/07a/08/10/11/12/18/19 integration; shared GEN-02/14/16/17 patterns
+
+Prompt summary:
+Prepare the team leader's setup before M2 coding: confirm latest develop in the existing M1 repo and VS Code, add one minimal Next.js/TypeScript/styling starter, prove browser login/me/protected/logout with roles and forced password change, establish initial actual API/component contracts, and clarify access/peer/final reviews. Use the attached unified eight-person PDF as reference rather than a request to implement every person's section.
+
+How the output was used:
+Added frontend/ with pinned current dependencies, tokens/basic fields/layout, same-origin API proxy, real cookie-backed auth/session slice and reproducible disposable-Mongo browser tests. Preserved named domain/shared builders. Added official unchanged workbook/PDF references, route/handoff/unit docs, setup/review checklist and PR template. Existing clone was fetched and opened in VS Code. Corrected PDF shorthand for mixed backend money units and userId identity. Session review fixed credential-401 handling, navigation/focus checks and stale-response races. Final backend/frontend builds and typecheck PASS; 13/13 real browser checks PASS (3.3m) across four roles and four responsive widths. Earlier missing compiler download and two ambiguous test selectors are documented in docs/m2/VALIDATION.md. No secrets, shared Atlas writes or external payment/mail calls; human team acceptance remains pending.
+================================================
