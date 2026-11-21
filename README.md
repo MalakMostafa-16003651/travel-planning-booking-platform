@@ -96,6 +96,10 @@ On Windows PowerShell, use `npm.cmd` instead of `npm`.
 
 ## Milestone 2 frontend
 
+Everyone and their coding assistant should begin with the
+[single M2 start-here guide](docs/m2/START_HERE.md), which links the current
+**26-page optimized split** and the shared implementation/handoff instructions.
+
 Run `npm ci` then `npm run dev` from `frontend/` and open
 <http://localhost:3001>. The browser calls the real API through a same-origin
 proxy to the backend on port 3000. Exact versions are locked. Follow the
