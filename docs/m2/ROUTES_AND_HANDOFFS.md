@@ -1,27 +1,28 @@
 # M2 routes and integration handoffs
 
-Prepared 2026-11-22 against `origin/develop` commit
-`7665c5849a186823b227be99de3b51bb412ad17b` and the unified eight-person M2 PDF.
+Updated 2026-11-22 for the **optimized 26-page M2 team handoff**, which supersedes
+the original 37-page split. The foundation was prepared against `develop`
+`7665c5849a186823b227be99de3b51bb412ad17b` and merged through PR #125 as `5de75e5`.
 The official workbook and revised project description control acceptance criteria;
 the current backend DTOs and `/api/docs-json` control requests and responses.
 
-This is the initial registry for the foundation PR. Named builder/consumer acceptance
+This is the corrected registry for the merged foundation. Named builder/consumer acceptance
 is **pending**; a written contract is not evidence that teammates have agreed to it.
-Only the minimal foundation/authentication slice is implemented by this PR. Routes
+Only the minimal foundation/authentication slice is implemented so far. Routes
 listed below reserve ownership and do not claim those pages already exist.
 
 ## Route ownership
 
 | Owner | Reserved Next.js routes | Feature folders |
 | --- | --- | --- |
-| Malak | `/`, `/login`, `/register`, `/forgot-password`, `/reset-password`, `/verify-email`, `/account/profile`, `/account/security`; global role routing and shared layouts | `auth`; shared `components/ui`, `components/layout`, `lib/api`, `lib/format`, `config`, `types` |
-| Arwa | `/admin`, `/admin/accounts`, `/admin/moderators`, `/admin/providers`, `/admin/bookings`, `/admin/reports`, `/admin/audit-logs`, `/admin/analytics`, `/notifications` | `admin`, `notifications`, `reports` |
-| Gamila | `/flights`, `/flights/[id]`, `/moderator/airline`, `/moderator/airline/flights`, `/moderator/airline/flights/new`, `/moderator/airline/flights/[id]`, `/moderator/airline/policies`, `/moderator/airline/passengers` | `flights`, `airline-moderator` |
+| Malak | `/`, `/login`, `/register`, `/forgot-password`, `/reset-password`, `/verify-email`, `/account/profile`, `/account/security`; global role routing and shared layouts | `auth`; root configuration, base `components/ui`, `components/layout`, `lib/api` and genuinely common contracts |
+| Arwa | `/admin`, `/admin/accounts`, `/admin/moderators`, `/admin/providers`, `/admin/bookings`, `/admin/reports`, `/admin/content`, `/admin/audit-logs`, `/admin/analytics`, `/notifications` | `admin`, `notifications`, `reports`; shared table/pagination/filter presentation |
+| Gamila | `/flights`, `/flights/[id]`, `/moderator/airline`, `/moderator/airline/flights`, `/moderator/airline/flights/new`, `/moderator/airline/flights/[id]`, `/moderator/airline/policies`, `/moderator/airline/passengers`; airline-create form hosted in Arwa's admin route; embedded SeatSelector consumed by Ismail | `flights`, `airline-moderator`; flight search/time/seat UI |
 | Ismail | `/bookings` (hub), `/bookings/flights/new`, `/bookings/flights`, `/bookings/flights/[id]`, `/bookings/flights/[id]/ticket`, `/bookings/flights/[id]/change` (bonus) | `flight-bookings` |
-| Lama | `/hotels`, `/hotels/[id]`, `/moderator/hotel`, `/moderator/hotel/rooms`, `/moderator/hotel/rooms/new`, `/moderator/hotel/availability`, `/moderator/hotel/policies`, `/moderator/hotel/reservations` | `hotels`, `hotel-moderator` |
-| Osama | `/bookings/hotels/new`, `/bookings/hotels`, `/bookings/hotels/[id]`, `/favorites`; embedded review/reply widgets | `hotel-bookings`, `reviews`, `favorites` |
+| Lama | `/hotels`, `/hotels/[id]`, `/moderator/hotel`, `/moderator/hotel/rooms`, `/moderator/hotel/rooms/new`, `/moderator/hotel/availability`, `/moderator/hotel/policies`, `/moderator/hotel/reservations`; moderator review-reply UI and hotel-create form hosted in Arwa's admin route | `hotels`, `hotel-moderator`; shared media/gallery and hotel date-only controls |
+| Osama | `/bookings/hotels/new`, `/bookings/hotels`, `/bookings/hotels/[id]`, `/favorites`; shared review/rating and favourite widgets | `hotel-bookings`, `reviews`, `favorites` |
 | Kiki | `/itineraries`, `/itineraries/new`, `/itineraries/[id]`, `/itineraries/[id]/edit`, `/explore/itineraries`, `/explore/itineraries/[id]` | `itineraries` |
-| Hicham | `/checkout/[type]/[bookingId]`, `/checkout/result`, `/blog`, `/blog/[id]`, `/blog/new`, `/blog/mine`, `/blog/[id]/edit`, `/authors/[id]` | `payments`, `blog` |
+| Hicham | `/checkout/[type]/[bookingId]` for `flight`, `hotel` and `flight-change`, `/checkout/result`, `/blog`, `/blog/[id]`, `/blog/new`, `/blog/mine`, `/blog/[id]/edit`, `/authors/[id]` | `payments`, `blog`; payment/refund status and endpoint-specific money adapters |
 
 The development-only component gallery belongs to Malak at `/dev/ui`. Do not add
 domain pages or duplicate fetching logic to make navigation appear complete.
@@ -32,6 +33,38 @@ The foundation's role landing destinations are shared integration shells:
 Malak and do not implement the named owners' dashboards. Moving role landings to
 their final domain pages remains an integration change with the relevant owner.
 Backend guards remain the authority.
+
+`/admin/providers` has one page owner: Arwa. Gamila supplies the airline-create
+form/API adapter and Lama supplies the hotel-create form/API adapter; Arwa hosts
+them and owns admin route state and permissions. `/admin/content` covers direct
+moderation of supported content, including items without a report. Gamila leads
+the FLT-28 seat-selection frontend; Ismail retains the booking API and mounting
+context. Lama leads HTL-26 moderator replies; Osama retains review backend/data
+ownership. BON-02 favourites remain with Osama. Other M1 backend owners do not move.
+
+## Shared construction: one builder per reusable module
+
+This table follows the optimized handoff. It assigns future construction; it does
+not claim every listed component has already been implemented. Domain types live
+beside their features; genuinely common types remain shared.
+
+| Builder | Maintained shared construction | Required consumers / boundary |
+| --- | --- | --- |
+| Malak | Root package/config/lockfile, global tokens/layout, API/error/session base; Button/Input/FormField/Card/Badge/Dialog and common loading/empty/error/confirmation patterns | All owners compose these primitives; Malak assembles home from P3/P5/P7/P8 widgets. Badge/Dialog and the fuller navigation/states are later Malak work |
+| Arwa | DataTable/Pagination and table-filter presentation; ReportAction; NotificationBell/inbox and direct-moderation UI | All list owners supply columns and actual server pages; P6/P7/P8 mount reporting; P1 hosts bell. Arwa owns admin routes/provider-entry integration |
+| Gamila | FlightSearch/FlightCard, airport/time utilities, SeatSelector; airline-create form/API adapter | Malak/Kiki reuse search/cards; Ismail supplies booking/segment context and mounts seats; Arwa hosts provider form |
+| Ismail | BookingStepper, server-expiry HoldTimer, traveler `/bookings` hub and shared lifecycle checklist | Osama/Hicham reuse presentation with their actual APIs; Osama supplies hotel hub links/summary; Gamila supplies seat UI. Osama/Hicham co-verify lifecycle |
+| Lama | Image uploader/gallery, hotel date-only controls, HotelSearch/HotelCard; hotel-create form/API adapter; moderator review-reply UI | Gamila/Kiki/Hicham consume media controls with their own endpoints/permissions; Osama/Kiki consume stay/search inputs; Arwa hosts provider form; Osama supplies review data |
+| Osama | ReviewList/rating widgets and eligible review editor; favourite state/button/list | Lama consumes reviews/ratings and supplies moderator reply UI; Lama/Kiki mount favourites and invalidate visibility changes |
+| Kiki | ItineraryPicker/Preview with ownership, privacy and invalidation behavior | Hicham consumes for BLG-13; Malak consumes public previews. No additional general infrastructure library is assigned |
+| Hicham | PaymentRefundStatus, shared flight/hotel/flight-change checkout and endpoint-specific money format/normalization adapters plus field-to-unit map | Ismail/Osama consume payment/refund display; P2/P3/P4/P5/P6/P7 consume verified money semantics; Arwa reconciles analytics |
+
+Existing low-level `formatMoneyMinorUnits`/`formatMoneyMajorUnits` functions remain
+available. Hicham owns the endpoint-aware adapters and amount-unit map built on
+them; their presence does not transfer that semantic responsibility to Malak.
+Avoid concurrent root lockfile/layout/global-CSS edits. Each shared change names
+its builder and consumer verifier, and each owner supplies their own documentation
+and component-gallery examples.
 
 ## API boundaries verified in source
 
@@ -62,10 +95,13 @@ Backend guards remain the authority.
   Keep all browser calls under the frontend's `/api` proxy. Never store tokens in
   localStorage/sessionStorage or return them from a frontend wrapper.
 
-### Money: correct the PDF shorthand at the API boundary
+### Money: endpoint-specific units in the optimized handoff
 
-The PDF describes all booking/payment/refund figures as cents. The final backend
-explicitly uses **two units**. Do not change backend values to fit the PDF.
+The **original 37-page PDF's** blanket cents shorthand is superseded. The optimized
+26-page PDF accurately distinguishes the final backend's **two units** below.
+Hicham maintains the explicit field-to-unit map and endpoint adapters; each
+consumer verifies its exact DTO fields, particularly cancellation/change/analytics
+values. Do not convert a value twice or change backend values to fit old shorthand.
 
 | Returned boundary | Unit and example | Formatter |
 | --- | --- | --- |
@@ -102,28 +138,37 @@ for another person's component.
 
 | Producer and consumer | Proposed interface | Acceptance still needed |
 | --- | --- | --- |
-| Malak header; Arwa notification bell | `AppHeader({ user, notificationSlot?: ReactNode })` | Arwa owns count/list/read state and mounts one bell in the slot |
+| Malak header; Arwa notification bell | Implemented `AppHeader({ accountSlot?: ReactNode, notificationSlot?: ReactNode })` | Account UI consumes shared session state; Arwa owns count/list/read state and mounts one bell in the slot. There is no `user` prop |
+| Arwa DataTable/Pagination; list owners | Column definitions, actual `{ items, page, pageSize, total }` or endpoint-specific envelope, URL/filter state and page-change callback | Arwa exports exact prop types with consumers; keep server page size 10 and do not slice one API page to fake pagination |
 | Gamila FlightSearch; Malak, Ismail, Kiki | `FlightSearch({ initialQuery?, onSelect? })`; selection `{ segments: [{ flightId, cabinId }], adults, children, infants }` | Gamila exports actual query type; Ismail validates one/two segments against hold DTO; Kiki confirms airport/date prefills |
 | Lama HotelSearch; Malak, Osama, Kiki | `HotelSearch({ initialQuery?, onSelect? })`; selection `{ hotelId, roomIds, checkIn, checkOut, adults, childrenAges }` | Lama exports query type; Osama turns selection into per-room allocations; Kiki sets checkout to day after the group ends |
-| Ismail/Osama holds; Hicham checkout | `Checkout({ type: 'flight' | 'hotel', bookingId })` | Pass `flightBookingId`/`hotelBookingId` into `bookingId`; checkout re-fetches owned snapshot and hold expiry |
-| Hicham status UI; Ismail, Osama | `BookingStatusPanel({ type, bookingId })` | Backend status only; redirect/query strings never confirm payment |
-| Osama reviews; Lama | `ReviewList({ hotelId })`, `ReviewEditor({ hotelBookingId, onSaved? })`, moderator reply widget `{ reviewId, onSaved? }` | Eligibility/ownership enforced by backend; consistent aggregate refresh |
-| Osama favorites; Lama, Kiki | `FavoriteButton({ target: { type: 'hotel' | 'itinerary', id }, onChanged? })` | Adapt target to real favorites API; unavailable targets reveal no hidden content |
-| Arwa reports; Osama, Kiki, Hicham | `ReportAction({ targetType: 'POST' | 'COMMENT' | 'REVIEW' | 'ITINERARY', targetId, onReported? })` | API field names are `targetType`/`targetId`, not PDF `contentType`/`contentId`; reason 5-500 characters |
-| Kiki itinerary picker; Hicham | `ItineraryPicker({ value?: string, onChange })` | Kiki supplies eligible owned/public entries; Hicham submits actual attachment field |
-| Gamila/Lama provider lists; Arwa | `{ providerType: 'airline' | 'hotel', providerId }` | Provider deactivation and moderator suspension remain distinct operations |
+| Gamila SeatSelector; Ismail | Verified booking/segment/cabin context, eligible passengers and selection-change/refresh callbacks | Gamila builds FLT-28 UI; Ismail supplies actual booking/seat mutation contracts and mounting. Exact props and conflict/retry behavior remain joint acceptance items |
+| Ismail steps/timer; Osama, Hicham | `BookingStepper` step model; `HoldTimer` server expiry and expiry callback | Presentation only: countdown does not release stock or confirm payment; consumers retain separate domain API contracts |
+| Ismail/Osama held records; Hicham checkout | `Checkout({ type: 'flight' \| 'hotel' \| 'flight-change', bookingId })`, plus server expiry/status refresh contract | Ordinary IDs are `flightBookingId`/`hotelBookingId`; for `flight-change`, `bookingId` is the change-record ID. Checkout re-fetches owned policies/amount/status and creates no duplicate hold |
+| Hicham status UI; Ismail, Osama | `PaymentRefundStatus({ type, bookingId })` with the three verified payment types | Exact exported props pending; backend status only, and redirects/query strings never confirm payment |
+| Hicham money adapters; P2/P3/P4/P5/P6/P7 | Endpoint/field-specific wire amount, declared unit/currency and display value | Hicham supplies an explicit field-to-unit map and types; preserve wire values and server-calculated amounts, with no repeated conversion |
+| Lama media/date controls; Gamila, Osama, Kiki, Hicham | Upload/gallery inputs include caller-supplied endpoint/action, value, maximum count, progress/error/remove callbacks; date-only controls preserve `YYYY-MM-DD` | Exact props pending; JPG/PNG <=5 MB, max five hotel/post/activity images or one airline logo. Domain endpoint authorization remains with consumer/backend |
+| Osama reviews; Lama | `ReviewList({ hotelId })`, `ReviewEditor({ hotelBookingId, onSaved? })`, rating data/refresh contract | Osama owns review/data widgets and backend; Lama builds moderator reply action against that contract. Eligibility, assigned-hotel authorization and aggregate refresh are verified together |
+| Lama moderator replies; Osama | Reply UI receives actual review identity and success/invalidation callback | Lama leads HTL-26 frontend; Osama supplies actual reply/read API limits and the shared list reflects successful replies. No invented edit/delete capability |
+| Osama favorites; Lama, Kiki | `FavoriteButton({ target: { type: 'hotel' \| 'itinerary', id }, onChanged? })` | Adapt target to real favorites API; unavailable targets reveal no hidden content |
+| Arwa reports; Osama, Kiki, Hicham | `ReportAction({ targetType: 'POST' \| 'COMMENT' \| 'REVIEW' \| 'ITINERARY', targetId, onReported? })` | API field names are `targetType`/`targetId`, not PDF `contentType`/`contentId`; reason 5-500 characters |
+| Kiki itinerary picker/preview; Hicham | `ItineraryPicker({ value?: string, onChange })` and visibility-safe preview data | Kiki supplies eligible owned/public entries and invalidation on privacy/removal; Hicham submits actual attachment field |
+| Gamila/Lama provider-create forms and adapters; Arwa | Caller role/provider context and completion/error/invalidation callbacks, with actual create DTOs owned by each domain | Arwa owns `/admin/providers` and host behavior; do not create a second domain form or shared admin route. Provider deactivation and moderator suspension remain distinct operations |
 
 `initialQuery` must preserve backend query names and URL filter state, not a second
 search implementation. Holds are created only by Ismail/Osama. Hicham accepts
 policies before payment and waits for webhook-backed status. `flight-change` is
-already a backend booking type; Ismail/Hicham must agree its bonus route/props
-extension before adding it to the baseline checkout interface.
+already a backend payment type and is included in the optimized baseline checkout
+contract; Ismail/Hicham still need to agree its exact exported props, record-ID
+handoff, expiry and equal/lower/higher-fare recovery behavior before integration.
 
 ## Open integration decisions
 
 | Decision or gap | Responsible parties | State |
 | --- | --- | --- |
 | Each row's exact exported props/query type and imports | Named producer + consumers, Malak | Pending teammate acceptance |
+| Seat selection and moderator replies | Gamila-Ismail; Lama-Osama | Corrected frontend leads are Gamila for FLT-28 and Lama for HTL-26; backend owners stay unchanged |
+| Provider creation and direct moderation | Arwa with Gamila/Lama and content owners | `/admin/providers` and `/admin/content` belong to Arwa; domain forms/adapters and permitted content navigation are supplied by their owners |
 | Notification deep-links | Arwa + affected feature owners | Backend `NotificationDto` has no target ID/href; do not invent links from message text |
 | Landing flight/hotel/trip/blog widgets | Gamila, Lama, Kiki, Hicham + Malak | Pending producer exports; foundation must not duplicate their requests |
 | Role destination domain pages | Arwa, Gamila, Lama | Reserved; domain implementation stays with owner |

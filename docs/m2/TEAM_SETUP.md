@@ -4,6 +4,11 @@ Prepared 2026-11-22. This is a working access/review checklist, not a claim that
 all eight people have received access or signed off. No messages or invitations
 were sent as part of preparing it.
 
+Send everyone the [single start-here guide](START_HERE.md). The agreed assignment
+reference is the **26-page optimized split**, not the superseded 37-page original.
+Malak confirmed she has sent the optimized PDF; individual read acknowledgements
+and builder/consumer acceptance still need recording. PR #125's foundation is merged.
+
 ## Starting point and local environment
 
 Use the existing repository:
@@ -13,7 +18,7 @@ The foundation was prepared from fetched `origin/develop` commit
 `7665c5849a186823b227be99de3b51bb412ad17b` (2026-11-20). `main` is the submitted
 stable release; feature work integrates through `develop`.
 
-Everyone waits for the shared foundation PR to merge, then runs:
+Everyone pulls the merged foundation and branches from the latest develop:
 
 ```bash
 git fetch origin --prune
@@ -69,7 +74,7 @@ be public when Hicham integrates checkout. Use test mode and test accounts.
 | Repository access for all eight | Confirm each named teammate can clone, push a feature branch and open a PR | Pending individual confirmation |
 | Official workbook | Read [official-requirements.xlsx](../references/official-requirements.xlsx) | Original copied unchanged into repo; individual access/read acknowledgement pending |
 | Revised description | Read [revised-project-description.pdf](../references/revised-project-description.pdf) | Revised original copied unchanged into repo; individual access/read acknowledgement pending |
-| Unified M2 split | Read [milestone-2-team-split.pdf](../references/milestone-2-team-split.pdf) | Same team handoff copied unchanged into repo; receipt/read acknowledgement pending |
+| Optimized M2 split | Read [milestone-2-team-split.pdf](../references/milestone-2-team-split.pdf) | Malak confirmed the optimized PDF was sent; canonical repo copy updated; individual read acknowledgement pending |
 | Local environment | Each teammate installs Node 24, runs locked installs, starts API/frontend and opens Swagger | Pending fresh-clone check per teammate |
 | Private environment values | Provide values over the established private channel; verify Atlas network access and test role accounts | Pending recipient confirmation; no secret values recorded here |
 | Routes/component contracts | Builders and consumers review [ROUTES_AND_HANDOFFS.md](ROUTES_AND_HANDOFFS.md) | Draft ready; acceptance pending |

@@ -5,6 +5,11 @@ is fetched `develop` `7665c5849a186823b227be99de3b51bb412ad17b` (20 November 202
 Node **24** is shared with M1. Dependencies use exact versions and package-lock.json;
 use `npm ci`, not an unreviewed dependency upgrade.
 
+Everyone starts with [docs/m2/START_HERE.md](../docs/m2/START_HERE.md) and the
+26-page optimized split. Named shared builders are listed in the handoff registry;
+Malak does not build every shared widget. The included generic money formatters
+are starter utilities; Hicham maintains endpoint-specific money/payment adapters.
+
 | Package | Locked version |
 | --- | --- |
 | Next.js | 16.4.6 |

@@ -189,3 +189,11 @@ Prepare the team leader's setup before M2 coding: confirm latest develop in the 
 How the output was used:
 Added frontend/ with pinned current dependencies, tokens/basic fields/layout, same-origin API proxy, real cookie-backed auth/session slice and reproducible disposable-Mongo browser tests. Preserved named domain/shared builders. Added official unchanged workbook/PDF references, route/handoff/unit docs, setup/review checklist and PR template. Existing clone was fetched and opened in VS Code. Corrected PDF shorthand for mixed backend money units and userId identity. Session review fixed credential-401 handling, navigation/focus checks and stale-response races. Final backend/frontend builds and typecheck PASS; 13/13 real browser checks PASS (3.3m) across four roles and four responsive widths. Earlier missing compiler download and two ambiguous test selectors are documented in docs/m2/VALIDATION.md. No secrets, shared Atlas writes or external payment/mail calls; human team acceptance remains pending.
 ================================================
+
+================================================
+Date: 2026-11-22
+Student: 16003651 (Malak, Person 1)
+Tool: OpenAI Codex desktop app
+Prompt summary: Clarify which Malak components have actually started, retrieve relevant earlier chats, and give every teammate and their existing M1 AI one current M2 handoff.
+Use: Read relevant connected Codex/ChatGPT chats and current source. Found the newer optimized26-page split in Optimize team task split; Malak confirmed she had sent that version. Corrected the canonical repo PDF (initial starter had copied the original37-page attachment), provenance and shared owner registry. Added docs/m2/START_HERE.md with current source/README links, AI kickoff and a short access/dependency/review reply checklist. No application code changed, no teammate messages sent, and no private teammate AI access claimed. Verified canonical PDF pages/hash, relative links and diff whitespace; prior13-case auth acceptance remains the implementation evidence.
+================================================
