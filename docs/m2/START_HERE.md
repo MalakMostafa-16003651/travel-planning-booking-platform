@@ -82,8 +82,8 @@ chats do not automatically exchange updates or see one another's private history
 
 ## Current limits
 
-The merged starter includes basic UI/layout and real login/session/role/password
-change/logout proof. It is not all of Malak's account features or completed domain
-dashboards. [Validation](VALIDATION.md) records 13 passing browser checks with
-disposable local MongoDB. Human handoff/access confirmations and shared Atlas
-smoke remain pending; do not turn a checklist or AI review into a claimed sign-off.
+The shared account UI and its setup are documented in the
+[frontend README](../../frontend/README.md). Human handoff/access confirmations,
+shared Atlas smoke and the domain integrations tracked in
+[issue #127](https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/issues/127)
+remain team checks.

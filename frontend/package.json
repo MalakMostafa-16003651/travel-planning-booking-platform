@@ -10,7 +10,7 @@
     "build": "next build",
     "start": "next start --hostname localhost --port 3001",
     "typecheck": "next typegen && tsc --noEmit",
-    "test:e2e": "npm --prefix ../backend run build && playwright test"
+    "test:e2e": "npm --prefix ../backend run build && npm run build && playwright test"
   },
   "dependencies": {
     "@fontsource/inter": "5.3.0",

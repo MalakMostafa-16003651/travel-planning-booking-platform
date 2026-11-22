@@ -1,5 +1,6 @@
 'use client';
 import { useState, type FormEvent } from 'react';
+import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { apiClient, ApiError } from '@/lib/api/client';
 import type { LoginResult } from '@/types/auth';
@@ -16,6 +17,7 @@ export function LoginForm() {
   const [fields, setFields] = useState<Record<string, string[]>>({});
   const router = useRouter();
   const search = useSearchParams();
+  const returnTo = safeReturnPath(search.get('returnTo'));
   const { refresh, clear } = useSession();
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -24,7 +26,6 @@ export function LoginForm() {
     setBusy(true); setError(''); setFields({});
     try {
       const result = await apiClient<LoginResult>('/auth/login', { method: 'POST', body: JSON.stringify({ email: data.get('email'), password: data.get('password') }) });
-      const returnTo = safeReturnPath(search.get('returnTo'));
       if ('passwordChangeRequired' in result) {
         clear();
         router.replace(`/account/security?required=1${returnTo ? `&returnTo=${encodeURIComponent(returnTo)}` : ''}`);
@@ -39,11 +40,18 @@ export function LoginForm() {
       if (error instanceof ApiError) setFields(error.fields);
     } finally { setBusy(false); }
   }
-  return <form onSubmit={submit} className="stack" aria-busy={busy}>
+  return <form method="post" onSubmit={submit} className="stack" aria-busy={busy}>
     {search.get('passwordChanged') === '1' && <p role="status">Password changed. Sign in with your new password.</p>}
+    {search.get('registered') === '1' && <p role="status">Account created. Sign in to continue.</p>}
+    {search.get('deactivated') === '1' && <p role="status">Your account has been deactivated.</p>}
+    {search.get('sessionEnded') === '1' && <p role="status">Your session has ended. Sign in to continue.</p>}
     {error && <ErrorAlert message={error} />}
     <FormField id="email" label="Email" error={fields.email?.[0]}><Input id="email" name="email" type="email" autoComplete="username" required maxLength={254} aria-invalid={!!fields.email} /></FormField>
     <FormField id="password" label="Password" error={fields.password?.[0]}><Input id="password" name="password" type="password" autoComplete="current-password" required aria-invalid={!!fields.password} /></FormField>
     <Button type="submit" disabled={busy}>{busy ? 'Signing in...' : 'Sign in'}</Button>
+    <div className="flex flex-wrap justify-between gap-4 text-sm">
+      <Link className="underline" href={returnTo ? `/register?returnTo=${encodeURIComponent(returnTo)}` : '/register'}>Create an account</Link>
+      <Link className="underline" href="/forgot-password">Forgot your password?</Link>
+    </div>
   </form>;
 }

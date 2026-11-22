@@ -2,13 +2,14 @@
 import { useState, type FormEvent } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { apiClient, ApiError } from '@/lib/api/client';
-import { safeReturnPath } from '@/config/routes';
+import { loginHref } from '@/config/routes';
 import { useSession } from './session-provider';
 import { RequireSession } from './require-session';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { FormField } from '@/components/ui/form-field';
 import { ErrorAlert } from '@/components/ui/error-alert';
+import { passwordError, passwordHint } from './password-rules';
 
 export function SecurityForm() {
   const search = useSearchParams();
@@ -23,12 +24,18 @@ export function SecurityForm() {
     event.preventDefault();
     if (busy) return;
     const data = new FormData(event.currentTarget);
+    const newPassword = String(data.get('newPassword') ?? '');
+    const invalidPassword = passwordError(newPassword);
+    if (invalidPassword) {
+      setError('');
+      setFields({ newPassword: [invalidPassword] });
+      return;
+    }
     setBusy(true); setError(''); setFields({});
     try {
-      await apiClient<void>('/auth/change-password', { method: 'PATCH', body: JSON.stringify({ currentPassword: data.get('currentPassword'), newPassword: data.get('newPassword') }) });
+      await apiClient<void>('/auth/change-password', { method: 'PATCH', body: JSON.stringify({ currentPassword: data.get('currentPassword'), newPassword }) });
       clear();
-      const returnTo = safeReturnPath(search.get('returnTo'));
-      router.replace(`/login?passwordChanged=1${returnTo ? `&returnTo=${encodeURIComponent(returnTo)}` : ''}`);
+      router.replace(loginHref(search.get('returnTo'), { passwordChanged: '1' }));
       router.refresh();
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Unable to change password');
@@ -37,10 +44,10 @@ export function SecurityForm() {
   }
   const form = <div className="stack">
     {required ? <p>You need to replace your temporary password before continuing. After changing it, sign in again.</p> : <p>Changing your password ends all existing sessions. You will sign in again.</p>}
-    <form onSubmit={submit} className="stack" aria-busy={busy}>
+    <form method="post" onSubmit={submit} className="stack" aria-busy={busy}>
       {error && <ErrorAlert message={error} />}
       <FormField id="currentPassword" label="Current password" error={fields.currentPassword?.[0]}><Input id="currentPassword" name="currentPassword" type="password" autoComplete="current-password" required /></FormField>
-      <FormField id="newPassword" label="New password" error={fields.newPassword?.[0]} hint="8–128 characters, including a letter and a number."><Input id="newPassword" name="newPassword" type="password" autoComplete="new-password" required minLength={8} maxLength={128} pattern="(?=.*\p{L})(?=.*\p{Nd}).{8,128}" /></FormField>
+      <FormField id="newPassword" label="New password" error={fields.newPassword?.[0]} hint={passwordHint}><Input id="newPassword" name="newPassword" type="password" autoComplete="new-password" required /></FormField>
       <Button type="submit" disabled={busy}>{busy ? 'Changing password...' : 'Change password'}</Button>
     </form>
     {required && <Button variant="secondary" disabled={busy} onClick={async () => {

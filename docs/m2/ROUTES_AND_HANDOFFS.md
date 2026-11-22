@@ -8,8 +8,8 @@ the current backend DTOs and `/api/docs-json` control requests and responses.
 
 This is the corrected registry for the merged foundation. Named builder/consumer acceptance
 is **pending**; a written contract is not evidence that teammates have agreed to it.
-Only the minimal foundation/authentication slice is implemented so far. Routes
-listed below reserve ownership and do not claim those pages already exist.
+Malak's account routes and base shared UI are available. The registry reserves
+the other owner routes for their respective implementations.
 
 ## Route ownership
 
@@ -50,7 +50,7 @@ beside their features; genuinely common types remain shared.
 
 | Builder | Maintained shared construction | Required consumers / boundary |
 | --- | --- | --- |
-| Malak | Root package/config/lockfile, global tokens/layout, API/error/session base; Button/Input/FormField/Card/Badge/Dialog and common loading/empty/error/confirmation patterns | All owners compose these primitives; Malak assembles home from P3/P5/P7/P8 widgets. Badge/Dialog and the fuller navigation/states are later Malak work |
+| Malak | Root package/config/lockfile, global tokens/layout, API/error/session base; Button/Input/Select/FormField/Card/Badge/ConfirmDialog and shared loading/empty/error states | All owners compose these primitives. The home uses `HomeContent` slots for P3/P5/P7/P8 exports |
 | Arwa | DataTable/Pagination and table-filter presentation; ReportAction; NotificationBell/inbox and direct-moderation UI | All list owners supply columns and actual server pages; P6/P7/P8 mount reporting; P1 hosts bell. Arwa owns admin routes/provider-entry integration |
 | Gamila | FlightSearch/FlightCard, airport/time utilities, SeatSelector; airline-create form/API adapter | Malak/Kiki reuse search/cards; Ismail supplies booking/segment context and mounts seats; Arwa hosts provider form |
 | Ismail | BookingStepper, server-expiry HoldTimer, traveler `/bookings` hub and shared lifecycle checklist | Osama/Hicham reuse presentation with their actual APIs; Osama supplies hotel hub links/summary; Gamila supplies seat UI. Osama/Hicham co-verify lifecycle |
@@ -139,6 +139,7 @@ for another person's component.
 | Producer and consumer | Proposed interface | Acceptance still needed |
 | --- | --- | --- |
 | Malak header; Arwa notification bell | Implemented `AppHeader({ accountSlot?: ReactNode, notificationSlot?: ReactNode })` | Account UI consumes shared session state; Arwa owns count/list/read state and mounts one bell in the slot. There is no `user` prop |
+| Malak email eligibility; Ismail, Osama and Hicham | `BookingEmailGate({ children, returnTo })`, `isEmailVerificationRequiredError(error)` and `verificationPath(returnTo)` from `@/features/auth/email-verification` | Mount around hold/payment actions and link back from an eligibility rejection. Each owner proves the live gate in their flow |
 | Arwa DataTable/Pagination; list owners | Column definitions, actual `{ items, page, pageSize, total }` or endpoint-specific envelope, URL/filter state and page-change callback | Arwa exports exact prop types with consumers; keep server page size 10 and do not slice one API page to fake pagination |
 | Gamila FlightSearch; Malak, Ismail, Kiki | `FlightSearch({ initialQuery?, onSelect? })`; selection `{ segments: [{ flightId, cabinId }], adults, children, infants }` | Gamila exports actual query type; Ismail validates one/two segments against hold DTO; Kiki confirms airport/date prefills |
 | Lama HotelSearch; Malak, Osama, Kiki | `HotelSearch({ initialQuery?, onSelect? })`; selection `{ hotelId, roomIds, checkIn, checkOut, adults, childrenAges }` | Lama exports query type; Osama turns selection into per-room allocations; Kiki sets checkout to day after the group ends |
@@ -170,6 +171,6 @@ handoff, expiry and equal/lower/higher-fare recovery behavior before integration
 | Seat selection and moderator replies | Gamila-Ismail; Lama-Osama | Corrected frontend leads are Gamila for FLT-28 and Lama for HTL-26; backend owners stay unchanged |
 | Provider creation and direct moderation | Arwa with Gamila/Lama and content owners | `/admin/providers` and `/admin/content` belong to Arwa; domain forms/adapters and permitted content navigation are supplied by their owners |
 | Notification deep-links | Arwa + affected feature owners | Backend `NotificationDto` has no target ID/href; do not invent links from message text |
-| Landing flight/hotel/trip/blog widgets | Gamila, Lama, Kiki, Hicham + Malak | Pending producer exports; foundation must not duplicate their requests |
-| Role destination domain pages | Arwa, Gamila, Lama | Reserved; domain implementation stays with owner |
+| Landing flight/hotel/trip/blog widgets | Gamila, Lama, Kiki, Hicham + Malak | `HomeContent` accepts `flightSearch`, `hotelSearch`, `itineraries` and `stories`. Producer exports requested in [issue #127](https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/issues/127) |
+| Role destination domain pages | Arwa, Gamila, Lama | Owners confirm their dashboards are ready before their routes are promoted to login destinations. Tracked in issue #127 |
 | Shared contract changes | Malak + all consumers | Written PR note required before consumers migrate |
