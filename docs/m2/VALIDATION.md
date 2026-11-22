@@ -54,3 +54,39 @@ repository/environment access checks, shared Atlas role smoke and all later
 feature journeys. Domain dashboards, registration/recovery/profile editing and
 other full M2 requirements are not certified by this starter. The optional
 deployment bonus is not activated. See TEAM_SETUP.md for the pending checklist.
+
+## Malak account and shared UI implementation — 22 November 2026
+
+Branch codex/m2-malak-account-and-shell from develop 0b21779, implementation
+commit d41d571, single PR #128. Handoff #127 tracks the integration points for
+the home widgets, notification bell, actual role dashboards, booking verification
+UI, and the team's SMTP/Atlas verification.
+
+| Check | Result |
+| --- | --- |
+| Frontend typecheck and production build | PASS |
+| Backend production build | PASS |
+| Production browser coverage | 25 cases passed in the full run. The corrected unknown-role assertion passed in a separate focused run, covering the remaining case |
+| Mobile account flow | 360 px registration, account menu and editable profile fit without horizontal overflow |
+| Shared UI gallery | Confirmation keyboard controls, Escape, focus restoration and fit at 360 and 1440 px passed |
+| Source review and diff check | Cross-tab account binding, safe redirect, POST form fallback and unknown workspace role checks addressed |
+
+Browser proof uses Chrome, the production Next app, real Nest, disposable local
+MongoDB and an in-process test inbox. The cases cover consent and duplicate
+email, protected URL and query restoration, four roles, profile persistence,
+successful and blocked deactivation, stale account changes, lockout, suspension,
+idle expiry, admin reset and restricted password change, and cookie revocation.
+The email cases cover verification and resend, stale and reused proofs, generic
+reset response and fresh sign-in. For the verification guard, the empty hold
+request was rejected as unverified before verification and reached normal DTO
+validation afterward. No booking was created in that case.
+
+The initial development-server attempt timed out after deactivation succeeded.
+Running against the production build completed the deactivation assertions. In
+the production run the unknown role rendered the right not-found page with two
+noindex tags. The test now checks for at least one tag and passed when rerun
+against the same build.
+
+Acceptance for booking, review, post and itinerary journeys requires the
+corresponding owner screens. Final role dashboards, shared Atlas test accounts
+and mail delivery through the team's private SMTP inbox need integration checks.

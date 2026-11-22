@@ -197,3 +197,11 @@ Tool: OpenAI Codex desktop app
 Prompt summary: Clarify which Malak components have actually started, retrieve relevant earlier chats, and give every teammate and their existing M1 AI one current M2 handoff.
 Use: Read relevant connected Codex/ChatGPT chats and current source. Found the newer optimized26-page split in Optimize team task split; Malak confirmed she had sent that version. Corrected the canonical repo PDF (initial starter had copied the original37-page attachment), provenance and shared owner registry. Added docs/m2/START_HERE.md with current source/README links, AI kickoff and a short access/dependency/review reply checklist. No application code changed, no teammate messages sent, and no private teammate AI access claimed. Verified canonical PDF pages/hash, relative links and diff whitespace; prior13-case auth acceptance remains the implementation evidence.
 ================================================
+
+================================================
+Date: 2026-11-22
+Student: 16003651 (Malak, Person 1)
+Tool: OpenAI Codex desktop app with delegated profile, email and shared UI work/review
+Prompt summary: Start Malak's M2 assignment from the optimized split and M1 contracts. Keep progress visible, use one PR and merge at the end of the session. Coordinate needed teammate exports through a handoff.
+Use: Implemented registration, editable profile and deactivation, email verification/resend, password recovery, shared controls, account navigation and the role-aware home shell using actual M1 APIs. Preserved internal sign-in return and guarded stale profile writes after account switches. Posted GitHub issue #127 for feature exports, bell/role destinations and shared test email/booking adoption. PR #128 groups all work. Both production builds and typecheck passed. 25 production-browser cases passed in the full run, and the corrected unknown-role noindex check passed in a focused rerun. Local Mongo and synthetic mail were used. See docs/m2/VALIDATION.md.
+================================================
