@@ -40,23 +40,47 @@ Always use **localhost** throughout a browser session. The backend's Secure
 loopback use HTTPS. Do not remove Secure, HttpOnly or SameSite protections.
 No frontend secrets or tokens belong in public environment variables.
 
-## What is ready
+## Account and shared UI
 
 - Next.js App Router, TypeScript, Tailwind 4, Inter/Manrope fonts served locally,
   lucide icons, root layout, header/footer, Coastal Editorial CSS tokens.
-- Button, Input, FormField, Card and ErrorAlert primitives, with `/dev/ui` available
-  only in development. The remaining shared/domain widgets stay with their builders.
-- Real login, `/api/auth/me` session provider, four role landing shells,
-  protected read-only account identity, password change and logout. The profile
-  route checks the session on the server with explicit cookie forwarding as well.
+- Button, Input, Select, FormField, Card, Badge, ConfirmDialog, EmptyState,
+  LoadingState and ErrorAlert. See the development gallery at `/dev/ui`.
+- Guest registration with terms/privacy consent, sign-in and logout, safe return
+  to a protected page, four role workspaces and responsive account navigation.
+- Server-checked account profile with editable name, phone and preferred currency
+  from the official currency catalog. Travelers can confirm deactivation and see
+  the actual server response if an upcoming confirmed booking blocks it.
 - Restricted first-login password change survives refresh through
   `/account/security?required=1`. That flag is presentation only: Nest validates
   the protected restricted cookie. Password change requires a fresh login.
+- Password reset request and token completion, email verification and resend.
+  Proofs arrive in URL fragments, are held in memory, and are removed from the
+  address bar when read. Completion requires an explicit action.
 
-This is the team setup slice. Registration, recovery, verification, editable
-profile, deactivation, completed navigation and all domain journeys remain later
-owner work. The home screen is a starter; it does not claim completed travel
-features. Role workspace shells deliberately do not occupy teammates' dashboards.
+The public home provides `HomeContent` slots for owner-supplied flight, hotel,
+itinerary and story components. Their exports and the final domain landing
+routes are tracked in [issue #127](https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/issues/127).
+
+The root layout renders static public pages, with client controls for forms,
+navigation and live session state. The private profile verifies the server session
+on each direct request and loads the account-specific fields without caching.
+For travel actions, use `loginHref(returnTo)` from `@/config/routes` or
+`RequireSession` with a role where appropriate. Validate the action state again
+after sign-in before creating a hold or submitting any mutation.
+
+Profile edits and deactivation bind the displayed user ID to the browser request.
+The proxy checks that ID against the same cookie it will forward to Nest. If
+another tab has changed the signed-in account, the operation stops and the user
+can reload the page to see the current account.
+
+For auth email in local development, configure a private test inbox on the backend
+with reset and verification link bases at `http://localhost:3001/reset-password`
+and `http://localhost:3001/verify-email`. Set `EMAIL_VERIFICATION_REQUIRED=true`
+when testing the booking gate. Use `BookingEmailGate` from
+`@/features/auth/email-verification` around the booking/payment action and handle
+the authoritative API rejection. For a link opened in a separate tab, return to
+the original tab and choose **Check verification again** or retry the original action.
 
 ## API and session conventions
 
@@ -100,10 +124,10 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-The browser suite first builds the unchanged backend, then starts the **real Nest
-root application** with a disposable local Mongo replica set on 3100 and Next on
-3101. It explicitly ignores `.env` and blanks external service settings. Five
-synthetic fixture identities/passwords are test-only, never shared Atlas users.
+The browser suite builds both apps, then starts the **real Nest root application**
+with a disposable local Mongo replica set on 3100 and the production Next build
+on 3101. The backend fixture ignores `.env` and blanks external service settings. It uses
+synthetic fixture identities and an in-process mail sink for reset/verification.
 It needs backend dependencies (`npm ci` in backend/) and a supported local Mongo
 binary or permission for mongodb-memory-server to download one. Run with loopback
 and browser-process permissions. Both ports must be free. Playwright stops owned
@@ -112,12 +136,11 @@ To use an already installed Chrome instead of a Playwright download, set
 `PLAYWRIGHT_CHANNEL=chrome` for the test process (PowerShell:
 `$env:PLAYWRIGHT_CHANNEL='chrome'`). The default is Playwright Chromium.
 
-The suite checks all four roles, live `/me`, refresh, logout/revocation, wrong-role
-and real backend forbidden access, forced password change, deep-link return,
-hostile redirects/origins, validation, wrong current password, session races and
-360/768/1024/1440 layouts. Ignored `test-results/` contains responsive screenshots.
-This proves the local browser/proxy/backend integration. Shared Atlas role/access
-confirmation and deployment acceptance are separate team checks.
+The suite checks all four roles, login and session changes, expiry/lockout,
+registration and profile validation, deactivation, recovery and verification,
+deep-link return and responsive layouts. Ignored `test-results/` contains
+responsive screenshots. Use the team's Atlas and private test inbox for the
+shared-environment verification.
 
 For production packaging run `npm run build`, then `npm start` on 3001. Keep the
 fixed backend private and configure HTTPS/origins for the actual deployment before

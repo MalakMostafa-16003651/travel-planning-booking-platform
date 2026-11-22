@@ -26,7 +26,7 @@ export default defineConfig({
       timeout: 120_000,
     },
     {
-      command: 'npm run dev -- --hostname localhost --port 3101',
+      command: 'node node_modules/next/dist/bin/next start --hostname localhost --port 3101',
       url: baseURL,
       env: { BACKEND_URL: 'http://localhost:3100' },
       reuseExistingServer: false,

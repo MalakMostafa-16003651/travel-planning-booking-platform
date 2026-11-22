@@ -1,9 +1,14 @@
 import { notFound } from "next/navigation";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorAlert } from "@/components/ui/error-alert";
 import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
+import { LoadingState } from "@/components/ui/loading-state";
+import { Select } from "@/components/ui/select";
+import { ConfirmationPreview } from "./confirmation-preview";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +29,7 @@ export default function UiGalleryPage() {
           <Button variant="secondary">Secondary action</Button>
           <Button variant="danger">Destructive action</Button>
           <Button disabled>Saving…</Button>
+          <ConfirmationPreview />
         </div>
       </Card>
       <div className="gallery-grid">
@@ -35,11 +41,25 @@ export default function UiGalleryPage() {
           <FormField id="gallery-email" label="Email address" error="Enter a valid email address.">
             <Input type="email" defaultValue="invalid-email" />
           </FormField>
+          <FormField id="gallery-currency" label="Preferred currency">
+            <Select defaultValue="USD">
+              <option value="USD">USD — US Dollar</option>
+              <option value="EGP">EGP — Egyptian Pound</option>
+            </Select>
+          </FormField>
         </Card>
         <Card className="stack">
           <h2 className="m-0">Clear feedback</h2>
           <ErrorAlert title="Unable to save" message="Please check your connection and try again." />
-          <p className="m-0 text-sm text-muted">Backend field errors belong beside their inputs. General errors use one alert near the action.</p>
+          <LoadingState label="Loading your account…" />
+          <EmptyState title="No saved trips yet" description="Your saved trips will appear here." />
+          <div className="flex flex-wrap gap-2">
+            <Badge>Draft</Badge>
+            <Badge tone="info">In review</Badge>
+            <Badge tone="success">Confirmed</Badge>
+            <Badge tone="warning">Payment pending</Badge>
+            <Badge tone="danger">Cancelled</Badge>
+          </div>
         </Card>
       </div>
       <Card>

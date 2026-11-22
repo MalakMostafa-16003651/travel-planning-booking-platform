@@ -13,6 +13,7 @@ const { resolve, join } = require('node:path');
 const { existsSync, readdirSync } = require('node:fs');
 const { execFileSync } = require('node:child_process');
 const { randomBytes } = require('node:crypto');
+const { mailEnvironment, installMailFixture, attachMailFixture } = require('./auth-mail-fixture.cjs');
 
 const backendDirectory = resolve(__dirname, '../../backend');
 const backendRequire = createRequire(join(backendDirectory, 'package.json'));
@@ -70,8 +71,7 @@ async function main() {
     JWT_SECRET: randomBytes(48).toString('hex'),
     PORT: String(port),
     STRIPE_SECRET_KEY: '', STRIPE_WEBHOOK_SECRET: '', FXRATES_API_KEY: '',
-    SMTP_HOST: '', SMTP_PORT: '', SMTP_USER: '', SMTP_PASS: '', SMTP_FROM: '',
-    PASSWORD_RESET_URL: '', EMAIL_VERIFICATION_URL: '', EMAIL_VERIFICATION_REQUIRED: 'false',
+    ...mailEnvironment('http://localhost:3101'),
   });
 
   // Match the repository's production-module integration test. Disable all .env
@@ -89,12 +89,36 @@ async function main() {
   }
   const { configureApplication } = backendRequire('./dist/configure-application.js');
   const { PasswordService } = backendRequire('./dist/auth/password.service.js');
-  const testing = await Test.createTestingModule({ imports: [AppModule] }).compile();
+  const { CurrenciesService } = backendRequire('./dist/currencies/currencies.service.js');
+  const builder = Test.createTestingModule({ imports: [AppModule] });
+  const mailFixture = installMailFixture(backendRequire, builder);
+  const testing = await builder.compile();
   app = testing.createNestApplication({ rawBody: true, logger: false });
   configureApplication(app);
-  await app.init();
   const connection = testing.get(getConnectionToken());
+  attachMailFixture(app, mailFixture);
+  // A fixture-only control backdates one disposable user's sessions to exercise the
+  // actual inactivity rule without changing application clocks or waiting 30 minutes.
+  const fixtureServer = app.getHttpAdapter().getInstance();
+  fixtureServer.post('/__m2-browser-fixture/expire-idle-session', async (request, response) => {
+    if (request.socket.remoteAddress !== '127.0.0.1' || request.get('X-M2-Browser-Fixture') !== 'account-e2e') {
+      response.sendStatus(404);
+      return;
+    }
+    const user = await connection.models.User.findOne({ email: 'smoke-idle-session@example.test' }).select('_id');
+    if (!user) {
+      response.sendStatus(404);
+      return;
+    }
+    const result = await connection.models.AuthSession.updateMany(
+      { userId: user._id, revokedAt: null },
+      { $set: { lastActivityAt: new Date(Date.now() - 31 * 60_000) } },
+    );
+    response.sendStatus(result.modifiedCount > 0 ? 204 : 404);
+  });
+  await app.init();
   await Promise.all(Object.values(connection.models).map((model) => model.init()));
+  await app.get(CurrenciesService).seedSupported();
 
   const accountDefinitions = [
     ['traveler', 'USER', false],
@@ -102,18 +126,33 @@ async function main() {
     ['airline', 'AIRLINE_MODERATOR', false],
     ['hotel', 'HOTEL_MODERATOR', false],
     ['password-change', 'AIRLINE_MODERATOR', true],
+    ['profile-edit', 'USER', false],
+    ['deactivate', 'USER', false],
+    ['deactivate-blocked', 'USER', false],
+    ['lockout', 'USER', false],
+    ['suspended', 'USER', false, 'SUSPENDED'],
+    ['admin-reset', 'USER', false],
+    ['idle-session', 'USER', false],
   ];
   const accounts = [];
-  for (const [key, role, passwordChangeRequired] of accountDefinitions) {
+  for (const [key, role, passwordChangeRequired, status = 'ACTIVE'] of accountDefinitions) {
     const password = 'M2SmokeOnly2026';
     const email = `smoke-${key}@example.test`;
     const created = await connection.models.User.create({
       name: `M2 ${key} fixture`, email,
       passwordHash: await app.get(PasswordService).hash(password),
-      role, status: 'ACTIVE', mustChangePassword: passwordChangeRequired,
+      role, status, mustChangePassword: passwordChangeRequired,
       termsAcceptedAt: new Date(), emailVerifiedAt: new Date(),
     });
     accounts.push({ key, email, password, role, passwordChangeRequired, userId: created._id.toString() });
+    if (key === 'deactivate-blocked') {
+      const departureAt = new Date(Date.now() + 86_400_000);
+      // This fixture needs only the fields queried by the actual eligibility check.
+      await connection.models.FlightBooking.collection.insertOne({
+        userId: created._id, status: 'CONFIRMED', lastDepartureAt: departureAt,
+        segments: [{ departureAt }],
+      });
+    }
   }
 
   await app.listen(port, '127.0.0.1');
