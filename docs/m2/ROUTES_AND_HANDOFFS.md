@@ -143,7 +143,8 @@ for another person's component.
 | Arwa DataTable/Pagination; list owners | Column definitions, actual `{ items, page, pageSize, total }` or endpoint-specific envelope, URL/filter state and page-change callback | Arwa exports exact prop types with consumers; keep server page size 10 and do not slice one API page to fake pagination |
 | Gamila FlightSearch; Malak | `<FlightSearch variant="home" />` from `@/features/flights/flight-search` | Gamila confirmed the home interface. Mount it in `HomeContent` once her export reaches `develop` |
 | Gamila flight search and results; Ismail, Kiki | `initialCriteria` prefills search. Flight and cabin selection uses `{ segments: [{ flightId, cabinId }], adults, children, infants }` | Confirm the exported types with Gamila. Ismail validates one/two segments against the hold DTO and Kiki checks airport/date prefills |
-| Lama HotelSearch; Malak, Osama, Kiki | `HotelSearch({ initialQuery?, onSelect? })`; selection `{ hotelId, roomIds, checkIn, checkOut, adults, childrenAges }` | Lama exports query type; Osama turns selection into per-room allocations; Kiki sets checkout to day after the group ends |
+| Lama HotelSearch; Malak, Kiki | `<HotelSearch variant="home" />` for home. The submitted component in PR #135 accepts `initialCriteria` for prefills | Connect when the media/date controls and hotel search are on `develop`. Kiki sets checkout to the day after the group ends |
+| Lama hotel room selection; Osama | Selection includes `{ hotelId, roomIds, checkIn, checkOut, adults, childrenAges }` | Osama turns selection into per-room allocations. Verify the complete selection-to-booking journey after the owner PRs are integrated |
 | Gamila SeatSelector; Ismail | Verified booking/segment/cabin context, eligible passengers and selection-change/refresh callbacks | Gamila builds FLT-28 UI; Ismail supplies actual booking/seat mutation contracts and mounting. Exact props and conflict/retry behavior remain joint acceptance items |
 | Ismail steps/timer; Osama, Hicham | `BookingStepper` step model; `HoldTimer` server expiry and expiry callback | Presentation only: countdown does not release stock or confirm payment; consumers retain separate domain API contracts |
 | Ismail/Osama held records; Hicham checkout | `Checkout({ type: 'flight' \| 'hotel' \| 'flight-change', bookingId })`, plus server expiry/status refresh contract | Ordinary IDs are `flightBookingId`/`hotelBookingId`; for `flight-change`, `bookingId` is the change-record ID. Checkout re-fetches owned policies/amount/status and creates no duplicate hold |
@@ -185,6 +186,26 @@ When both surfaces are available, verify one-way and round-trip submissions
 from home, URL restoration after reload, and direct dashboard access with an
 airline moderator and with the wrong role.
 
+### Hotel search on the home page
+
+Lama confirmed the home variant starts with empty dates and destination and
+defaults to one guest and one room. Submitting navigates to `/hotels` with the
+selected city or country, check-in, check-out, guests and rooms in the URL.
+The results page loads the matching hotels. In PR #135 the named export is in
+`@/features/hotels/hotel-search/HotelSearch` and the optional prefill prop is
+`initialCriteria`. Verify the final export after PR #134 and PR #135 are merged.
+Keep the hotel moderator's current workspace destination until the owner page
+at `/moderator/hotel` is available and its role check passes.
+[Lama's reply in issue #127](https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/issues/127#issuecomment-7141591556)
+
+### Flight selection and the booking hub
+
+Ismail accepted Gamila's `/bookings/flights/new?selection=...` contract in issue
+#131. Add the traveler Bookings link after PR #139 supplies the hub. The seat
+selector displays and updates selection; the booking owner saves both flight
+segments together so editing one does not erase the other's seats.
+[Flight booking handoff](https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/issues/131)
+
 ## Open integration decisions
 
 | Decision or gap | Responsible parties | State |
@@ -193,6 +214,6 @@ airline moderator and with the wrong role.
 | Seat selection and moderator replies | Gamila-Ismail; Lama-Osama | Corrected frontend leads are Gamila for FLT-28 and Lama for HTL-26; backend owners stay unchanged |
 | Provider creation and direct moderation | Arwa with Gamila/Lama and content owners | `/admin/providers` and `/admin/content` belong to Arwa; domain forms/adapters and permitted content navigation are supplied by their owners |
 | Notification deep-links | Arwa + affected feature owners | Backend `NotificationDto` has no target ID/href; do not invent links from message text |
-| Landing flight/hotel/trip/blog widgets | Gamila, Lama, Kiki, Hicham + Malak | Gamila confirmed the flight interface above. Check for its implementation and the remaining producer exports in [issue #127](https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/issues/127) |
+| Landing flight/hotel/trip/blog widgets | Gamila, Lama, Kiki, Hicham + Malak | Flight and hotel contracts are recorded above. Check for the merged implementations and the remaining itinerary and story exports in [issue #127](https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/issues/127) |
 | Role destination domain pages | Arwa, Gamila, Lama | Owners confirm their dashboards are ready before their routes are promoted to login destinations. Tracked in issue #127 |
 | Shared contract changes | Malak + all consumers | Written PR note required before consumers migrate |

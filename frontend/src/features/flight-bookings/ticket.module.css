@@ -1,0 +1,81 @@
+/* The boarding-pass card. Colors, radii and spacing come from the shared tokens in globals.css. */
+.ticket {
+  position: relative;
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  background: var(--surface-card);
+}
+
+.ticket::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 1;
+  height: 3px;
+  background: var(--brand-sand);
+}
+
+.route { padding: 24px; }
+
+.stub {
+  position: relative;
+  padding: 16px 24px 20px;
+  border-top: 2px dashed var(--border-subtle);
+  background: var(--surface-canvas);
+}
+
+/* The two punched notches where the stub tears off. */
+.stub::before,
+.stub::after {
+  content: "";
+  position: absolute;
+  top: -11px;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 50%;
+  background: var(--surface-canvas);
+}
+.stub::before { left: -11px; }
+.stub::after { right: -11px; }
+
+.line {
+  position: relative;
+  height: 2px;
+  background: linear-gradient(90deg, var(--brand-primary) 0 100%);
+}
+.line::before,
+.line::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--brand-primary);
+  border-radius: 50%;
+  background: var(--surface-card);
+  transform: translateY(-50%);
+}
+.line::before { left: 0; }
+.line::after { right: 0; }
+
+@media (min-width: 768px) {
+  .ticket { grid-template-columns: minmax(0, 1fr) 208px; }
+  .route { padding: 32px; }
+  .stub {
+    display: grid;
+    align-content: center;
+    padding: 24px;
+    border-top: 0;
+    border-left: 2px dashed var(--border-subtle);
+  }
+  .stub::before { top: -11px; left: -11px; }
+  .stub::after { top: auto; right: auto; bottom: -11px; left: -11px; }
+}
+
+@media print {
+  .ticket { break-inside: avoid; }
+  .stub::before, .stub::after { display: none; }
+}

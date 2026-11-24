@@ -237,6 +237,25 @@ describe('Hotels E2E', { concurrency: false }, () => {
     });
   });
 
+  describe('My own hotel - HTL-01 (GET /hotels/me)', () => {
+    it('lets a hotel moderator discover their own assigned hotel', async () => {
+      const response = await http().get('/api/hotels/me').set('Cookie', moderatorCookie).expect(200);
+      assert.equal(response.body._id, hotelId);
+      assert.equal(response.body.name, 'Nile Grand Hotel');
+    });
+
+    it('rejects a moderator with no hotel assignment at all', async () => {
+      const otherModerator = await login('no-hotel-moderator@example.com', UserRole.HOTEL_MODERATOR);
+      await http().get('/api/hotels/me').set('Cookie', otherModerator).expect(403);
+    });
+
+    it('requires an authenticated hotel moderator', async () => {
+      await http().get('/api/hotels/me').expect(401);
+      const ordinaryUser = await login('plain-user@example.com');
+      await http().get('/api/hotels/me').set('Cookie', ordinaryUser).expect(403);
+    });
+  });
+
   describe('Rooms - HTL-03, HTL-05, HTL-06', () => {
     async function createRoom(overrides: Partial<{ name: string; capacity: number; pricePerNight: number }> = {}) {
       const response = await http()
@@ -279,6 +298,23 @@ describe('Hotels E2E', { concurrency: false }, () => {
         .set('Cookie', ordinaryUser)
         .send({ type: 'Standard', beds: 1, name: 'x', capacity: 1, pricePerNight: 1 })
         .expect(403);
+    });
+
+    it('lists the moderator\'s own rooms, active and inactive, in name order', async () => {
+      await createRoom({ name: 'Zebra Room' });
+      const inactive = await createRoom({ name: 'Ardvark Room' });
+      await http().patch(`/api/hotels/${hotelId}/rooms/${inactive._id}`).set('Cookie', moderatorCookie).send({ isActive: false }).expect(200);
+
+      const response = await http().get(`/api/hotels/${hotelId}/rooms`).set('Cookie', moderatorCookie).expect(200);
+      assert.equal(response.body.total, 2);
+      assert.equal(response.body.items.length, 2);
+      assert.deepEqual(response.body.items.map((room: { name: string }) => room.name), ['Ardvark Room', 'Zebra Room']);
+      assert.equal(response.body.items.find((room: { name: string }) => room.name === 'Ardvark Room').isActive, false);
+    });
+
+    it('rejects listing rooms for another moderator\'s hotel', async () => {
+      const otherModerator = await login('other-hotel-moderator@example.com', UserRole.HOTEL_MODERATOR);
+      await http().get(`/api/hotels/${hotelId}/rooms`).set('Cookie', otherModerator).expect(403);
     });
 
     it('updates a room of the moderator\'s own hotel', async () => {
