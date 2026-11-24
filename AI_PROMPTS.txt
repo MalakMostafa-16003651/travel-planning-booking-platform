@@ -205,3 +205,11 @@ Tool: OpenAI Codex desktop app with delegated profile, email and shared UI work/
 Prompt summary: Start Malak's M2 assignment from the optimized split and M1 contracts. Keep progress visible, use one PR and merge at the end of the session. Coordinate needed teammate exports through a handoff.
 Use: Implemented registration, editable profile and deactivation, email verification/resend, password recovery, shared controls, account navigation and the role-aware home shell using actual M1 APIs. Preserved internal sign-in return and guarded stale profile writes after account switches. Posted GitHub issue #127 for feature exports, bell/role destinations and shared test email/booking adoption. PR #128 groups all work. Both production builds and typecheck passed. 25 production-browser cases passed in the full run, and the corrected unknown-role noindex check passed in a focused rerun. Local Mongo and synthetic mail were used. See docs/m2/VALIDATION.md.
 ================================================
+
+================================================
+Date: 2026-11-24
+Student: 16003651 (Malak, Person 1)
+Tool: OpenAI Codex desktop app
+Prompt summary: Catch up on new M2 repository work and handoff replies, answer pending integration questions, and advance Malak's assignment.
+Use: Checked open PRs and handoffs against the M2 references. Fixed the shared CSS cascade in issue #137 and verified the production build and button styles in Chrome at 360 and 1440 px. Recorded the hotel search and flight booking contracts. Posted a focused flight price and selection check in issue #132. Owner PRs still supply the home widgets and traveler Bookings destination.
+================================================
