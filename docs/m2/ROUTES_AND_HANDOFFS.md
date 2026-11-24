@@ -141,7 +141,8 @@ for another person's component.
 | Malak header; Arwa notification bell | Implemented `AppHeader({ accountSlot?: ReactNode, notificationSlot?: ReactNode })` | Account UI consumes shared session state; Arwa owns count/list/read state and mounts one bell in the slot. There is no `user` prop |
 | Malak email eligibility; Ismail, Osama and Hicham | `BookingEmailGate({ children, returnTo })`, `isEmailVerificationRequiredError(error)` and `verificationPath(returnTo)` from `@/features/auth/email-verification` | Mount around hold/payment actions and link back from an eligibility rejection. Each owner proves the live gate in their flow |
 | Arwa DataTable/Pagination; list owners | Column definitions, actual `{ items, page, pageSize, total }` or endpoint-specific envelope, URL/filter state and page-change callback | Arwa exports exact prop types with consumers; keep server page size 10 and do not slice one API page to fake pagination |
-| Gamila FlightSearch; Malak, Ismail, Kiki | `FlightSearch({ initialQuery?, onSelect? })`; selection `{ segments: [{ flightId, cabinId }], adults, children, infants }` | Gamila exports actual query type; Ismail validates one/two segments against hold DTO; Kiki confirms airport/date prefills |
+| Gamila FlightSearch; Malak | `<FlightSearch variant="home" />` from `@/features/flights/flight-search` | Gamila confirmed the home interface. Mount it in `HomeContent` once her export reaches `develop` |
+| Gamila flight search and results; Ismail, Kiki | `initialCriteria` prefills search. Flight and cabin selection uses `{ segments: [{ flightId, cabinId }], adults, children, infants }` | Confirm the exported types with Gamila. Ismail validates one/two segments against the hold DTO and Kiki checks airport/date prefills |
 | Lama HotelSearch; Malak, Osama, Kiki | `HotelSearch({ initialQuery?, onSelect? })`; selection `{ hotelId, roomIds, checkIn, checkOut, adults, childrenAges }` | Lama exports query type; Osama turns selection into per-room allocations; Kiki sets checkout to day after the group ends |
 | Gamila SeatSelector; Ismail | Verified booking/segment/cabin context, eligible passengers and selection-change/refresh callbacks | Gamila builds FLT-28 UI; Ismail supplies actual booking/seat mutation contracts and mounting. Exact props and conflict/retry behavior remain joint acceptance items |
 | Ismail steps/timer; Osama, Hicham | `BookingStepper` step model; `HoldTimer` server expiry and expiry callback | Presentation only: countdown does not release stock or confirm payment; consumers retain separate domain API contracts |
@@ -156,12 +157,33 @@ for another person's component.
 | Kiki itinerary picker/preview; Hicham | `ItineraryPicker({ value?: string, onChange })` and visibility-safe preview data | Kiki supplies eligible owned/public entries and invalidation on privacy/removal; Hicham submits actual attachment field |
 | Gamila/Lama provider-create forms and adapters; Arwa | Caller role/provider context and completion/error/invalidation callbacks, with actual create DTOs owned by each domain | Arwa owns `/admin/providers` and host behavior; do not create a second domain form or shared admin route. Provider deactivation and moderator suspension remain distinct operations |
 
-`initialQuery` must preserve backend query names and URL filter state, not a second
-search implementation. Holds are created only by Ismail/Osama. Hicham accepts
+Search prefills preserve backend query names and URL filter state. Ismail and
+Osama create holds. Hicham accepts
 policies before payment and waits for webhook-backed status. `flight-change` is
 already a backend payment type and is included in the optimized baseline checkout
 contract; Ismail/Hicham still need to agree its exact exported props, record-ID
 handoff, expiry and equal/lower/higher-fare recovery behavior before integration.
+
+### Flight search on the home page
+
+Gamila confirmed that home search starts with blank airports and dates, one-way
+selected, one adult and no cabin selection. Submitting navigates to `/flights`
+with `departureAirportCode`, `arrivalAirportCode`, `departureDate`, `roundTrip`,
+`adults`, `children`, `infants`, optional `cabinClass`, and `returnDate` for
+round trips. The results page reads the URL, restores the form with
+`initialCriteria`, and makes the search request. Gamila also confirmed that
+`FlightCard` will be available from the same folder for itinerary reuse.
+[Gamila's reply in issue #127](https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/issues/127#issuecomment-7085410702)
+
+On 24 November, `develop` contains `GET /api/flights/mine` and flight pagination
+with `totalPages`. The planned frontend export and `/moderator/airline` page
+are pending. Gamila is targeting 27 November for the dashboard. The current
+airline sign-in lands at `/workspace/airline`. Switch that destination once the
+owner page is available on `develop` and its access check passes.
+
+When both surfaces are available, verify one-way and round-trip submissions
+from home, URL restoration after reload, and direct dashboard access with an
+airline moderator and with the wrong role.
 
 ## Open integration decisions
 
@@ -171,6 +193,6 @@ handoff, expiry and equal/lower/higher-fare recovery behavior before integration
 | Seat selection and moderator replies | Gamila-Ismail; Lama-Osama | Corrected frontend leads are Gamila for FLT-28 and Lama for HTL-26; backend owners stay unchanged |
 | Provider creation and direct moderation | Arwa with Gamila/Lama and content owners | `/admin/providers` and `/admin/content` belong to Arwa; domain forms/adapters and permitted content navigation are supplied by their owners |
 | Notification deep-links | Arwa + affected feature owners | Backend `NotificationDto` has no target ID/href; do not invent links from message text |
-| Landing flight/hotel/trip/blog widgets | Gamila, Lama, Kiki, Hicham + Malak | `HomeContent` accepts `flightSearch`, `hotelSearch`, `itineraries` and `stories`. Producer exports requested in [issue #127](https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/issues/127) |
+| Landing flight/hotel/trip/blog widgets | Gamila, Lama, Kiki, Hicham + Malak | Gamila confirmed the flight interface above. Check for its implementation and the remaining producer exports in [issue #127](https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/issues/127) |
 | Role destination domain pages | Arwa, Gamila, Lama | Owners confirm their dashboards are ready before their routes are promoted to login destinations. Tracked in issue #127 |
 | Shared contract changes | Malak + all consumers | Written PR note required before consumers migrate |
