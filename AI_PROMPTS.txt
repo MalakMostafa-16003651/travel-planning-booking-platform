@@ -267,3 +267,35 @@ API, then drove the actual browser flow end to end (destination dropdown from re
 availability on the card, empty state, 375px/1024px layouts). `npm run typecheck`
 and `npm run build` pass clean on both PRs; no test/debug files committed.
 ================================================
+
+================================================
+Date: 2026-11-24
+Student: 16002622 (Lama, Person 5)
+Tool: Claude Code (model: Claude Sonnet 5, via the Claude desktop app)
+Related requirements: HTL-02, HTL-15, HTL-26 (read side only)
+
+Prompt summary:
+Continue straight into the hotel detail page and room selection, per the plan already
+agreed with the student.
+
+How the output was used:
+PR #136 (feature/HTL-02-15-hotel-detail-rooms, stacked on #135/#134): the /hotels/[id]
+page (PhotoGallery, ReviewsSection, RoomSelector, StayCheckForm), matching the backend's
+actual getDetails() response shape exactly. RoomSelector produces the agreed
+HotelSelection JSON (hotelId, roomIds, checkIn, checkOut, adults, childrenAges) for
+Osama's /bookings/hotels/new, including an adults/children-ages "who's staying" input
+since that composition isn't captured anywhere earlier in the flow.
+Found a real, previously-unknown site-wide bug while testing in the browser: globals.css's
+unlayered `a { color }` rule beats every Tailwind utility class on an <a> by the CSS
+Cascade Layers spec, so any Link-as-button with text-white renders invisible text.
+Diagnosed via getComputedStyle and the actual stylesheet rule, not a guess. Worked around
+locally (!text-white on the one affected Link) rather than editing Malak's globals.css,
+and filed issue #137 with the root cause and suggested fix (wrap base styles in @layer
+base), since it will also hit Gamila's identical pattern in #130.
+Verified against a real backend again (same local-MongoDB approach as the prior session):
+created a hotel with two rooms, cancellation tiers and an uploaded photo, then drove the
+full flow - profile/photos/amenities/policy match the real data, room totals compute
+correctly, the booking-link JSON matches the agreed contract exactly, the no-dates path
+shows only the check-availability form, and an unknown hotel ID 404s through the shared
+not-found page. `npm run typecheck`/`build` pass clean; no test files committed.
+================================================
