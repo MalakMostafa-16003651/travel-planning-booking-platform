@@ -315,3 +315,17 @@ delete, accessible reorder, city groups, visibility), reusing the shared compone
 tested in Chromium against the real backend (4/4). Details: docs/work-logs/16001313.md,
 entry of 2026-11-24, and docs/m2/ITINERARIES.md.
 ================================================
+Date: 2026-11-24
+Student: 16001313 (Person 7)
+Tool: Claude Code (Anthropic)
+Related Requirement: ITN-09, ITN-10, ITN-12, ITN-14, ITN-16, ITN-18 (M2 frontend)
+
+Prompt:
+yes please   (continue with slice 2: activities and budgets)
+
+How the output was used:
+Activities with photos, budget entries, intercity transport and a backend-converted budget
+side panel (currency choice, rate date, stale and unavailable states), plus budget and
+photos in the read view. Browser suite on the real backend 5/5. Details:
+docs/work-logs/16001313.md (slice 2) and docs/m2/ITINERARIES.md.
+================================================

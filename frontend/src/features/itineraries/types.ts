@@ -143,3 +143,23 @@ export const ITINERARY_LIMITS = {
   dayCity: 100,
   dayNotes: 2000,
 } as const;
+
+export type CategoryTotals = Record<BudgetCategory, number>;
+
+/** ITN-14/ITN-18: every converted figure is in `currency`, major units, rounded to 2 decimals. */
+export interface BudgetSummary {
+  itineraryId: string;
+  currency: string;
+  totals: { categories: CategoryTotals; daily: number; transport: number; grandTotal: number };
+  byDay: { dayId: string; dayNumber: number; date: string; city: string; categories: CategoryTotals; transport: number; total: number }[];
+  byCity: { city: string; countryCode?: string; firstDayNumber: number; lastDayNumber: number; total: number }[];
+  transportCosts: { transportCostId: string; fromCity: string; toCity: string; mode: TransportMode; amount: number; currency: string; convertedAmount: number }[];
+  linkedBookings?: { linkedBookingId: string; type: 'FLIGHT' | 'HOTEL'; dayId: string; status: string | null; countsInBudget: boolean; label?: string; amount?: number; currency?: string; convertedAmount: number }[];
+  originalTotals: { currency: string; amount: number }[];
+  rateDate: string | null;
+  ratesStale: boolean;
+}
+
+export const BUDGET_CATEGORIES: BudgetCategory[] = ['FOOD', 'ACCOMMODATION', 'ACTIVITIES', 'LOCAL_TRANSPORT'];
+export const TRANSPORT_MODES: TransportMode[] = ['FLIGHT', 'TRAIN', 'BUS', 'CAR', 'FERRY', 'OTHER'];
+export const MAX_ACTIVITY_IMAGES = 5;

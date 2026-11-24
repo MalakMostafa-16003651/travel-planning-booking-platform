@@ -76,12 +76,12 @@ test('create validates, then days are added, grouped, reordered and deleted with
   // ITN-09: consecutive Cairo days form one group.
   await expect(groupHeadings(page)).toHaveText(['Cairo', 'Paris']);
   await expect(page.getByRole('main').getByText('Days 1–2 · 2 days')).toBeVisible();
-  await expect(page.getByRole('main').getByText('Day 3 · Fri 12 Mar')).toBeVisible();
+  await expect(page.getByRole('list', { name: 'Itinerary days grouped by city' }).getByText('Day 3 · Fri 12 Mar')).toBeVisible();
 
   // ITN-08 with the accessible buttons: Paris moves to day 2, splitting Cairo into two stops.
   await page.getByRole('button', { name: 'Move day 3 earlier' }).click();
   await expect(groupHeadings(page)).toHaveText(['Cairo', 'Paris', 'Cairo']);
-  await expect(page.getByRole('main').getByText('Day 2 · Thu 11 Mar')).toBeVisible();
+  await expect(page.getByRole('list', { name: 'Itinerary days grouped by city' }).getByText('Day 2 · Thu 11 Mar')).toBeVisible();
 
   // ITN-05: edit a day's notes.
   await page.getByRole('button', { name: 'Edit day 2' }).click();
@@ -102,7 +102,7 @@ test('create validates, then days are added, grouped, reordered and deleted with
   await page.getByLabel('Start date').fill('2027-04-01');
   await page.getByRole('button', { name: 'Save details' }).click();
   await expect(page.getByRole('main').getByText('Trip details saved.')).toBeVisible();
-  await expect(page.getByRole('main').getByText('Day 2 · Fri 2 Apr')).toBeVisible();
+  await expect(page.getByRole('list', { name: 'Itinerary days grouped by city' }).getByText('Day 2 · Fri 2 Apr')).toBeVisible();
 
   // ITN-03: the list shows it, and the read view matches.
   await page.goto('/itineraries');
@@ -158,10 +158,137 @@ test('the editor is usable at 360, 768, 1024 and 1440 px without page-wide overf
   await createTrip(page, 'Responsive check', ['Egypt', 'United Arab Emirates']);
   await addDay(page, 'Cairo');
   await addDay(page, 'Dubai');
+  await page.getByText('Activities and budget for day 1').click();
+  await page.getByRole('button', { name: 'Add activity to day 1' }).click();
+  await page.getByRole('button', { name: 'Add budget entry to day 1' }).click();
   for (const width of [360, 768, 1024, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(overflow, `horizontal overflow at ${width}px`).toBeLessThanOrEqual(0);
     await page.screenshot({ path: `test-results/itineraries/editor-${width}.png`, fullPage: true });
   }
+});
+
+// ---------------------------------------------------------------- slice 2: ITN-09/10/12/14/16/18
+
+// A real 1x1 PNG: the backend checks the file content, not only the name.
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==', 'base64');
+
+const grandTotal = (page: Page) => page.getByTestId('grand-total');
+
+test('activities with photos, budget entries and transport feed backend-converted totals', async ({ page, browser }) => {
+  await newTraveler(page, 'Budget Owner');
+  await fixture('rates', { base: 'USD', rates: JSON.stringify({ EGP: 50, EUR: 0.9, GBP: 0.8 }) });
+  const id = await createTrip(page, 'Cairo on a budget', ['Egypt']);
+  await addDay(page, 'Cairo');
+  await addDay(page, 'Cairo');
+  await expect(grandTotal(page)).toHaveText('$0.00');
+
+  // ITN-10: activity with the city's official attraction, times and a cost.
+  await page.getByText('Activities and budget for day 1').click();
+  const day1 = page.getByRole('region', { name: 'Activities for day 1' });
+  await day1.getByRole('button', { name: 'Add activity to day 1' }).click();
+  await day1.getByLabel('Activity title').fill('Pyramids at sunrise');
+  await expect(day1.getByLabel('Attraction (optional)').locator('option')).toHaveText(['None', 'Giza Pyramids and Sphinx']);
+  await day1.getByLabel('Attraction (optional)').selectOption({ label: 'Giza Pyramids and Sphinx' });
+  await day1.getByLabel('Start time (optional)').fill('09:00');
+  await day1.getByLabel('End time (optional)').fill('08:00');
+  await day1.getByLabel('Cost (optional)').fill('25.5');
+  await day1.getByRole('button', { name: 'Add activity' }).click();
+  await expect(day1.getByText('End time cannot be before the start time.')).toBeVisible();
+  await day1.getByLabel('End time (optional)').fill('12:00');
+  await day1.getByRole('button', { name: 'Add activity' }).click();
+  await expect(day1.getByText('Pyramids at sunrise', { exact: true })).toBeVisible();
+  await expect(day1.getByText('09:00–12:00')).toBeVisible();
+  await expect(grandTotal(page)).toHaveText('$25.50');
+
+  // ITN-12/GEN-08: upload with progress, then remove; a non-image is refused before upload.
+  const photos = day1.getByLabel('Photos for Pyramids at sunrise');
+  await photos.setInputFiles({ name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('hello') });
+  await expect(day1.getByText('Only JPG or PNG images are accepted.')).toBeVisible();
+  await photos.setInputFiles({ name: 'pyramids.png', mimeType: 'image/png', buffer: PNG });
+  await expect(day1.getByRole('img', { name: 'Photos for Pyramids at sunrise' })).toHaveCount(1);
+  await expect(day1.getByText('1 / 5')).toBeVisible();
+
+  // ITN-14: entries in two currencies on two days.
+  const budget1 = page.getByRole('region', { name: 'Budget for day 1' });
+  await budget1.getByRole('button', { name: 'Add budget entry to day 1' }).click();
+  await budget1.getByLabel('Amount').fill('-3');
+  await budget1.getByRole('button', { name: 'Add entry' }).click();
+  await expect(budget1.getByText('Enter a non-negative amount with at most two decimals.')).toBeVisible();
+  await budget1.getByLabel('Amount').fill('500');
+  await budget1.getByLabel('Currency').selectOption('EGP');
+  await budget1.getByLabel('Description (optional)').fill('Koshary dinners');
+  await budget1.getByRole('button', { name: 'Add entry' }).click();
+  await expect(budget1.getByText('Food · EGP 500.00')).toBeVisible();
+
+  await page.getByText('Activities and budget for day 2').click();
+  const budget2 = page.getByRole('region', { name: 'Budget for day 2' });
+  await budget2.getByRole('button', { name: 'Add budget entry to day 2' }).click();
+  await budget2.getByLabel('Category').selectOption({ label: 'Accommodation' });
+  await budget2.getByLabel('Amount').fill('100');
+  await budget2.getByRole('button', { name: 'Add entry' }).click();
+  await expect(budget2.getByText('Accommodation · $100.00')).toBeVisible();
+
+  // ITN-16: any catalog city, on a travel day.
+  const transport = page.getByRole('region', { name: 'Intercity transport' });
+  await transport.getByRole('button', { name: 'Add intercity transport' }).click();
+  await transport.getByLabel('From city').selectOption('London');
+  await transport.getByLabel('To city').selectOption('Cairo');
+  await transport.getByLabel('Mode').selectOption({ label: 'Flight' });
+  await transport.getByLabel('Travel day').selectOption({ index: 1 });
+  await transport.getByLabel('Amount').fill('300');
+  await transport.getByRole('button', { name: 'Add transport' }).click();
+  await expect(page.getByRole('main').getByText('London → Cairo · Flight · $300.00')).toBeVisible();
+
+  // ITN-14/18 totals come from the backend: 25.50 + 500 EGP (=10) + 100 + 300.
+  await expect(grandTotal(page)).toHaveText('$435.50');
+  await expect(page.getByRole('main').getByText('Subtotal $435.50')).toBeVisible();
+  await expect(page.getByRole('main').getByText(/Converted with rates from/)).toBeVisible();
+
+  // ITN-10: clearing the optional cost and times removes them from the totals.
+  await day1.getByRole('button', { name: 'Edit activity Pyramids at sunrise' }).click();
+  await day1.getByLabel('Cost (optional)').fill('');
+  await day1.getByLabel('Start time (optional)').fill('');
+  await day1.getByLabel('End time (optional)').fill('');
+  await day1.getByRole('button', { name: 'Save activity' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Activity saved.' })).toBeVisible();
+  await expect(day1.getByText('09:00–12:00')).toHaveCount(0);
+  await expect(grandTotal(page)).toHaveText('$410.00');
+
+  // ITN-18: another display currency; a stale cache is flagged; no rates at all is a clear error.
+  await fixture('rates', { base: 'EGP', rates: JSON.stringify({ USD: 0.02 }) });
+  await page.getByLabel('Show totals in').selectOption('EGP');
+  await expect(grandTotal(page)).toHaveText('EGP 20,500.00');
+  await fixture('rates', { base: 'EUR', rates: JSON.stringify({ USD: 1.25, EGP: 62.5 }), stale: 'true' });
+  await page.getByLabel('Show totals in').selectOption('EUR');
+  await expect(grandTotal(page)).toHaveText('€328.00');
+  await expect(page.getByRole('note')).toContainText('last saved rates were used');
+  await page.getByLabel('Show totals in').selectOption('JPY');
+  await expect(page.getByRole('main').getByText(/Exchange rates are temporarily unavailable/)).toBeVisible();
+  await page.getByLabel('Show totals in').selectOption('USD');
+  await expect(grandTotal(page)).toHaveText('$410.00');
+
+  // Deleting an entry recalculates.
+  await budget2.getByRole('button', { name: 'Delete entry' }).click();
+  await page.getByRole('dialog', { name: 'Delete this budget entry?' }).getByRole('button', { name: 'Delete entry' }).click();
+  await expect(grandTotal(page)).toHaveText('$310.00');
+
+  // ITN-21 read-only view for another traveler: activities, photo, entries and the same totals.
+  await page.getByRole('button', { name: 'Make public' }).click();
+  await page.getByRole('dialog', { name: 'Make this itinerary public?' }).getByRole('button', { name: 'Make public' }).click();
+  await expect(page.getByRole('main').getByText('Itinerary is now public.')).toBeVisible();
+  const other = await browser.newPage();
+  await newTraveler(other, 'Curious Reader');
+  await other.goto(`/itineraries/${id}`);
+  await expect(other.getByRole('main').getByText('Pyramids at sunrise', { exact: true })).toBeVisible();
+  await expect(other.getByRole('img', { name: 'Pyramids at sunrise, photo 1' })).toBeVisible();
+  await expect(other.getByRole('main').getByText('Koshary dinners')).toBeVisible();
+  await expect(grandTotal(other)).toHaveText('$310.00');
+  await expect(other.getByRole('button', { name: /Delete|Edit/ })).toHaveCount(0);
+  await other.close();
+
+  // Remove the photo as the owner.
+  await day1.getByRole('button', { name: 'Remove photos for pyramids at sunrise' }).click();
+  await expect(day1.getByText('0 / 5')).toBeVisible();
 });

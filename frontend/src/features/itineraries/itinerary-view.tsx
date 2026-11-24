@@ -3,8 +3,8 @@ import { Clock, MapPin } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
-import { formatMoneyMajorUnits } from '@/lib/format/money';
-import { formatDateRange, formatDayDate, pluralize, visibilityLabels } from './format';
+import { BudgetSummaryPanel } from './budget-summary';
+import { categoryLabels, formatDateRange, formatDayDate, money, pluralize, transportLabels, visibilityLabels } from './format';
 import type { Activity, Itinerary } from './types';
 
 /**
@@ -63,6 +63,19 @@ export function ItineraryView({ itinerary, countryNames, isOwner, actions }: {
                         {day.activities.length === 0
                           ? <p className="m-0 text-sm text-muted">No activities planned.</p>
                           : <ul className="m-0 grid list-none gap-3 p-0">{day.activities.map(activity => <ActivityItem key={activity.activityId} activity={activity} />)}</ul>}
+                        {day.budgets.length > 0 && (
+                          <div className="grid gap-1">
+                            <h4 className="m-0 text-sm font-semibold text-ink">Budget entries</h4>
+                            <ul className="m-0 grid list-none gap-1 p-0 text-sm">
+                              {day.budgets.map(entry => (
+                                <li key={entry.budgetId} className="flex flex-wrap justify-between gap-2">
+                                  <span>{categoryLabels[entry.category]}{entry.description && <span className="text-muted"> · {entry.description}</span>}</span>
+                                  <span>{money(entry.amount, entry.currency)}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
                       </Card>
                     </li>
                   );
@@ -72,6 +85,22 @@ export function ItineraryView({ itinerary, countryNames, isOwner, actions }: {
           ))}
         </ol>
       )}
+
+      {itinerary.transportCosts.length > 0 && (
+        <section aria-labelledby="view-transport" className="grid gap-2">
+          <h2 id="view-transport" className="m-0 text-xl">Intercity transport</h2>
+          <ul className="m-0 grid list-none gap-2 p-0">
+            {itinerary.transportCosts.map(cost => (
+              <li key={cost.transportCostId} className="flex flex-wrap justify-between gap-2 rounded-control border border-border bg-card p-3 text-sm">
+                <span>{cost.fromCity} → {cost.toCity} · {transportLabels[cost.mode]}{cost.dayNumber ? ` · Day ${cost.dayNumber}` : ''}</span>
+                <span className="font-semibold">{money(cost.amount, cost.currency)}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {itinerary.days.length > 0 && <BudgetSummaryPanel itineraryId={itinerary.itineraryId} refreshKey={itinerary.updatedAt} />}
     </article>
   );
 }
@@ -84,9 +113,17 @@ function ActivityItem({ activity }: { activity: Activity }) {
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted">
         {time && <span className="inline-flex items-center gap-1"><Clock size={14} aria-hidden="true" />{time}</span>}
         {activity.location && <span className="inline-flex items-center gap-1"><MapPin size={14} aria-hidden="true" />{activity.location}</span>}
-        {activity.cost !== undefined && activity.currency && <span>{formatMoneyMajorUnits(activity.cost, activity.currency)}</span>}
+        {activity.cost !== undefined && activity.currency && <span>{money(activity.cost, activity.currency)}</span>}
       </div>
       {activity.description && <p className="m-0 whitespace-pre-line text-sm">{activity.description}</p>}
+      {activity.images.length > 0 && (
+        <div className="grid grid-cols-2 gap-2 pt-1 sm:grid-cols-5">
+          {activity.images.map((image, index) => (
+            // eslint-disable-next-line @next/next/no-img-element -- served by our own API with the itinerary's visibility rules
+            <img key={image.imageId} src={image.url} alt={`${activity.title}, photo ${index + 1}`} loading="lazy" className="aspect-[4/3] w-full rounded-control border border-border object-cover" />
+          ))}
+        </div>
+      )}
     </li>
   );
 }

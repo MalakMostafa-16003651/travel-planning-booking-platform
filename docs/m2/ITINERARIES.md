@@ -47,9 +47,24 @@ create validation; add/group/reorder/edit/delete days with date recalculation; s
 change; private/public/private access as a second traveler; owner-only edit; delete
 itinerary; no horizontal overflow at 360/768/1024/1440 (screenshots in ignored `test-results/`).
 
+## Slice 2 — activities, photos, budgets, transport and FX totals
+
+| Requirement | Where | Notes |
+| --- | --- | --- |
+| ITN-10 | day panel "Activities and budget for day N" → Activities | Title ≤120, optional time range (end not before start), location, official attraction limited to the day's city, optional cost + catalog currency. On edit an emptied cost sends `cost: null` (removed from totals); an emptied time sends `null` (the DTO rejects `""` for times). |
+| ITN-12, GEN-08 | photos under each activity | Lama's `MediaUploader` with the activity endpoint (`POST /activities/:id/images`, field `image`), JPG/PNG ≤5 MB, five per activity, progress and remove. Images load through the same-origin proxy with the itinerary's visibility. |
+| ITN-14 | day panel → Budget entries | Food/Accommodation/Activities/Local transport, non-negative, ≤2 decimals, catalog currency, description ≤500. |
+| ITN-16 | "Intercity transport" | Any official catalog city (backend rule), mode, amount/currency, required travel day, notes. |
+| ITN-18 | Budget side panel (editor) and read view | `GET /budget-summary` re-read after every saved change; "Show totals in" any catalog currency (default: viewer's preferred currency). Shows grand/category/daily/transport totals, per-day table, per-stop totals, amounts as entered, rate date, a stale-rate notice (`ratesStale`) and clear 503/422 errors with retry. No conversion happens in the browser. |
+| ITN-09 | city group headers | "Subtotal" from the summary's `byCity`, matched by the group's first day. |
+| ITN-21 (read part) | `/itineraries/[id]` | Public viewers see activities, photos, budget entries, transport and the budget panel; no edit controls. Linked bookings stay owner-only (backend). |
+
+Layout follows the team rule "day/city hierarchy and side budget": on ≥1024 px the budget is a sticky side column; on phones it stacks under the days.
+
+Browser proof (`tests-itineraries`, now 5/5): one journey adds an attraction activity (with time-order validation), uploads and removes a photo (non-image refused), adds EGP and USD entries and a London→Cairo flight, and checks the backend totals: $435.50, then $410.00 after clearing the activity cost/times, EGP 20,500.00 and €328.00 with the stale-rate notice, the 503 message for a currency with no rates, $310.00 after deleting an entry, and the same figures in a second traveler's read-only view. The harness replaces **only** the external FXRatesAPI client (always "down") and seeds the backend's own rate cache, so the real caching/fallback code runs.
+
 ## Remaining Person 7 slices
 
-1. Activities (ITN-10) with Lama's media uploader (ITN-12), budgets (ITN-14), transport (ITN-16), budget summary/FX with rate date and stale fallback (ITN-18), group subtotals (ITN-09).
-2. Public discovery `/explore/itineraries[/id]` and clone (ITN-21), home "Explore itineraries" slot, Osama's FavoriteButton and Arwa's ReportAction mounts, `ItineraryPicker`/`Preview` for Hicham (BLG-13).
-3. Travel reuse: ITN-25 hotel search for a city group (Lama's HotelSearch prefill) and ITN-26 flight search (Gamila's FlightSearch prefill).
-4. Bonuses: ITN-27 linked bookings (Ismail/Osama booking readers) and ITN-28 PDF/print. Note: `develop` has **no** itinerary PDF export endpoint; ITN-28 needs either a backend endpoint (Person 7 backend) or an authorized print view — decision pending.
+1. Public discovery `/explore/itineraries[/id]` and clone (ITN-21), home "Explore itineraries" slot, Osama's FavoriteButton and Arwa's ReportAction mounts, `ItineraryPicker`/`Preview` for Hicham (BLG-13).
+2. Travel reuse: ITN-25 hotel search for a city group (Lama's HotelSearch prefill) and ITN-26 flight search (Gamila's FlightSearch prefill).
+3. Bonuses: ITN-27 linked bookings (Ismail/Osama booking readers) and ITN-28 PDF. Correction to slice 1 notes: the backend **already has** `GET /api/itineraries/:itineraryId/pdf` (`backend/src/itinerary-exports`, PR #58), so ITN-28 is a frontend download/print action with progress and error states.

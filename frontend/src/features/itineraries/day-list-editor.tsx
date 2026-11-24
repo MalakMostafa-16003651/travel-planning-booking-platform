@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, type DragEvent, type FormEvent } from 'react';
+import { useMemo, useState, type DragEvent, type FormEvent, type ReactNode } from 'react';
 import { ArrowDown, ArrowUp, GripVertical } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -34,11 +34,15 @@ export interface DayActions {
  * same city, computed by the backend). Reordering has keyboard/screen-reader buttons; drag
  * and drop is only a pointer shortcut for the same request.
  */
-export function DayListEditor({ itinerary, cities, busy, actions }: {
+export function DayListEditor({ itinerary, cities, busy, actions, renderDayDetails, groupTotals = {} }: {
   itinerary: Itinerary;
   cities: City[];
   busy: boolean;
   actions: DayActions;
+  /** Activities/budget panel for one day (ITN-10/12/14). */
+  renderDayDetails?: (day: ItineraryDay) => ReactNode;
+  /** ITN-09: formatted backend subtotal per city group, keyed by its first day number. */
+  groupTotals?: Record<number, string>;
 }) {
   const allowedCities = useMemo(
     () => cities.filter(city => itinerary.countries.includes(city.countryCode)).sort((a, b) => a.name.localeCompare(b.name)),
@@ -81,6 +85,7 @@ export function DayListEditor({ itinerary, cities, busy, actions }: {
                 <p className="m-0 text-sm text-muted">
                   {group.dayCount === 1 ? `Day ${group.firstDayNumber}` : `Days ${group.firstDayNumber}–${group.lastDayNumber}`}
                   {' · '}{pluralize(group.dayCount, 'day')}{' · '}{formatDateRange(group.startDate, group.endDate)}
+                  {groupTotals[group.firstDayNumber] && <>{' · '}<span className="font-semibold text-ink">Subtotal {groupTotals[group.firstDayNumber]}</span></>}
                 </p>
               </div>
               <ol className="m-0 grid list-none gap-3 p-0">
@@ -111,6 +116,7 @@ export function DayListEditor({ itinerary, cities, busy, actions }: {
                           }}
                         />
                       ) : (
+                        <>
                         <DayRow
                           day={day}
                           busy={busy}
@@ -122,6 +128,15 @@ export function DayListEditor({ itinerary, cities, busy, actions }: {
                           onEdit={() => setEditing(day.dayId)}
                           onDelete={() => actions.remove(day.dayId)}
                         />
+                        {renderDayDetails && (
+                          <details className="mt-3 border-t border-border pt-3">
+                            <summary className="min-h-11 cursor-pointer py-2 text-sm font-semibold text-primary">
+                              Activities and budget for day {day.dayNumber} ({pluralize(day.activities.length, 'activity', 'activities')}, {pluralize(day.budgets.length, 'entry', 'entries')})
+                            </summary>
+                            <div className="grid gap-6 pt-3">{renderDayDetails(day)}</div>
+                          </details>
+                        )}
+                        </>
                       )}
                     </li>
                   );
@@ -181,7 +196,7 @@ function DayRow({ day, busy, isFirst, isLast, onDragStart, onDragEnd, onMove, on
       </span>
       <div className="min-w-0 flex-1">
         <p className="m-0 font-heading font-bold text-ink">Day {day.dayNumber} · {formatDayDate(day.date)}</p>
-        <p className="m-0 text-sm text-muted">{day.city}{contentCount > 0 && ` · ${pluralize(day.activities.length, 'activity', 'activities')}, ${pluralize(day.budgets.length, 'budget entry', 'budget entries')}`}</p>
+        <p className="m-0 text-sm text-muted">{day.city}</p>
         {day.notes && <p className="m-0 mt-2 whitespace-pre-line text-sm">{day.notes}</p>}
       </div>
       <div className="flex flex-wrap gap-2">

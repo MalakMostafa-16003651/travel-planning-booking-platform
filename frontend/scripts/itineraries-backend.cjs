@@ -58,9 +58,13 @@ async function main() {
   const { PasswordService } = backendRequire('./dist/auth/password.service.js');
   const { ReferenceDataService } = backendRequire('./dist/reference-data/reference-data.service.js');
   const { CurrenciesService } = backendRequire('./dist/currencies/currencies.service.js');
+  const { FxRatesClient, FxRatesUnavailableError } = backendRequire('./dist/itineraries/currency/fx-rates.client.js');
 
   const builder = Test.createTestingModule({ imports: [AppModule] });
   installMailFixture(backendRequire, builder);
+  // Only the external FXRatesAPI call is replaced: it is always "down", so conversions use the
+  // backend's real cache logic with rates seeded below (fresh today, or stale from yesterday).
+  builder.overrideProvider(FxRatesClient).useValue({ latest: async () => { throw new FxRatesUnavailableError('Provider disabled in the itinerary fixture'); } });
   const testing = await builder.compile();
   app = testing.createNestApplication({ rawBody: true, logger: false });
   configureApplication(app);
@@ -74,6 +78,16 @@ async function main() {
         passwordHash: await app.get(PasswordService).hash(PASSWORD),
       });
       return { email, password: PASSWORD };
+    },
+    /** Caches rates for `base`: units of each currency per one `base`, e.g. rates={"EGP":50}. */
+    async rates({ base, rates, stale = 'false' }) {
+      const fetchedAt = new Date(Date.now() - (stale === 'true' ? 2 * 86_400_000 : 0));
+      await connection.collection('exchangerates').updateOne(
+        { baseCurrency: base },
+        { $set: { rates: JSON.parse(rates), rateDate: new Date(`${fetchedAt.toISOString().slice(0, 10)}T00:00:00Z`), fetchedAt, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
+        { upsert: true },
+      );
+      return {};
     },
   };
 

@@ -10,11 +10,16 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { ErrorAlert } from '@/components/ui/error-alert';
 import { useDestinations } from '@/features/hotels/hotel-search/use-destinations';
 import { ApiError } from '@/lib/api/client';
+import { ActivityEditor } from './activity-editor';
 import * as api from './api';
+import { BudgetEditor } from './budget-editor';
+import { BudgetSummaryPanel } from './budget-summary';
 import { DayListEditor } from './day-list-editor';
-import { formatDateRange, pluralize, visibilityLabels } from './format';
+import { formatDateRange, money, pluralize, visibilityLabels } from './format';
 import { ItineraryForm } from './itinerary-form';
-import type { Itinerary } from './types';
+import { TransportEditor } from './transport-editor';
+import type { BudgetSummary, Itinerary } from './types';
+import { useItineraryCatalog } from './use-catalog';
 
 type SaveState = { kind: 'idle' } | { kind: 'saving' } | { kind: 'saved'; message: string } | { kind: 'error'; message: string; conflict: boolean };
 
@@ -39,6 +44,10 @@ export function ItineraryEditor({ initial }: { initial: Itinerary }) {
   const [itinerary, setItinerary] = useState(initial);
   const [state, setState] = useState<SaveState>({ kind: 'idle' });
   const [editingDetails, setEditingDetails] = useState(false);
+  const [summary, setSummary] = useState<BudgetSummary | null>(null);
+  const { currencies, attractions, error: currencyError } = useItineraryCatalog();
+  const groupTotals = Object.fromEntries((summary?.byCity ?? []).map(stop => [stop.firstDayNumber, money(stop.total, summary!.currency)]));
+  const cityIdOf = (name: string, countryCode?: string) => cities.find(city => city.name === name && (!countryCode || city.countryCode === countryCode))?.cityId;
   const running = useRef(false);
   const busy = state.kind === 'saving';
   const countryNames = Object.fromEntries(countries.map(country => [country.code, country.name]));
@@ -96,6 +105,7 @@ export function ItineraryEditor({ initial }: { initial: Itinerary }) {
         </div>
       )}
       {catalogError && <ErrorAlert title="City list unavailable" message={catalogError} />}
+      {currencyError && <ErrorAlert title="Currency list unavailable" message={currencyError} />}
 
       <Card className="grid gap-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -147,26 +157,59 @@ export function ItineraryEditor({ initial }: { initial: Itinerary }) {
         </div>
       </Card>
 
-      <section aria-labelledby="days-heading" className="grid gap-4">
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h2 id="days-heading" className="m-0 text-xl">Days</h2>
-          <p className="m-0 text-sm text-muted">{itinerary.days.length} of 60 days</p>
+      {/* Day/city hierarchy with a side budget on wide screens (team layout rule); stacked on phones. */}
+      <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(320px,380px)]">
+        <div className="grid min-w-0 gap-8">
+          <section aria-labelledby="days-heading" className="grid gap-4">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h2 id="days-heading" className="m-0 text-xl">Days</h2>
+              <p className="m-0 text-sm text-muted">{itinerary.days.length} of 60 days</p>
+            </div>
+            <DayListEditor
+              itinerary={itinerary}
+              cities={cities}
+              busy={busy}
+              actions={{
+                add: input => run(() => api.addDay(id, input), 'Day added.'),
+                update: (dayId, input) => run(() => api.updateDay(id, dayId, input), 'Day saved.'),
+                remove: async dayId => {
+                  const ok = await run(() => api.deleteDay(id, dayId), 'Day deleted. Later days and totals were recalculated.');
+                  if (!ok) throw new Error('The day could not be deleted. See the message on the page.');
+                },
+                reorder: (dayIds, announcement) => run(() => api.reorderDays(id, dayIds), announcement),
+              }}
+              groupTotals={groupTotals}
+              renderDayDetails={day => (
+                <>
+                  <ActivityEditor
+                    itineraryId={id}
+                    day={day}
+                    cityId={cityIdOf(day.city, day.countryCode)}
+                    attractions={attractions}
+                    currencies={currencies}
+                    defaultCurrency={itinerary.currency}
+                    busy={busy}
+                    mutate={run}
+                    apply={updated => { setItinerary(updated); setState({ kind: 'saved', message: 'Photos updated.' }); }}
+                  />
+                  <BudgetEditor itineraryId={id} day={day} currencies={currencies} defaultCurrency={itinerary.currency} busy={busy} mutate={run} />
+                </>
+              )}
+            />
+          </section>
+
+          <section aria-labelledby="transport-heading" className="grid gap-4">
+            <div>
+              <h2 id="transport-heading" className="m-0 text-xl">Intercity transport</h2>
+              <p className="m-0 mt-1 text-sm text-muted">Trains, flights or drives between cities. Each cost is counted on its travel day.</p>
+            </div>
+            <TransportEditor itinerary={itinerary} cities={cities} currencies={currencies} busy={busy} mutate={run} />
+          </section>
         </div>
-        <DayListEditor
-          itinerary={itinerary}
-          cities={cities}
-          busy={busy}
-          actions={{
-            add: input => run(() => api.addDay(id, input), 'Day added.'),
-            update: (dayId, input) => run(() => api.updateDay(id, dayId, input), 'Day saved.'),
-            remove: async dayId => {
-              const ok = await run(() => api.deleteDay(id, dayId), 'Day deleted. Later days and totals were recalculated.');
-              if (!ok) throw new Error('The day could not be deleted. See the message on the page.');
-            },
-            reorder: (dayIds, announcement) => run(() => api.reorderDays(id, dayIds), announcement),
-          }}
-        />
-      </section>
+        <aside className="min-w-0 lg:sticky lg:top-6" aria-label="Budget summary">
+          <BudgetSummaryPanel itineraryId={id} refreshKey={itinerary.updatedAt} onLoaded={setSummary} />
+        </aside>
+      </div>
 
       <Card className="grid gap-3 border-danger/40">
         <h2 className="m-0 text-xl">Delete itinerary</h2>
