@@ -205,3 +205,37 @@ Tool: OpenAI Codex desktop app with delegated profile, email and shared UI work/
 Prompt summary: Start Malak's M2 assignment from the optimized split and M1 contracts. Keep progress visible, use one PR and merge at the end of the session. Coordinate needed teammate exports through a handoff.
 Use: Implemented registration, editable profile and deactivation, email verification/resend, password recovery, shared controls, account navigation and the role-aware home shell using actual M1 APIs. Preserved internal sign-in return and guarded stale profile writes after account switches. Posted GitHub issue #127 for feature exports, bell/role destinations and shared test email/booking adoption. PR #128 groups all work. Both production builds and typecheck passed. 25 production-browser cases passed in the full run, and the corrected unknown-role noindex check passed in a focused rerun. Local Mongo and synthetic mail were used. See docs/m2/VALIDATION.md.
 ================================================
+
+================================================
+Date: 2026-11-24
+Student: 16002622 (Lama, Person 5)
+Tool: Claude Code (model: Claude Sonnet 5, via the Claude desktop app)
+Related requirements: GEN-08, hotel date-only controls (shared), HTL-11, HTL-12
+
+Prompt summary:
+Read the optimized 26-page M2 split and the repo's own docs/m2 coordination files
+(not supplied by me - already present in the repository from Malak's setup), confirm
+my assigned scope as Person 5 against them, then build my first slices: the shared
+image uploader/gallery, hotel date-only controls, and HotelSearch/HotelCard plus the
+/hotels discovery page.
+
+How the output was used:
+PR #134 (feature/GEN-08-media-upload-gallery): MediaUploader, a presentational
+upload/gallery component consumed by Gamila/Osama/Kiki/Hicham against their own
+endpoints, plus a new uploadFile() export in Malak's lib/api/client.ts (flagged for
+her review as a shared-file touch) and the hotel date-only helpers/controls
+(date-only.ts, date-only-input.tsx). PR #135 (feature/HTL-11-12-hotel-search-discovery,
+stacked on #134 since it needs the date controls): HotelSearch, HotelCard, HotelResults
+and the /hotels page, mirroring Gamila's merged FlightSearch/FlightResults pattern for
+consistency. Posted my HotelSearch export plan as a reply in issue #127 (Malak's
+existing handoff thread) instead of a side channel, per the team's request to use
+GitHub issues for cross-member handoffs.
+Verified against a real backend rather than fixtures: since the shared Atlas cluster
+was unreachable from this machine (DNS/SRV resolution failure, flagged in my #127
+reply), stood up a local in-memory MongoDB replica set, ran the existing seed
+scripts, created a test admin/hotel/moderator/room/availability through the real
+API, then drove the actual browser flow end to end (destination dropdown from real
+/api/cities+/api/countries, search navigation, live price/rating/amenities/
+availability on the card, empty state, 375px/1024px layouts). `npm run typecheck`
+and `npm run build` pass clean on both PRs; no test/debug files committed.
+================================================
