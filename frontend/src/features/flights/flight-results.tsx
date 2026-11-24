@@ -50,6 +50,10 @@ export function FlightResults({ criteria, page, sortBy, minPrice = '', maxPrice 
   const inbound = criteria.roundTrip ? current.inbound : null;
   const setOutbound = (s: Pick) => setPicked({ ...current, key: searchKey, outbound: s });
   const setInbound = (s: Pick) => setPicked({ ...current, key: searchKey, inbound: s });
+   // A new search starts with no selection, even if the user later returns to an earlier search.
+  useEffect(() => {
+    setPicked({ key: searchKey, outbound: null, inbound: null });
+  }, [searchKey]);
 
   const query = useMemo(() => {
     const p = new URLSearchParams(baseParams);
