@@ -237,6 +237,25 @@ describe('Hotels E2E', { concurrency: false }, () => {
     });
   });
 
+  describe('My own hotel - HTL-01 (GET /hotels/me)', () => {
+    it('lets a hotel moderator discover their own assigned hotel', async () => {
+      const response = await http().get('/api/hotels/me').set('Cookie', moderatorCookie).expect(200);
+      assert.equal(response.body._id, hotelId);
+      assert.equal(response.body.name, 'Nile Grand Hotel');
+    });
+
+    it('rejects a moderator with no hotel assignment at all', async () => {
+      const otherModerator = await login('no-hotel-moderator@example.com', UserRole.HOTEL_MODERATOR);
+      await http().get('/api/hotels/me').set('Cookie', otherModerator).expect(403);
+    });
+
+    it('requires an authenticated hotel moderator', async () => {
+      await http().get('/api/hotels/me').expect(401);
+      const ordinaryUser = await login('plain-user@example.com');
+      await http().get('/api/hotels/me').set('Cookie', ordinaryUser).expect(403);
+    });
+  });
+
   describe('Rooms - HTL-03, HTL-05, HTL-06', () => {
     async function createRoom(overrides: Partial<{ name: string; capacity: number; pricePerNight: number }> = {}) {
       const response = await http()

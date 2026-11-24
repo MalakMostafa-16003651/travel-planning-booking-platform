@@ -74,6 +74,18 @@ export class HotelsController {
     return this.hotels.search(query);
   }
 
+  @Get('me')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(UserRole.HOTEL_MODERATOR)
+  @ApiCookieAuth('accessToken')
+  @ApiOperation({ summary: 'HTL-01: view my assigned hotel (hotel moderator)' })
+  @ApiOkResponse({ description: "The moderator's assigned hotel", type: Object })
+  @ApiUnauthorizedResponse({ type: ApiErrorDto })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'Hotel moderator role and one assigned hotel are required.' })
+  me(@Req() req: AuthenticatedRequest): Promise<Hotel> {
+    return this.hotels.getMine(req.user!.userId);
+  }
+
   @Get(':id')
   @UseGuards(OptionalAuthGuard)
   @ApiOperation({

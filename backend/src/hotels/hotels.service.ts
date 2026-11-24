@@ -178,6 +178,16 @@ export class HotelsService {
     return {...hotel.toObject(),averageRating:stats?.averageRating??null,ratingCount:stats?.ratingCount??0};
   }
 
+  /**
+   * HTL-01: lets a hotel moderator discover their own hotel after login, mirroring the
+   * airlines module's GET /airlines/me (every other hotels route already needs an explicit
+   * :id, which the frontend has no way to learn without this).
+   */
+  async getMine(moderatorId: string): Promise<Hotel> {
+    const assignedId = await this.getAssignedHotelId(moderatorId);
+    return this.getById(assignedId.toString(), { userId: moderatorId, role: UserRole.HOTEL_MODERATOR });
+  }
+
   private async canSeeInactive(hotelId: Types.ObjectId, requester?: Requester): Promise<boolean> {
     if (!requester) return false;
     if (requester.role === UserRole.ADMIN) return true;
