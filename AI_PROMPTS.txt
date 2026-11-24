@@ -299,3 +299,19 @@ correctly, the booking-link JSON matches the agreed contract exactly, the no-dat
 shows only the check-availability form, and an unknown hotel ID 404s through the shared
 not-found page. `npm run typecheck`/`build` pass clean; no test files committed.
 ================================================
+Date: 2026-11-24
+Student: 16001313 (Person 7)
+Tool: Claude Code (Anthropic)
+Related Requirement: ITN-01, ITN-03, ITN-05, ITN-07, ITN-08, ITN-09, ITN-20 (M2 frontend)
+
+Prompt:
+(with the 26-page optimized M2 split attached)
+hii bestiee remember milestone one now its time for milestone 2, in this pdf here it all
+everything you need im kiki person 7, lets start this project together
+
+How the output was used:
+First M2 slice: itinerary list, create form, read view and the day editor (add, edit,
+delete, accessible reorder, city groups, visibility), reusing the shared components and
+tested in Chromium against the real backend (4/4). Details: docs/work-logs/16001313.md,
+entry of 2026-11-24, and docs/m2/ITINERARIES.md.
+================================================
