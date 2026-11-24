@@ -1,9 +1,8 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Button, buttonClassName } from '@/components/ui/button';
+import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ErrorAlert } from '@/components/ui/error-alert';
 import { FormField } from '@/components/ui/form-field';
@@ -38,11 +37,19 @@ export function FlightResults({ criteria, page, sortBy, minPrice = '', maxPrice 
   const [result, setResult] = useState<Result | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
-  const [outbound, setOutbound] = useState<{ flightId: string; cabinId: string } | null>(null);
-  const [inbound, setInbound] = useState<{ flightId: string; cabinId: string } | null>(null);
+  type Pick = { flightId: string; cabinId: string };
+  // The selection is stamped with the search it was made for. If the route, dates, passengers,
+  // cabin or trip type change, the stamp no longer matches and the old picks are ignored.
+  const [picked, setPicked] = useState<{ key: string; outbound: Pick | null; inbound: Pick | null }>({ key: '', outbound: null, inbound: null });
   const [min, setMin] = useState(minPrice);
   const [max, setMax] = useState(maxPrice);
   const baseParams = useMemo(() => criteriaToParams(criteria), [criteria]);
+  const searchKey = baseParams.toString();
+  const current = picked.key === searchKey ? picked : { key: searchKey, outbound: null, inbound: null };
+  const outbound = current.outbound;
+  const inbound = criteria.roundTrip ? current.inbound : null;
+  const setOutbound = (s: Pick) => setPicked({ ...current, key: searchKey, outbound: s });
+  const setInbound = (s: Pick) => setPicked({ ...current, key: searchKey, inbound: s });
 
   const query = useMemo(() => {
     const p = new URLSearchParams(baseParams);
@@ -81,7 +88,7 @@ export function FlightResults({ criteria, page, sortBy, minPrice = '', maxPrice 
 
   function bookingUrl(): string {
     const selection: FlightSelection = {
-      segments: [outbound, inbound].filter((s): s is { flightId: string; cabinId: string } => Boolean(s)),
+      segments: [outbound, inbound].filter((s): s is Pick => Boolean(s)),
       adults: criteria.adults, children: criteria.children, infants: criteria.infants,
     };
     return `${bookingHref}?selection=${encodeURIComponent(JSON.stringify(selection))}`;
@@ -115,7 +122,7 @@ export function FlightResults({ criteria, page, sortBy, minPrice = '', maxPrice 
     </div>
   );
 
-  function renderList(title: string, data: Page<Flight>, selected: { flightId: string; cabinId: string } | null, set: (s: { flightId: string; cabinId: string }) => void) {
+  function renderList(title: string, data: Page<Flight>, selected: Pick | null, set: (s: Pick) => void) {
     return (
       <section aria-labelledby={`h-${title}`} className="grid gap-4">
         <h2 id={`h-${title}`} className="m-0">{title}</h2>
@@ -154,7 +161,7 @@ export function FlightResults({ criteria, page, sortBy, minPrice = '', maxPrice 
       )}
       {ready && (
         <div className="sticky bottom-4 flex justify-end">
-          <Link href={bookingUrl()} className={buttonClassName('primary')}>Continue to booking</Link>
+          <Button onClick={() => router.push(bookingUrl())}>Continue to booking</Button>
         </div>
       )}
     </div>

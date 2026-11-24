@@ -26,8 +26,8 @@ export default async function FlightsPage({ searchParams }: { searchParams: Prom
           criteria={criteria as SearchCriteria}
           page={page}
           sortBy={['price', 'duration', 'departureTime'].includes(sort ?? '') ? (sort as FlightSort) : undefined}
-          minPrice={one(raw.minPrice) ? String(Number(one(raw.minPrice)) / 100) : ''}
-          maxPrice={one(raw.maxPrice) ? String(Number(one(raw.maxPrice)) / 100) : ''}
+          minPrice={one(raw.minPrice) ?? ''}
+          maxPrice={one(raw.maxPrice) ?? ''}
         />
       )}
     </div>
