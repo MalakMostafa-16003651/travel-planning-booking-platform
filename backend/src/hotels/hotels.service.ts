@@ -41,6 +41,7 @@ export interface Requester {
 export interface RoomDayOverview {date:string;status:'AVAILABLE'|'BOOKED'|'BLOCKED';bookingReference?:string;hotelBookingId?:string;bookingStatus?:BookingStatus;reason?:string;}
 export interface RoomAvailabilityPage {items:RoomAvailabilityOverview[];page:number;pageSize:number;total:number;totalPages:number;from:string;to:string;}
 export interface AvailableRoomsPage {items:(Room & {roomId:string;totalStayPrice:number;currency:string})[];page:number;pageSize:number;total:number;totalPages:number;}
+export interface RoomsPage {items:Room[];page:number;pageSize:number;total:number;totalPages:number;}
 export interface RoomAvailabilityOverview {
   isActive:boolean;
   bookableRanges:BookableDates[];
@@ -279,6 +280,17 @@ export class HotelsService {
         return room;
       });
     } catch(error) { if((error as {code?:number}).code===11000)throw new ConflictException('Room name must be unique within this hotel');throw error; }
+  }
+
+  /** HTL-03/05/06: the management list (active and inactive), not the stay-specific rooms/available search. */
+  async getOwnRooms(moderatorId: string, hotelId: string, page: number): Promise<RoomsPage> {
+    const assignedId = await this.assertOwnHotel(moderatorId, hotelId);
+    const filter = { hotelId: assignedId };
+    const [items, total] = await Promise.all([
+      this.rooms.find(filter).collation({ locale: 'en', strength: 2 }).sort({ name: 1 }).skip((page - 1) * HOTEL_SEARCH_PAGE_SIZE).limit(HOTEL_SEARCH_PAGE_SIZE).exec(),
+      this.rooms.countDocuments(filter).exec(),
+    ]);
+    return { items, page, pageSize: HOTEL_SEARCH_PAGE_SIZE, total, totalPages: Math.ceil(total / HOTEL_SEARCH_PAGE_SIZE) };
   }
 
   private async assertRoomNameUnique(hotelId:Types.ObjectId,name:string,except:Types.ObjectId|undefined,session:import('mongoose').ClientSession):Promise<void> {

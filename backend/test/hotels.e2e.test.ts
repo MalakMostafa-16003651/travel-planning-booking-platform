@@ -300,6 +300,23 @@ describe('Hotels E2E', { concurrency: false }, () => {
         .expect(403);
     });
 
+    it('lists the moderator\'s own rooms, active and inactive, in name order', async () => {
+      await createRoom({ name: 'Zebra Room' });
+      const inactive = await createRoom({ name: 'Ardvark Room' });
+      await http().patch(`/api/hotels/${hotelId}/rooms/${inactive._id}`).set('Cookie', moderatorCookie).send({ isActive: false }).expect(200);
+
+      const response = await http().get(`/api/hotels/${hotelId}/rooms`).set('Cookie', moderatorCookie).expect(200);
+      assert.equal(response.body.total, 2);
+      assert.equal(response.body.items.length, 2);
+      assert.deepEqual(response.body.items.map((room: { name: string }) => room.name), ['Ardvark Room', 'Zebra Room']);
+      assert.equal(response.body.items.find((room: { name: string }) => room.name === 'Ardvark Room').isActive, false);
+    });
+
+    it('rejects listing rooms for another moderator\'s hotel', async () => {
+      const otherModerator = await login('other-hotel-moderator@example.com', UserRole.HOTEL_MODERATOR);
+      await http().get(`/api/hotels/${hotelId}/rooms`).set('Cookie', otherModerator).expect(403);
+    });
+
     it('updates a room of the moderator\'s own hotel', async () => {
       const room = await createRoom();
       const response = await http()
