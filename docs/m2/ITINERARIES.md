@@ -93,8 +93,18 @@ import { ItineraryPreview } from '@/features/itineraries/itinerary-preview';
 
 Browser proof added (suite now 7/7): guest keyword/country/length/sort search where private trips never appear and an invalid range is explained; guest → sign in → returned → clone → independent private copy with attribution; author makes the original private → its public page 404s and it leaves search while the clone survives. Picker verified in `next dev` against the same disposable backend (private disabled, emitted `{"itineraryId": …}` matches the chosen trip).
 
+## Slice 4 — travel search reuse (ITN-25, ITN-26)
+
+| Requirement | Where | Notes |
+| --- | --- | --- |
+| ITN-25 | `/itineraries/[id]/hotels?dayId=&guests=&rooms=&page=`; "Find hotels for {city}" on each city group (editor and view) | Calls `GET /api/itineraries/:id/hotels`; the backend derives city, check-in (stop's first day) and check-out (day after its last day), which are displayed, never recomputed. Results use Lama's `HotelCard`, which continues into her room selection with the same dates/guests/rooms. "Open in hotel search" uses her `criteriaToParams` for price/rating filters. Guests/rooms validated (1–20, at least one guest per room); a stop in the past shows a clear message (HTL-11 rejects past check-in). |
+| ITN-26 | `/itineraries/[id]/flights?departureAirportCode=&roundTrip=&…`; "Find flights to {first city}" in the editor and view | Calls `GET /api/itineraries/:id/flights`. Departure/return dates prefill from the trip's first/last day; destination airports are every airport of day 1's city (origins in that city are not offered). Results use Gamila's `FlightCard` (airport-local times, cents prices). A return is selectable only if it leaves from where the chosen outbound lands, after it lands, back to the origin (same rule as the backend's ITN-26 R2 filter and booking check). "Continue to booking" passes Ismail's agreed `FlightSelection` to `/bookings/flights/new`. Passenger rules: ≥1 adult, infants ≤ adults (backend re-validates). |
+
+Rendering: both are dynamic SSR shells (readable itinerary, viewer cookies, no cache) with a Client Component for the interactive search; criteria are kept in the URL for refresh/back. Bug found by the suite and fixed: the return-flight heading and the "Return date" field shared an HTML id, which broke the section's accessible name.
+
+Browser proof (suite now 9/9): ITN-25 two-stop trip (two Cairo nights, one Dubai night), validation, reload keeps the search, card opens Lama's hotel page with the stop dates. ITN-26 LHR→Cairo round trip with prefilled dates, infant rule, only the return that departs after the chosen late outbound is offered, the emitted `FlightSelection` equals the chosen flights/cabins, no overflow at 360/1440, and the link opens Ismail's booking page.
+
 ## Remaining Person 7 slices
 
-1. Travel reuse: ITN-25 hotel search for a city group (Lama's HotelSearch prefill) and ITN-26 flight search (Gamila's FlightSearch prefill).
-2. Bonuses: ITN-27 linked bookings (Ismail/Osama booking readers) and ITN-28 PDF via the existing `GET /api/itineraries/:itineraryId/pdf` (PR #58).
-3. Mount Osama's FavoriteButton (BON-02) and Arwa's ReportAction (GEN-09) on public itineraries when they reach develop (mount point marked in `/explore/itineraries/[id]`).
+1. Bonuses: ITN-27 linked bookings (Ismail/Osama booking readers) and ITN-28 PDF via the existing `GET /api/itineraries/:itineraryId/pdf` (PR #58).
+2. Mount Osama's FavoriteButton (BON-02) and Arwa's ReportAction (GEN-09) on public itineraries when they reach develop (mount point marked in `/explore/itineraries/[id]`).

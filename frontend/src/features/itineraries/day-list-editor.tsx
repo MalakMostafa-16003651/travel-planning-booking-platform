@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState, type DragEvent, type FormEvent, type ReactNode } from 'react';
+import Link from 'next/link';
 import { ArrowDown, ArrowUp, GripVertical } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -87,6 +88,7 @@ export function DayListEditor({ itinerary, cities, busy, actions, renderDayDetai
                   {' · '}{pluralize(group.dayCount, 'day')}{' · '}{formatDateRange(group.startDate, group.endDate)}
                   {groupTotals[group.firstDayNumber] && <>{' · '}<span className="font-semibold text-ink">Subtotal {groupTotals[group.firstDayNumber]}</span></>}
                 </p>
+                <Link href={`/itineraries/${encodeURIComponent(itinerary.itineraryId)}/hotels?dayId=${encodeURIComponent(group.dayIds[0])}`} className="w-full text-sm sm:w-auto">Find hotels for {group.city}</Link>
               </div>
               <ol className="m-0 grid list-none gap-3 p-0">
                 {group.dayIds.map(dayId => {

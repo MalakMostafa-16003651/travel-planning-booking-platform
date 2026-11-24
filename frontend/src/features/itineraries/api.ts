@@ -141,3 +141,45 @@ export function getBudgetSummary(id: string, currency?: string, signal?: AbortSi
   const query = currency ? `?currency=${encodeURIComponent(currency)}` : '';
   return apiClient<BudgetSummary>(`${base(id)}/budget-summary${query}`, { signal });
 }
+
+// ---------------------------------------------------------------- ITN-25/26 travel search reuse
+
+/** ITN-25: the backend derives city, check-in (stop's first day) and check-out (day after its last). */
+export interface StayHotelSearch<T> {
+  itineraryId: string;
+  criteria: { city: string; countryCode?: string; checkIn: string; checkOut: string; guests: number; rooms: number; page?: number };
+  results: T;
+}
+
+export function searchStayHotels<T>(id: string, query: { dayId: string; guests: number; rooms: number; page: number }, signal?: AbortSignal): Promise<StayHotelSearch<T>> {
+  const params = new URLSearchParams({ dayId: query.dayId, guests: String(query.guests), rooms: String(query.rooms), page: String(query.page) });
+  return apiClient<StayHotelSearch<T>>(`${base(id)}/hotels?${params}`, { signal });
+}
+
+/** ITN-26: destination airports come from the first day's city; dates default to the trip's first/last day. */
+export interface TripFlightSearch<T> {
+  itineraryId: string;
+  criteria: {
+    departureAirportCode: string; arrivalAirportCodes: string[]; roundTrip: boolean; departureDate: string; returnDate?: string;
+    adults: number; children: number; infants: number; cabinClass?: string; page?: number;
+  };
+  results: T;
+}
+
+export interface TripFlightQuery {
+  departureAirportCode: string;
+  roundTrip: boolean;
+  departureDate?: string;
+  returnDate?: string;
+  adults: number;
+  children: number;
+  infants: number;
+  cabinClass?: string;
+  page: number;
+}
+
+export function searchTripFlights<T>(id: string, query: TripFlightQuery, signal?: AbortSignal): Promise<TripFlightSearch<T>> {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) if (value !== undefined && value !== '') params.set(key, String(value));
+  return apiClient<TripFlightSearch<T>>(`${base(id)}/flights?${params}`, { signal });
+}

@@ -1,4 +1,6 @@
 import type { ReactNode } from 'react';
+import Link from 'next/link';
+import { buttonClassName } from '@/components/ui/button';
 import { Clock, MapPin } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
@@ -36,7 +38,10 @@ export function ItineraryView({ itinerary, countryNames, isOwner, actions }: {
               {itinerary.isHidden && <Badge tone="warning">Hidden by an administrator</Badge>}
             </div>
           </div>
-          {actions && <div className="flex flex-wrap gap-3">{actions}</div>}
+          <div className="flex flex-wrap items-start gap-3">
+            {actions}
+            {itinerary.days.length > 0 && <Link href={`/itineraries/${encodeURIComponent(itinerary.itineraryId)}/flights`} className={buttonClassName('secondary')}>Find flights to {itinerary.days[0].city}</Link>}
+          </div>
         </div>
         {itinerary.description && <p className="m-0 max-w-prose whitespace-pre-line">{itinerary.description}</p>}
       </header>
@@ -49,7 +54,10 @@ export function ItineraryView({ itinerary, countryNames, isOwner, actions }: {
             <li key={`${group.firstDayNumber}-${group.city}`} className="grid gap-4">
               <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border pb-2">
                 <h2 className="m-0 text-xl">{group.city}{group.countryCode && <span className="text-base font-normal text-muted"> · {countryNames[group.countryCode] ?? group.countryCode}</span>}</h2>
-                <p className="m-0 text-sm text-muted">{pluralize(group.dayCount, 'day')} · {formatDateRange(group.startDate, group.endDate)}</p>
+                <p className="m-0 text-sm text-muted">
+                  {pluralize(group.dayCount, 'day')} · {formatDateRange(group.startDate, group.endDate)}
+                  {' · '}<Link href={`/itineraries/${encodeURIComponent(itinerary.itineraryId)}/hotels?dayId=${encodeURIComponent(group.dayIds[0])}`}>Find hotels</Link>
+                </p>
               </div>
               <ol className="m-0 grid list-none gap-4 p-0">
                 {group.dayIds.map(dayId => {

@@ -90,7 +90,10 @@ export function ItineraryEditor({ initial, notice }: { initial: Itinerary; notic
               {itinerary.isHidden && <Badge tone="warning">Hidden by an administrator</Badge>}
             </div>
           </div>
-          <Link href={`/itineraries/${encodeURIComponent(id)}`} className={buttonClassName('secondary')}>View itinerary</Link>
+          <div className="flex flex-wrap gap-3">
+            {itinerary.days.length > 0 && <Link href={`/itineraries/${encodeURIComponent(id)}/flights`} className={buttonClassName('secondary')}>Find flights to {itinerary.days[0].city}</Link>}
+            <Link href={`/itineraries/${encodeURIComponent(id)}`} className={buttonClassName('secondary')}>View itinerary</Link>
+          </div>
         </div>
       </header>
 

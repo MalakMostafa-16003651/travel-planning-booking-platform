@@ -343,3 +343,17 @@ the ItineraryPicker/Preview handoff for Hicham, a home-page widget for Malak and
 development-only gallery page. Chose uncached rendering for public trips and documented
 why. Browser suite 7/7. Details: docs/work-logs/16001313.md (slice 3), docs/m2/ITINERARIES.md.
 ================================================
+Date: 2026-11-24
+Student: 16001313 (Person 7)
+Tool: Claude Code (Anthropic)
+Related Requirement: ITN-25, ITN-26 (M2 frontend)
+
+Prompt:
+both   (watch PR #148 and continue with slice 4: hotel and flight search from a trip)
+
+How the output was used:
+Hotel search for a city stop and flight search to the first city, using the itinerary
+endpoints with Lama's HotelCard and Gamila's FlightCard, handing off to their hotel page
+and Ismail's booking page. Browser suite 9/9. Details: docs/work-logs/16001313.md
+(slice 4) and docs/m2/ITINERARIES.md.
+================================================

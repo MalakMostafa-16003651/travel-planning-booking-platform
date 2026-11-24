@@ -34,6 +34,7 @@ async function main() {
   const { MongoMemoryReplSet } = backendRequire('mongodb-memory-server');
   const { ConfigModule } = backendRequire('@nestjs/config');
   const { getConnectionToken } = backendRequire('@nestjs/mongoose');
+  const { Types } = backendRequire('mongoose');
   const { Test } = backendRequire('@nestjs/testing');
 
   replicaSet = await MongoMemoryReplSet.create({
@@ -58,6 +59,7 @@ async function main() {
   const { PasswordService } = backendRequire('./dist/auth/password.service.js');
   const { ReferenceDataService } = backendRequire('./dist/reference-data/reference-data.service.js');
   const { CurrenciesService } = backendRequire('./dist/currencies/currencies.service.js');
+  const { AIRPORT_SEEDS } = backendRequire('./dist/airports/airport-seeds.js');
   const { FxRatesClient, FxRatesUnavailableError } = backendRequire('./dist/itineraries/currency/fx-rates.client.js');
 
   const builder = Test.createTestingModule({ imports: [AppModule] });
@@ -70,7 +72,40 @@ async function main() {
   configureApplication(app);
   const connection = testing.get(getConnectionToken());
 
+  const airports = {};
+  const airlineId = new Types.ObjectId();
+
   const controls = {
+    /** ITN-25: an active hotel with bookable rooms (price in cents per night). */
+    async hotel({ name, city = 'Cairo', countryCode = 'EG', rooms = '2', capacity = '2', price = '9000' }) {
+      const hotel = await connection.models.Hotel.create({
+        name, city, countryCode, address: '1 Test Street', checkInTime: '15:00', checkOutTime: '12:00',
+        cancellationTiers: [{ daysBeforeCheckIn: 2, refundPercentage: 100 }],
+      });
+      for (let index = 0; index < Number(rooms); index += 1) {
+        const room = await connection.models.Room.create({ hotelId: hotel._id, name: `Room ${index + 1}`, capacity: Number(capacity), pricePerNight: Number(price) });
+        await connection.collection('roomavailabilities').updateOne({ roomId: room._id }, {
+          $set: { bookableRanges: [{ startDate: '2020-01-01', endDate: '2100-01-01' }] },
+          $setOnInsert: { roomId: room._id, hotelId: hotel._id, blockedRanges: [], bookedRanges: [] },
+        }, { upsert: true });
+      }
+      return { hotelId: String(hotel._id) };
+    },
+    /** ITN-26: a scheduled flight on an airport-local date (YYYY-MM-DD), departing at `hour` UTC. */
+    async flight({ from, to, date, hour = '8', price = '15000', seats = '10', number }) {
+      const departureAt = new Date(`${date}T${String(hour).padStart(2, '0')}:00:00Z`);
+      const local = new Intl.DateTimeFormat('en-CA', { timeZone: airports[from].timeZone }).format(departureAt);
+      const flight = await connection.models.Flight.create({
+        airlineId, flightNumber: number || `MS${Math.floor(Math.random() * 9000) + 1000}`, status: 'SCHEDULED',
+        departureAirportId: airports[from]._id, arrivalAirportId: airports[to]._id, departureLocalDate: local,
+        departureAt, arrivalAt: new Date(departureAt.getTime() + 4 * 3_600_000),
+      });
+      const cabin = await connection.models.CabinInventory.create({
+        flightId: flight._id, cabinClass: 'ECONOMY', totalSeats: Number(seats), bookedSeats: 0, heldSeats: 0,
+        price: Number(price), baggageAllowanceCount: 1, baggageMaxWeightKg: 23,
+      });
+      return { flightId: String(flight._id), cabinId: String(cabin._id), flightNumber: flight.flightNumber };
+    },
     async user({ name = 'Kiki Planner', role = 'USER' }) {
       const email = `m2-itn-${randomBytes(6).toString('hex')}@example.test`;
       await connection.models.User.create({
@@ -105,6 +140,12 @@ async function main() {
   await Promise.all(Object.values(connection.models).map((model) => model.init()));
   await app.get(ReferenceDataService).seedSupported();
   await app.get(CurrenciesService).seedSupported();
+  for (const airport of await connection.models.Airport.insertMany(AIRPORT_SEEDS.map((seed) => ({ ...seed })))) airports[airport.code] = airport;
+  await connection.models.Airline.create({
+    _id: airlineId, name: 'Nile Air', code: 'MS', isActive: true,
+    baggagePolicy: { pricePerExtraBag: 3000, maxExtraBagsPerPassenger: 2 },
+    cancellationTiers: [{ daysBeforeDeparture: 0, refundPercentage: 10 }, { daysBeforeDeparture: 21, refundPercentage: 100 }],
+  });
 
   await app.listen(port, '127.0.0.1');
   process.stdout.write(`Disposable itinerary backend ready at http://localhost:${port}\n`);

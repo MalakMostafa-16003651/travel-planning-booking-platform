@@ -390,3 +390,116 @@ test('a guest signs in to clone a public itinerary; the copy is private and inde
   await expect(guest.getByRole('heading', { level: 1, name: 'Quokka Cairo loop' })).toBeVisible();
   await context.close();
 });
+
+// ---------------------------------------------------------------- slice 4: ITN-25/26 travel search reuse
+
+function isoDaysFromNow(days: number): string {
+  const date = new Date(Date.now() + days * 86_400_000);
+  return date.toISOString().slice(0, 10);
+}
+
+test('ITN-25: hotels for a city stop use the stop dates and continue into the hotel flow', async ({ page }) => {
+  await newTraveler(page, 'Stay Planner');
+  const start = isoDaysFromNow(40);
+  const created = await call<{ itineraryId: string }>(page, 'POST', '/itineraries', { title: 'Nile and Gulf', countries: ['EG', 'AE'], startDate: start });
+  const id = created.itineraryId;
+  for (const city of ['Cairo', 'Cairo', 'Dubai']) await call(page, 'POST', `/itineraries/${id}/days`, { city });
+  await fixture('hotel', { name: 'Zeta Nile Hotel', city: 'Cairo', countryCode: 'EG', rooms: '2' });
+  await fixture('hotel', { name: 'Zeta Gulf Hotel', city: 'Dubai', countryCode: 'AE', rooms: '1' });
+
+  await page.goto(`/itineraries/${id}/edit`);
+  await page.getByRole('link', { name: 'Find hotels for Cairo' }).click();
+  await expect(page).toHaveURL(new RegExp(`/itineraries/${id}/hotels\\?dayId=`));
+  const main = page.getByRole('main');
+  // Check-in = first day of the stop, check-out = the day after its last day (two Cairo nights).
+  await expect(main.getByText(/Cairo: check-in .* \(2 nights\), 1 guest, 1 room\./)).toBeVisible();
+  const nile = main.getByRole('link', { name: 'Zeta Nile Hotel' });
+  await expect(nile).toBeVisible();
+  await expect(nile).toHaveAttribute('href', new RegExp(`checkIn=${start}&checkOut=${isoDaysFromNowFrom(start, 2)}&guests=1&rooms=1`));
+  await expect(main.getByRole('link', { name: 'Zeta Gulf Hotel' })).toHaveCount(0);
+
+  // Inline validation, then a two-room search still finds the two-room hotel.
+  await page.getByLabel('Guests').fill('1');
+  await page.getByLabel('Rooms').fill('2');
+  await page.getByRole('button', { name: 'Search hotels' }).click();
+  await expect(main.getByText('Each room needs at least one guest.')).toBeVisible();
+  await page.getByLabel('Guests').fill('3');
+  await page.getByRole('button', { name: 'Search hotels' }).click();
+  await expect(main.getByText(/3 guests, 2 rooms/)).toBeVisible();
+  await expect(nile).toBeVisible();
+
+  // Another stop: Dubai is day 3 only, so one night; the state survives a reload.
+  await page.getByLabel('City stop').selectOption({ label: 'Dubai · day 3' });
+  await page.getByLabel('Guests').fill('2');
+  await page.getByLabel('Rooms').fill('1');
+  await page.getByRole('button', { name: 'Search hotels' }).click();
+  await expect(main.getByText(/Dubai: check-in .* \(1 night\), 2 guests, 1 room\./)).toBeVisible();
+  await expect(main.getByRole('link', { name: 'Zeta Gulf Hotel' })).toBeVisible();
+  await page.reload();
+  await expect(main.getByRole('link', { name: 'Zeta Gulf Hotel' })).toBeVisible();
+  await expect(main.getByRole('link', { name: 'Open in hotel search' })).toHaveAttribute('href', /city=Dubai/);
+
+  // Lama's card leads into her hotel page with the same dates.
+  await main.getByRole('link', { name: 'Zeta Gulf Hotel' }).click();
+  await expect(page).toHaveURL(new RegExp(`/hotels/[a-f0-9]{24}\\?checkIn=${isoDaysFromNowFrom(start, 2)}`));
+});
+
+function isoDaysFromNowFrom(start: string, days: number): string {
+  return new Date(Date.parse(`${start}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+}
+
+test('ITN-26: flights from a chosen origin to the first city, defaulting to trip dates, with matching returns only', async ({ page }) => {
+  await newTraveler(page, 'Flight Planner');
+  const start = isoDaysFromNow(45);
+  const last = isoDaysFromNowFrom(start, 2);
+  const created = await call<{ itineraryId: string }>(page, 'POST', '/itineraries', { title: 'Cairo long weekend', countries: ['EG'], startDate: start });
+  const id = created.itineraryId;
+  for (const city of ['Cairo', 'Cairo', 'Cairo']) await call(page, 'POST', `/itineraries/${id}/days`, { city });
+  const early = await fixture<{ flightNumber: string }>('flight', { from: 'LHR', to: 'CAI', date: start, hour: '6', number: 'MS801' });
+  const late = await fixture<{ flightNumber: string; flightId: string; cabinId: string }>('flight', { from: 'LHR', to: 'CAI', date: start, hour: '20', number: 'MS805' });
+  // Leaves before the late outbound lands: it may pair with the early one only.
+  await fixture('flight', { from: 'CAI', to: 'LHR', date: start, hour: '22', number: 'MS900' });
+  const back = await fixture<{ flightId: string; cabinId: string }>('flight', { from: 'CAI', to: 'LHR', date: last, hour: '12', number: 'MS902' });
+
+  await page.goto(`/itineraries/${id}/edit`);
+  await page.getByRole('link', { name: 'Find flights to Cairo' }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Flights to Cairo' })).toBeVisible();
+  // Dates are prefilled from the trip; Cairo itself is not offered as an origin.
+  await expect(page.getByLabel('Departure date')).toHaveValue(start);
+  await expect(page.getByLabel('Return date')).toHaveValue(last);
+  await expect(page.getByLabel('From airport').locator('option', { hasText: '(CAI)' })).toHaveCount(0);
+
+  await page.getByLabel('Infants (under 2)').fill('2');
+  await page.getByLabel('From airport').selectOption('LHR');
+  await page.getByRole('button', { name: 'Search flights to Cairo' }).click();
+  await expect(page.getByRole('main').getByText('Each infant must travel with an adult.')).toBeVisible();
+  await page.getByLabel('Infants (under 2)').fill('0');
+  await page.getByRole('button', { name: 'Search flights to Cairo' }).click();
+
+  const outbound = page.getByRole('region', { name: '1. Choose your outbound flight' });
+  const inbound = page.getByRole('region', { name: '2. Choose your return flight' });
+  await expect(outbound.getByText(`Nile Air · ${early.flightNumber}`)).toBeVisible();
+  await expect(outbound.getByText(`Nile Air · ${late.flightNumber}`)).toBeVisible();
+  await expect(inbound.getByText('Choose an outbound flight first')).toBeVisible();
+
+  // Choosing the late outbound leaves only the return that departs after it lands.
+  await outbound.locator('div.rounded-card', { hasText: `Nile Air · ${late.flightNumber}` }).getByRole('button', { name: 'Select' }).click();
+  await expect(inbound.getByText('Nile Air · MS902')).toBeVisible();
+  await expect(inbound.getByText('Nile Air · MS900')).toHaveCount(0);
+  await inbound.getByRole('button', { name: 'Select' }).click();
+
+  const go = page.getByRole('link', { name: 'Continue to booking' });
+  const href = decodeURIComponent((await go.getAttribute('href'))!);
+  expect(JSON.parse(href.split('selection=')[1])).toEqual({
+    segments: [{ flightId: late.flightId, cabinId: late.cabinId }, { flightId: back.flightId, cabinId: back.cabinId }], adults: 1, children: 0, infants: 0,
+  });
+  // Criteria are kept in the URL.
+  await expect(page).toHaveURL(/departureAirportCode=LHR&roundTrip=true/);
+  for (const width of [360, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), `overflow at ${width}px`).toBeLessThanOrEqual(0);
+    await page.screenshot({ path: `test-results/itineraries/trip-flights-${width}.png`, fullPage: true });
+  }
+  await go.click();
+  await expect(page).toHaveURL(/\/bookings\/flights\/new\?selection=/);
+});
