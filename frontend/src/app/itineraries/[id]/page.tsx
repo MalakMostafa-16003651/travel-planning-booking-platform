@@ -5,6 +5,7 @@ import { buttonClassName } from '@/components/ui/button';
 import { ErrorAlert } from '@/components/ui/error-alert';
 import { loginHref } from '@/config/routes';
 import { getServerSession } from '@/lib/api/server-session';
+import { CloneButton } from '@/features/itineraries/clone-button';
 import { ItineraryView } from '@/features/itineraries/itinerary-view';
 import { loadCountryNames, loadItinerary } from '@/features/itineraries/server';
 
@@ -32,7 +33,9 @@ export default async function ItineraryPage({ params }: { params: Promise<{ id: 
         itinerary={itinerary}
         countryNames={countryNames}
         isOwner={isOwner}
-        actions={isOwner ? <Link href={`${here}/edit`} className={buttonClassName('primary')}>Edit itinerary</Link> : undefined}
+        actions={isOwner
+          ? <Link href={`${here}/edit`} className={buttonClassName('primary')}>Edit itinerary</Link>
+          : itinerary.visibility === 'PUBLIC' && !itinerary.isHidden ? <CloneButton itineraryId={itinerary.itineraryId} returnTo={here} /> : undefined}
       />
     </div>
   );

@@ -38,11 +38,11 @@ function describe(error: unknown): { message: string; conflict: boolean } {
  * ITN-01/05/07/08/09/20 owner editor. The server is the only source of day numbers, dates
  * and city groups: each mutation response replaces local state, so nothing is recomputed here.
  */
-export function ItineraryEditor({ initial }: { initial: Itinerary }) {
+export function ItineraryEditor({ initial, notice }: { initial: Itinerary; notice?: string }) {
   const router = useRouter();
   const { cities, countries, error: catalogError } = useDestinations();
   const [itinerary, setItinerary] = useState(initial);
-  const [state, setState] = useState<SaveState>({ kind: 'idle' });
+  const [state, setState] = useState<SaveState>(notice ? { kind: 'saved', message: notice } : { kind: 'idle' });
   const [editingDetails, setEditingDetails] = useState(false);
   const [summary, setSummary] = useState<BudgetSummary | null>(null);
   const { currencies, attractions, error: currencyError } = useItineraryCatalog();
@@ -139,6 +139,7 @@ export function ItineraryEditor({ initial }: { initial: Itinerary }) {
             ? 'This itinerary is private: only you can see it.'
             : 'This itinerary is public: anyone can find it and view it read-only, and signed-in travelers can clone it.'}
         </p>
+        {!makePublic && !itinerary.isHidden && <p className="m-0"><Link href={`/explore/itineraries/${encodeURIComponent(id)}`}>Open the public page</Link></p>}
         <div>
           <ConfirmDialog
             triggerLabel={makePublic ? 'Make public' : 'Make private'}

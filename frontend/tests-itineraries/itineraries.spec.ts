@@ -292,3 +292,101 @@ test('activities with photos, budget entries and transport feed backend-converte
   await day1.getByRole('button', { name: 'Remove photos for pyramids at sunrise' }).click();
   await expect(day1.getByText('0 / 5')).toBeVisible();
 });
+
+// ---------------------------------------------------------------- slice 3: ITN-21 discovery and clone
+
+async function call<T>(page: Page, method: string, path: string, body?: unknown): Promise<T> {
+  const result = await page.evaluate(async ([m, p, b]) => {
+    const response = await fetch(`/api${p}`, { method: m as string, headers: b ? { 'Content-Type': 'application/json' } : {}, body: b ? JSON.stringify(b) : undefined });
+    return { status: response.status, body: await response.json().catch(() => null) };
+  }, [method, path, body] as const);
+  expect(result.status, JSON.stringify(result.body)).toBeLessThan(300);
+  return result.body as T;
+}
+
+async function seedTrip(page: Page, title: string, countries: string[], cities: string[], visibility: 'PUBLIC' | 'PRIVATE') {
+  const created = await call<{ itineraryId: string }>(page, 'POST', '/itineraries', { title, countries, startDate: '2027-05-01', visibility });
+  for (const city of cities) await call(page, 'POST', `/itineraries/${created.itineraryId}/days`, { city });
+  return created.itineraryId;
+}
+
+const resultTitles = (page: Page) => page.getByRole('main').getByRole('list').getByRole('heading', { level: 3 });
+
+test('guests search public itineraries by keyword, country and length; private ones never appear', async ({ page, browser }) => {
+  await newTraveler(page, 'Zephyr Author');
+  await seedTrip(page, 'Zephyr Nile week', ['EG'], ['Cairo', 'Cairo'], 'PUBLIC');
+  await seedTrip(page, 'Zephyr Tokyo dash', ['JP'], ['Tokyo'], 'PUBLIC');
+  await seedTrip(page, 'Zephyr secret plan', ['EG'], ['Cairo'], 'PRIVATE');
+
+  const guest = await (await browser.newContext()).newPage();
+  await guest.goto('/explore/itineraries?q=Zephyr');
+  await expect(guest.getByRole('main').getByText('2 itineraries found')).toBeVisible();
+  await expect(resultTitles(guest)).toHaveText(['Zephyr Tokyo dash', 'Zephyr Nile week']);
+  await expect(guest.getByRole('main').getByText('By Zephyr Author').first()).toBeVisible();
+
+  // Filters live in the URL (GET form).
+  await guest.getByLabel('Country').selectOption({ label: 'Japan' });
+  await guest.getByRole('button', { name: 'Search' }).click();
+  await expect(guest).toHaveURL(/country=JP/);
+  await expect(resultTitles(guest)).toHaveText(['Zephyr Tokyo dash']);
+
+  await guest.goto('/explore/itineraries?q=Zephyr&minDays=2');
+  await expect(resultTitles(guest)).toHaveText(['Zephyr Nile week']);
+  await guest.goto('/explore/itineraries?q=Zephyr&sort=TITLE');
+  await expect(resultTitles(guest)).toHaveText(['Zephyr Nile week', 'Zephyr Tokyo dash']);
+
+  // Invalid range is explained, not sent.
+  await guest.goto('/explore/itineraries?q=Zephyr&minDays=3&maxDays=2');
+  await expect(guest.getByRole('main').getByText('Maximum days must not be less than minimum days.')).toBeVisible();
+
+  await guest.goto('/explore/itineraries?q=NoSuchTripAnywhere');
+  await expect(guest.getByRole('main').getByText('No itineraries match these filters')).toBeVisible();
+  await guest.close();
+});
+
+test('a guest signs in to clone a public itinerary; the copy is private and independent; privacy revokes access', async ({ page, browser }) => {
+  await newTraveler(page, 'Original Author');
+  const id = await seedTrip(page, 'Quokka Cairo loop', ['EG'], ['Cairo', 'Cairo'], 'PUBLIC');
+  await call(page, 'POST', `/itineraries/${id}/days/${(await call<{ days: { dayId: string }[] }>(page, 'GET', `/itineraries/${id}`)).days[0].dayId}/activities`, { title: 'Khan el-Khalili walk' });
+
+  const context = await browser.newContext();
+  const guest = await context.newPage();
+  await guest.goto(`/explore/itineraries/${id}`);
+  await expect(guest.getByRole('heading', { level: 1, name: 'Quokka Cairo loop' })).toBeVisible();
+  await expect(guest.getByRole('main').getByText('Khan el-Khalili walk')).toBeVisible();
+  await guest.getByRole('link', { name: 'Sign in to clone' }).click();
+  await expect(guest).toHaveURL(/\/login\?returnTo=%2Fexplore%2Fitineraries%2F/);
+
+  // Sign in on the login page, then the user is returned to the trip (ACC-10).
+  const account = await fixture<Account>('user', { name: 'Cloning Traveler' });
+  await guest.getByLabel('Email').fill(account.email);
+  await guest.getByLabel('Password').fill(account.password);
+  await guest.getByRole('button', { name: /sign in/i }).click();
+  await expect(guest).toHaveURL(new RegExp(`/explore/itineraries/${id}$`));
+
+  await guest.getByRole('button', { name: 'Clone to my itineraries' }).click();
+  await expect(guest).toHaveURL(/\/itineraries\/[a-f0-9]{24}\/edit\?cloned=1/);
+  const copyId = guest.url().match(/itineraries\/([a-f0-9]{24})/)![1];
+  expect(copyId).not.toBe(id);
+  await expect(guest.getByRole('main').getByText('Cloned. This private copy is yours to edit')).toBeVisible();
+  await expect(guest.getByRole('main').getByText('Private', { exact: true })).toBeVisible();
+
+  // Editing the copy does not change the original.
+  await guest.getByRole('button', { name: 'Delete day 2', exact: true }).click();
+  await guest.getByRole('dialog', { name: 'Delete day 2?' }).getByRole('button', { name: 'Delete day' }).click();
+  await expect(guest.getByRole('main').getByText('1 of 60 days')).toBeVisible();
+  await guest.goto(`/itineraries/${copyId}`);
+  await expect(guest.getByRole('main').getByText('Cloned from “Quokka Cairo loop” by Original Author')).toBeVisible();
+  expect((await call<{ dayCount: number }>(page, 'GET', `/itineraries/${id}`)).dayCount).toBe(2);
+
+  // The author makes the original private: it disappears for everyone else at once.
+  await call(page, 'PATCH', `/itineraries/${id}`, { visibility: 'PRIVATE' });
+  await guest.goto(`/explore/itineraries/${id}`);
+  await expect(guest.getByRole('heading', { name: /not found/i })).toBeVisible();
+  await guest.goto('/explore/itineraries?q=Quokka');
+  await expect(guest.getByRole('main').getByText('No itineraries match these filters')).toBeVisible();
+  // The clone is unaffected.
+  await guest.goto(`/itineraries/${copyId}`);
+  await expect(guest.getByRole('heading', { level: 1, name: 'Quokka Cairo loop' })).toBeVisible();
+  await context.close();
+});

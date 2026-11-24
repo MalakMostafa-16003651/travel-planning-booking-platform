@@ -329,3 +329,17 @@ side panel (currency choice, rate date, stale and unavailable states), plus budg
 photos in the read view. Browser suite on the real backend 5/5. Details:
 docs/work-logs/16001313.md (slice 2) and docs/m2/ITINERARIES.md.
 ================================================
+Date: 2026-11-24
+Student: 16001313 (Person 7)
+Tool: Claude Code (Anthropic)
+Related Requirement: ITN-21, BLG-13 handoff (M2 frontend)
+
+Prompt:
+do both   (open the PR for slices 1-2, then continue with slice 3)
+
+How the output was used:
+Opened PR #148. Built public itinerary search and detail pages, cloning with login-return,
+the ItineraryPicker/Preview handoff for Hicham, a home-page widget for Malak and a
+development-only gallery page. Chose uncached rendering for public trips and documented
+why. Browser suite 7/7. Details: docs/work-logs/16001313.md (slice 3), docs/m2/ITINERARIES.md.
+================================================

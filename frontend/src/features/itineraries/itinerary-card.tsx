@@ -15,7 +15,7 @@ export function ItineraryCard({ itinerary, href, countryNames = {}, showVisibili
   showVisibility?: boolean;
   showAuthor?: boolean;
 }) {
-  const countries = itinerary.countries.map(code => countryNames[code] ?? code).join(', ');
+  const countries = itinerary.countries.map(code => countryNames[code] ?? regionName(code)).join(', ');
   return (
     <article className="grid gap-3 rounded-card border border-border bg-card p-5">
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -47,4 +47,13 @@ export function ItineraryCard({ itinerary, href, countryNames = {}, showVisibili
       {showVisibility && <p className="m-0 text-xs text-muted">Updated {formatTimestamp(itinerary.updatedAt)}</p>}
     </article>
   );
+}
+
+/** Fallback when the caller has no catalog names: the platform's own English region name. */
+function regionName(code: string): string {
+  try {
+    return new Intl.DisplayNames(['en'], { type: 'region' }).of(code) ?? code;
+  } catch {
+    return code;
+  }
 }

@@ -34,6 +34,7 @@ export default async function ItinerariesPage({ searchParams }: { searchParams: 
           <h1 className="m-0">Your itineraries</h1>
         </div>
         <div className="flex flex-wrap gap-3">
+          <Link href="/explore/itineraries" className={buttonClassName('secondary')}>Explore public trips</Link>
           <Link href="/itineraries/new" className={buttonClassName('primary')}>New itinerary</Link>
         </div>
       </header>

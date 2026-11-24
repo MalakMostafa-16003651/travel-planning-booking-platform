@@ -63,8 +63,38 @@ Layout follows the team rule "day/city hierarchy and side budget": on ≥1024 px
 
 Browser proof (`tests-itineraries`, now 5/5): one journey adds an attraction activity (with time-order validation), uploads and removes a photo (non-image refused), adds EGP and USD entries and a London→Cairo flight, and checks the backend totals: $435.50, then $410.00 after clearing the activity cost/times, EGP 20,500.00 and €328.00 with the stale-rate notice, the 503 message for a currency with no rates, $310.00 after deleting an entry, and the same figures in a second traveler's read-only view. The harness replaces **only** the external FXRatesAPI client (always "down") and seeds the backend's own rate cache, so the real caching/fallback code runs.
 
+## Slice 3 — public discovery, clone and shared components
+
+| Requirement | Where | Notes |
+| --- | --- | --- |
+| ITN-21 search | `/explore/itineraries` | Plain GET form, so the URL is the state (shareable, survives refresh/back, works before JS): keyword, country, city, min/max days (min ≤ max checked before the request), sort (newest, oldest, title, shortest, longest), server pages of 10. Friendly empty states for "no matches" and "none yet". |
+| ITN-21 view + clone | `/explore/itineraries/[id]` (also offered on a public `/itineraries/[id]` for non-owners) | Read-only with author, days, activities, photos, budget. Guests get "Sign in to clone" and return to the trip after login (ACC-10). Non-traveler roles are told only travelers can clone. Clone → your private copy's editor with a notice; "Cloned from … by …" attribution. The owner sees "Edit your itinerary" instead. |
+| BLG-13 handoff → Hicham | `ItineraryPicker`, `isAttachable`, `ItineraryPreview` in `features/itineraries/` | See the contract below. Live example at `/dev/ui/itineraries` (development only). |
+| Home slot → Malak | `PublicItinerariesTeaser` (Server Component) | For `<HomeContent itineraries={<PublicItinerariesTeaser />} />`. Not placed by Person 7: the landing page owns placement. |
+
+### Handoff contract for Hicham (BLG-13)
+
+```tsx
+import { ItineraryPicker } from '@/features/itineraries/itinerary-picker';
+import { ItineraryPreview } from '@/features/itineraries/itinerary-preview';
+
+<ItineraryPicker value={itineraryId} onChange={(id, summary) => { /* id: string | null */ }} disabled={saving} />
+<ItineraryPreview itinerary={post.itinerary /* ItinerarySummary | null from the blog API */} />
+```
+
+- Picker reads `GET /api/itineraries?page=n` (the author's own, server-paginated). Only `visibility: PUBLIC` and not `isHidden` are selectable, which mirrors `BlogService.assertAttachableItinerary`; private/hidden rows are shown disabled with the reason.
+- Send the chosen id as `itineraryId` on create/update; `null` detaches. The backend re-checks and returns 400 `errors.itineraryId` if it became private or hidden meanwhile: show that error and let the author pick again.
+- Preview renders the post's `itinerary` field exactly as returned (`ItinerarySummaryDto` or `null`). `null` (made private, hidden, deleted, author deactivated) shows "Itinerary not available" and nothing else. It links to `/explore/itineraries/[id]`.
+- Pages that show the preview must stay uncached or revalidate on the same basis as the post, since visibility can change after attachment.
+
+### Rendering decision for public pages
+
+`/explore/itineraries` and `/explore/itineraries/[id]` are **dynamic SSR, anonymous (no cookies forwarded), never cached**. ISR was considered (description section 9) and rejected for itineraries: a trip can stop being public through actions this domain cannot observe or invalidate (an admin hiding it via GEN-10, the author's account being deactivated via ACC-12), so any cached copy could keep exposing content that must disappear "immediately" (ITN-20). Only the country/city catalogs are cached (5 minutes). The team's static/ISR example is better placed on content whose invalidation the owner fully controls.
+
+Browser proof added (suite now 7/7): guest keyword/country/length/sort search where private trips never appear and an invalid range is explained; guest → sign in → returned → clone → independent private copy with attribution; author makes the original private → its public page 404s and it leaves search while the clone survives. Picker verified in `next dev` against the same disposable backend (private disabled, emitted `{"itineraryId": …}` matches the chosen trip).
+
 ## Remaining Person 7 slices
 
-1. Public discovery `/explore/itineraries[/id]` and clone (ITN-21), home "Explore itineraries" slot, Osama's FavoriteButton and Arwa's ReportAction mounts, `ItineraryPicker`/`Preview` for Hicham (BLG-13).
-2. Travel reuse: ITN-25 hotel search for a city group (Lama's HotelSearch prefill) and ITN-26 flight search (Gamila's FlightSearch prefill).
-3. Bonuses: ITN-27 linked bookings (Ismail/Osama booking readers) and ITN-28 PDF. Correction to slice 1 notes: the backend **already has** `GET /api/itineraries/:itineraryId/pdf` (`backend/src/itinerary-exports`, PR #58), so ITN-28 is a frontend download/print action with progress and error states.
+1. Travel reuse: ITN-25 hotel search for a city group (Lama's HotelSearch prefill) and ITN-26 flight search (Gamila's FlightSearch prefill).
+2. Bonuses: ITN-27 linked bookings (Ismail/Osama booking readers) and ITN-28 PDF via the existing `GET /api/itineraries/:itineraryId/pdf` (PR #58).
+3. Mount Osama's FavoriteButton (BON-02) and Arwa's ReportAction (GEN-09) on public itineraries when they reach develop (mount point marked in `/explore/itineraries/[id]`).

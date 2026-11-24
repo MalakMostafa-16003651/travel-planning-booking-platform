@@ -11,8 +11,10 @@ import { loadItinerary } from '@/features/itineraries/server';
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Edit itinerary', robots: { index: false } };
 
-export default async function EditItineraryPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function EditItineraryPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { id } = await params;
+  const query = await searchParams;
+  const notice = query.cloned === '1' ? 'Cloned. This private copy is yours to edit; the original is unchanged.' : query.created === '1' ? 'Itinerary created. Add your first day below.' : undefined;
   const here = `/itineraries/${encodeURIComponent(id)}/edit`;
   const viewer = await getServerSession().catch(() => null);
   if (!viewer) redirect(loginHref(here));
@@ -24,5 +26,5 @@ export default async function EditItineraryPage({ params }: { params: Promise<{ 
   }
   // A public itinerary is readable by others, but only its owner may edit it.
   if (result.data.userId !== viewer.userId) notFound();
-  return <ItineraryEditor initial={result.data} />;
+  return <ItineraryEditor initial={result.data} notice={notice} />;
 }

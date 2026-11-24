@@ -57,3 +57,54 @@ export async function loadCountryNames(): Promise<Record<string, string>> {
     return {};
   }
 }
+
+/**
+ * Anonymous public reads (ITN-21): no cookies are forwarded, so the response is the same for
+ * everyone and can never contain owner-only data such as linked bookings.
+ */
+async function loadAnonymous<T>(path: string): Promise<Loaded<T>> {
+  let response: Response;
+  try {
+    response = await fetch(new URL(`/api${path}`, backendUrl()), { cache: 'no-store', signal: AbortSignal.timeout(TIMEOUT_MS) });
+  } catch {
+    return { kind: 'error', message: 'The itinerary service is not responding. Please try again.' };
+  }
+  if (response.status === 404) return { kind: 'not-found' };
+  if (response.status === 400) {
+    const body = await response.json().catch(() => null) as { message?: string; errors?: Record<string, string[]> } | null;
+    const first = body?.errors ? Object.values(body.errors).flat()[0] : undefined;
+    return { kind: 'error', message: first || body?.message || 'Check the search filters.' };
+  }
+  if (!response.ok) return { kind: 'error', message: 'Public itineraries could not be loaded. Please try again.' };
+  return { kind: 'ok', data: (await response.json()) as T };
+}
+
+export interface PublicSearch {
+  q?: string;
+  country?: string;
+  city?: string;
+  minDays?: number;
+  maxDays?: number;
+  sort?: 'NEWEST' | 'OLDEST' | 'TITLE' | 'SHORTEST' | 'LONGEST';
+  page?: number;
+}
+
+export function searchPublicItineraries(search: PublicSearch): Promise<Loaded<ItineraryPage>> {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(search)) if (value !== undefined && value !== '') query.set(key, String(value));
+  return loadAnonymous(`/itineraries/public/search${query.size ? `?${query}` : ''}`);
+}
+
+export function loadPublicItinerary(id: string): Promise<Loaded<Itinerary>> {
+  return loadAnonymous(`/itineraries/public/${encodeURIComponent(id)}`);
+}
+
+/** GEN-12 city catalog for the public filters. */
+export async function loadCities(): Promise<{ cityId: string; name: string; countryCode: string }[]> {
+  try {
+    const response = await fetch(new URL('/api/cities', backendUrl()), { next: { revalidate: 300 }, signal: AbortSignal.timeout(TIMEOUT_MS) });
+    return response.ok ? await response.json() : [];
+  } catch {
+    return [];
+  }
+}
