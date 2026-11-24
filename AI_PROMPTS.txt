@@ -233,3 +233,37 @@ Tool: OpenAI Codex desktop app
 Prompt summary: Catch up on new M2 repository work and handoff replies, answer pending integration questions, and advance Malak's assignment.
 Use: Checked open PRs and handoffs against the M2 references. Fixed the shared CSS cascade in issue #137 and verified the production build and button styles in Chrome at 360 and 1440 px. Recorded the hotel search and flight booking contracts. Posted a focused flight price and selection check in issue #132. Owner PRs still supply the home widgets and traveler Bookings destination.
 ================================================
+
+================================================
+Date: 2026-11-24
+Student: 16002622 (Lama, Person 5)
+Tool: Claude Code (model: Claude Sonnet 5, via the Claude desktop app)
+Related requirements: GEN-08, hotel date-only controls (shared), HTL-11, HTL-12
+
+Prompt summary:
+Read the optimized 26-page M2 split and the repo's own docs/m2 coordination files
+(not supplied by me - already present in the repository from Malak's setup), confirm
+my assigned scope as Person 5 against them, then build my first slices: the shared
+image uploader/gallery, hotel date-only controls, and HotelSearch/HotelCard plus the
+/hotels discovery page.
+
+How the output was used:
+PR #134 (feature/GEN-08-media-upload-gallery): MediaUploader, a presentational
+upload/gallery component consumed by Gamila/Osama/Kiki/Hicham against their own
+endpoints, plus a new uploadFile() export in Malak's lib/api/client.ts (flagged for
+her review as a shared-file touch) and the hotel date-only helpers/controls
+(date-only.ts, date-only-input.tsx). PR #135 (feature/HTL-11-12-hotel-search-discovery,
+stacked on #134 since it needs the date controls): HotelSearch, HotelCard, HotelResults
+and the /hotels page, mirroring Gamila's merged FlightSearch/FlightResults pattern for
+consistency. Posted my HotelSearch export plan as a reply in issue #127 (Malak's
+existing handoff thread) instead of a side channel, per the team's request to use
+GitHub issues for cross-member handoffs.
+Verified against a real backend rather than fixtures: since the shared Atlas cluster
+was unreachable from this machine (DNS/SRV resolution failure, flagged in my #127
+reply), stood up a local in-memory MongoDB replica set, ran the existing seed
+scripts, created a test admin/hotel/moderator/room/availability through the real
+API, then drove the actual browser flow end to end (destination dropdown from real
+/api/cities+/api/countries, search navigation, live price/rating/amenities/
+availability on the card, empty state, 375px/1024px layouts). `npm run typecheck`
+and `npm run build` pass clean on both PRs; no test/debug files committed.
+================================================
