@@ -183,3 +183,15 @@ export function searchTripFlights<T>(id: string, query: TripFlightQuery, signal?
   for (const [key, value] of Object.entries(query)) if (value !== undefined && value !== '') params.set(key, String(value));
   return apiClient<TripFlightSearch<T>>(`${base(id)}/flights?${params}`, { signal });
 }
+
+// ---------------------------------------------------------------- ITN-27 linked bookings (bonus)
+
+/** Your own CONFIRMED/COMPLETED booking on a day it covers; the backend re-checks ownership and dates. */
+export function linkBooking(id: string, input: { type: 'FLIGHT' | 'HOTEL'; bookingId: string; dayId: string }): Promise<Itinerary> {
+  return apiClient<Itinerary>(`${base(id)}/bookings`, json('POST', input));
+}
+
+/** Removes only the link; the booking itself is not changed or cancelled. */
+export function unlinkBooking(id: string, linkedBookingId: string): Promise<Itinerary> {
+  return apiClient<Itinerary>(`${base(id)}/bookings/${encodeURIComponent(linkedBookingId)}`, { method: 'DELETE' });
+}

@@ -17,6 +17,8 @@ import { BudgetSummaryPanel } from './budget-summary';
 import { DayListEditor } from './day-list-editor';
 import { formatDateRange, money, pluralize, visibilityLabels } from './format';
 import { ItineraryForm } from './itinerary-form';
+import { LinkedBookingsEditor } from './linked-bookings-editor';
+import { PdfExport } from './pdf-export';
 import { TransportEditor } from './transport-editor';
 import type { BudgetSummary, Itinerary } from './types';
 import { useItineraryCatalog } from './use-catalog';
@@ -94,6 +96,7 @@ export function ItineraryEditor({ initial, notice }: { initial: Itinerary; notic
             {itinerary.days.length > 0 && <Link href={`/itineraries/${encodeURIComponent(id)}/flights`} className={buttonClassName('secondary')}>Find flights to {itinerary.days[0].city}</Link>}
             <Link href={`/itineraries/${encodeURIComponent(id)}`} className={buttonClassName('secondary')}>View itinerary</Link>
           </div>
+          <div className="w-full"><PdfExport itineraryId={id} title={itinerary.title} /></div>
         </div>
       </header>
 
@@ -208,6 +211,14 @@ export function ItineraryEditor({ initial, notice }: { initial: Itinerary; notic
               <p className="m-0 mt-1 text-sm text-muted">Trains, flights or drives between cities. Each cost is counted on its travel day.</p>
             </div>
             <TransportEditor itinerary={itinerary} cities={cities} currencies={currencies} busy={busy} mutate={run} />
+        </section>
+
+        <section aria-labelledby="linked-heading" className="grid gap-4">
+          <div>
+            <h2 id="linked-heading" className="m-0 text-xl">Your booked flights and hotels</h2>
+            <p className="m-0 mt-1 text-sm text-muted">Link your confirmed bookings to the right day. Only you see them; they are never shown to others or copied into clones.</p>
+          </div>
+          <LinkedBookingsEditor itinerary={itinerary} busy={busy} mutate={run} />
           </section>
         </div>
         <aside className="min-w-0 lg:sticky lg:top-6" aria-label="Budget summary">

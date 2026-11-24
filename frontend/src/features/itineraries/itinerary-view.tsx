@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { BudgetSummaryPanel } from './budget-summary';
+import { PdfExport } from './pdf-export';
 import { categoryLabels, formatDateRange, formatDayDate, money, pluralize, transportLabels, visibilityLabels } from './format';
 import type { Activity, Itinerary } from './types';
 
@@ -43,6 +44,7 @@ export function ItineraryView({ itinerary, countryNames, isOwner, actions }: {
             {itinerary.days.length > 0 && <Link href={`/itineraries/${encodeURIComponent(itinerary.itineraryId)}/flights`} className={buttonClassName('secondary')}>Find flights to {itinerary.days[0].city}</Link>}
           </div>
         </div>
+        <PdfExport itineraryId={itinerary.itineraryId} title={itinerary.title} />
         {itinerary.description && <p className="m-0 max-w-prose whitespace-pre-line">{itinerary.description}</p>}
       </header>
 

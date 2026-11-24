@@ -357,3 +357,17 @@ endpoints with Lama's HotelCard and Gamila's FlightCard, handing off to their ho
 and Ismail's booking page. Browser suite 9/9. Details: docs/work-logs/16001313.md
 (slice 4) and docs/m2/ITINERARIES.md.
 ================================================
+Date: 2026-11-24
+Student: 16001313 (Person 7)
+Tool: Claude Code (Anthropic)
+Related Requirement: ITN-27, ITN-28 (bonus, M2 frontend)
+
+Prompt:
+yes please   (start the bonuses: linked bookings and PDF export)
+
+How the output was used:
+Link/unlink of the user's own confirmed flight and hotel bookings to matching days with
+live budget totals, and PDF download/print using the existing export endpoint. Tested with
+real holds from the booking APIs; browser suite 11/11. Details: docs/work-logs/16001313.md
+(bonuses) and docs/m2/ITINERARIES.md.
+================================================

@@ -503,3 +503,107 @@ test('ITN-26: flights from a chosen origin to the first city, defaulting to trip
   await go.click();
   await expect(page).toHaveURL(/\/bookings\/flights\/new\?selection=/);
 });
+
+// ---------------------------------------------------------------- slice 5: ITN-27/28 bonuses
+
+test('ITN-27: link real confirmed bookings to matching days; they feed the budget once and stay owner-only', async ({ page, browser }) => {
+  await newTraveler(page, 'Booking Linker');
+  const start = isoDaysFromNow(50);
+  const { itineraryId: id } = await call<{ itineraryId: string }>(page, 'POST', '/itineraries', { title: 'Linked Cairo', countries: ['EG'], startDate: start, visibility: 'PUBLIC' });
+  for (const city of ['Cairo', 'Cairo', 'Cairo']) await call(page, 'POST', `/itineraries/${id}/days`, { city });
+
+  // Real holds through Osama's and Ismail's APIs, then confirmed as the payment webhook would.
+  const hotel = await fixture<{ hotelId: string; roomIds: string[] }>('hotel', { name: 'Linked Nile Hotel', rooms: '2', price: '9000' });
+  const stay = await call<{ hotelBookingId: string }>(page, 'POST', '/hotel-bookings', {
+    hotelId: hotel.hotelId, checkIn: isoDaysFromNowFrom(start, 1), checkOut: isoDaysFromNowFrom(start, 3), rooms: [{ roomId: hotel.roomIds[0], adults: 1, childrenAges: [] }],
+  });
+  await fixture('confirm', { type: 'HOTEL', id: stay.hotelBookingId });
+  // A second, still pending hold is listed but cannot be linked.
+  await call(page, 'POST', '/hotel-bookings', {
+    hotelId: hotel.hotelId, checkIn: isoDaysFromNowFrom(start, 1), checkOut: isoDaysFromNowFrom(start, 2), rooms: [{ roomId: hotel.roomIds[1], adults: 1, childrenAges: [] }],
+  });
+  const flight = await fixture<{ flightId: string; cabinId: string; flightNumber: string }>('flight', { from: 'LHR', to: 'CAI', date: start, hour: '9', price: '15000', number: 'MS777' });
+  const trip = await call<{ flightBookingId: string }>(page, 'POST', '/flight-bookings/hold', {
+    segments: [{ flightId: flight.flightId, cabinId: flight.cabinId }],
+    passengers: [{ fullName: 'Booking Linker', dateOfBirth: '1994-02-10', documentNumber: 'P1234567', type: 'ADULT' }],
+  });
+  await fixture('confirm', { type: 'FLIGHT', id: trip.flightBookingId });
+
+  await page.goto(`/itineraries/${id}/edit`);
+  const linked = page.getByRole('region', { name: 'Your booked flights and hotels' });
+  await expect(grandTotal(page)).toHaveText('$0.00');
+
+  // Hotel: only nights of the stay (days 2 and 3) are offered.
+  await linked.getByRole('button', { name: 'Link a booking' }).click();
+  const form = page.getByRole('form', { name: 'Link a booking' });
+  await expect(form.getByText(/Only confirmed or completed bookings can be linked/)).toBeVisible();
+  await form.getByRole('radio', { name: /Linked Nile Hotel · Ref ITN/ }).check();
+  await expect(form.getByLabel('Itinerary day').locator('option')).toHaveCount(2);
+  await form.getByLabel('Itinerary day').selectOption({ index: 1 });
+  await form.getByRole('button', { name: 'Link booking' }).click();
+  await expect(linked.getByText('Linked Nile Hotel', { exact: true })).toBeVisible();
+  await expect(linked.getByText('Counts in budget')).toBeVisible();
+  // 2 nights x $90.00, read live from the booking.
+  await expect(grandTotal(page)).toHaveText('$180.00');
+
+  // Flight: only its local departure day (day 1).
+  await linked.getByRole('button', { name: 'Link a booking' }).click();
+  await form.getByLabel('Booking type').selectOption('FLIGHT');
+  await form.getByRole('radio', { name: /MS777 LHR→CAI/ }).check();
+  await expect(form.getByLabel('Itinerary day').locator('option')).toHaveText([/^Day 1 ·/]);
+  await form.getByRole('button', { name: 'Link booking' }).click();
+  await expect(grandTotal(page)).toHaveText('$330.00');
+  // Already-linked bookings are not offered twice.
+  await linked.getByRole('button', { name: 'Link a booking' }).click();
+  await expect(form.getByText(/Already linked/).first()).toBeVisible();
+  await form.getByRole('button', { name: 'Cancel' }).click();
+
+  // Moving day 1 later shows the mismatch on the flight link.
+  await page.getByRole('button', { name: 'Move day 1 later' }).click();
+  await expect(linked.getByText('Day no longer matches the booking dates')).toBeVisible();
+
+  // Links are owner-only, even on a public itinerary.
+  const other = await browser.newPage();
+  await newTraveler(other, 'Nosy Reader');
+  await other.goto(`/itineraries/${id}`);
+  await expect(other.getByRole('heading', { level: 1, name: 'Linked Cairo' })).toBeVisible();
+  await expect(other.getByRole('main').getByText('Linked Nile Hotel')).toHaveCount(0);
+  await expect(other.getByRole('main').getByText(/MS777/)).toHaveCount(0);
+  await other.close();
+
+  // Unlinking removes it from the budget; the booking itself is untouched.
+  await linked.getByRole('button', { name: 'Unlink Linked Nile Hotel' }).click();
+  await page.getByRole('dialog', { name: 'Unlink this booking?' }).getByRole('button', { name: 'Unlink' }).click();
+  await expect(grandTotal(page)).toHaveText('$150.00');
+  expect((await call<{ status: string }>(page, 'GET', `/hotel-bookings/${stay.hotelBookingId}`)).status).toBe('CONFIRMED');
+});
+
+test('ITN-28: authorized PDF download and clear errors', async ({ page, browser }) => {
+  await newTraveler(page, 'Pdf Owner');
+  const id = await seedTrip(page, 'Printable Cairo', ['EG'], ['Cairo'], 'PRIVATE');
+  await page.goto(`/itineraries/${id}`);
+  const downloading = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download “Printable Cairo” as PDF' }).click();
+  const download = await downloading;
+  expect(download.suggestedFilename()).toBe(`itinerary-${id}.pdf`);
+  const stream = await download.createReadStream();
+  const first = await new Promise<Buffer>(resolve => stream.once('data', chunk => resolve(chunk as Buffer)));
+  expect(first.subarray(0, 4).toString()).toBe('%PDF');
+  await expect(page.getByRole('main').getByText(`Downloaded itinerary-${id}.pdf.`)).toBeVisible();
+
+  // Guests are asked to sign in (the endpoint needs a session); others cannot export a private trip.
+  await call(page, 'PATCH', `/itineraries/${id}`, { visibility: 'PUBLIC' });
+  const context = await browser.newContext();
+  const guest = await context.newPage();
+  await guest.goto(`/explore/itineraries/${id}`);
+  await expect(guest.getByRole('link', { name: 'Sign in to download PDF' })).toBeVisible();
+  await context.close();
+
+  const other = await browser.newPage();
+  await newTraveler(other, 'Pdf Stranger');
+  await other.goto(`/explore/itineraries/${id}`);
+  await call(page, 'PATCH', `/itineraries/${id}`, { visibility: 'PRIVATE' });
+  await other.getByRole('button', { name: 'Download “Printable Cairo” as PDF' }).click();
+  await expect(other.getByRole('main').getByText('This itinerary is no longer available to you, so it cannot be exported.')).toBeVisible();
+  await other.close();
+});

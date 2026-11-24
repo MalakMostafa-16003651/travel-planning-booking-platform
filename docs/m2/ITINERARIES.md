@@ -104,7 +104,21 @@ Rendering: both are dynamic SSR shells (readable itinerary, viewer cookies, no c
 
 Browser proof (suite now 9/9): ITN-25 two-stop trip (two Cairo nights, one Dubai night), validation, reload keeps the search, card opens Lama's hotel page with the stop dates. ITN-26 LHR→Cairo round trip with prefilled dates, infant rule, only the return that departs after the chosen late outbound is offered, the emitted `FlightSelection` equals the chosen flights/cabins, no overflow at 360/1440, and the link opens Ismail's booking page.
 
-## Remaining Person 7 slices
+## Slice 5 — bonuses ITN-27 and ITN-28
 
-1. Bonuses: ITN-27 linked bookings (Ismail/Osama booking readers) and ITN-28 PDF via the existing `GET /api/itineraries/:itineraryId/pdf` (PR #58).
-2. Mount Osama's FavoriteButton (BON-02) and Arwa's ReportAction (GEN-09) on public itineraries when they reach develop (mount point marked in `/explore/itineraries/[id]`).
+| Requirement | Where | Notes |
+| --- | --- | --- |
+| ITN-27 | editor section "Your booked flights and hotels" | "Link a booking" lists your own bookings from Ismail's `GET /api/flight-bookings` and Osama's `GET /api/hotel-bookings` (Upcoming/Past, server pages). Only CONFIRMED/COMPLETED, not-yet-linked bookings are selectable; the day list offers only covered days (hotel: check-in ≤ day < check-out; flight: first segment's local departure date), and the backend re-checks ownership, status and dates. Linked rows show live status/amount (major units from the itinerary API), "Counts in budget", a warning when reordering moved the day off the booking dates, and a confirmed **unlink** that never touches the booking. The budget panel lists linked bookings in its breakdown. Links are owner-only (never in public views or clones). |
+| ITN-28 | "Download PDF" and "Print" on the trip view, public view and editor | Uses the existing `GET /api/itineraries/:itineraryId/pdf` (PR #58, signed-in, same visibility as viewing). Download streams through the proxy with progress (percentage, or KB when no length is sent) and keeps the backend filename; Print loads the same PDF into a hidden frame and opens the print dialog. Guests see "Sign in to download PDF". 401 ends the session cleanly; 404 says the trip is no longer available. |
+
+Hand-off notes: hotel "View booking" links go to the `/bookings` hub until Osama's `/bookings/hotels/[id]` is on develop (one-line switch in `linked-bookings-editor.tsx`). Booking-list prices in the picker are cents (`formatMoneyMinorUnits`); linked-booking amounts from the itinerary API are major units.
+
+Browser proof (suite now 11/11):
+- **ITN-27:** real hotel and flight holds are created through the booking APIs, then marked paid in the disposable DB the way the payment webhook does. Checked: a pending hold is shown but disabled; the hotel offers only days 2–3 (2 nights × $90 → $180.00); the flight offers only day 1 (→ $330.00); already-linked bookings are not offered twice; reordering shows the mismatch badge; another traveler viewing the public trip sees no linked bookings; unlinking → $150.00 while the hotel booking stays CONFIRMED.
+- **ITN-28:** the download is a real `%PDF` file named `itinerary-<id>.pdf`; a guest sees the sign-in link; another user is told clearly once the trip becomes private.
+- **Not automated:** the browser print dialog (headless Chromium cannot show it).
+
+## Remaining Person 7 work
+
+1. Mount Osama's FavoriteButton (BON-02) and Arwa's ReportAction (GEN-09) on public itineraries when they reach develop (mount point marked in `/explore/itineraries/[id]`).
+2. Switch the hotel "View booking" link to Osama's detail route when it lands.

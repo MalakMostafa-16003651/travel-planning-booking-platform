@@ -82,14 +82,16 @@ async function main() {
         name, city, countryCode, address: '1 Test Street', checkInTime: '15:00', checkOutTime: '12:00',
         cancellationTiers: [{ daysBeforeCheckIn: 2, refundPercentage: 100 }],
       });
+      const roomIds = [];
       for (let index = 0; index < Number(rooms); index += 1) {
         const room = await connection.models.Room.create({ hotelId: hotel._id, name: `Room ${index + 1}`, capacity: Number(capacity), pricePerNight: Number(price) });
+        roomIds.push(String(room._id));
         await connection.collection('roomavailabilities').updateOne({ roomId: room._id }, {
           $set: { bookableRanges: [{ startDate: '2020-01-01', endDate: '2100-01-01' }] },
           $setOnInsert: { roomId: room._id, hotelId: hotel._id, blockedRanges: [], bookedRanges: [] },
         }, { upsert: true });
       }
-      return { hotelId: String(hotel._id) };
+      return { hotelId: String(hotel._id), roomIds };
     },
     /** ITN-26: a scheduled flight on an airport-local date (YYYY-MM-DD), departing at `hour` UTC. */
     async flight({ from, to, date, hour = '8', price = '15000', seats = '10', number }) {
@@ -113,6 +115,19 @@ async function main() {
         passwordHash: await app.get(PasswordService).hash(PASSWORD),
       });
       return { email, password: PASSWORD };
+    },
+    /**
+     * ITN-27: marks a real hold (created through the booking API) as paid, as the verified
+     * Stripe webhook would, so it can be linked. type is FLIGHT or HOTEL.
+     */
+    async confirm({ type, id }) {
+      const collection = type === 'FLIGHT' ? 'flightbookings' : 'hotelbookings';
+      const result = await connection.collection(collection).updateOne(
+        { _id: new Types.ObjectId(id), status: 'PENDING' },
+        { $set: { status: 'CONFIRMED', bookingReference: `ITN${randomBytes(3).toString('hex').toUpperCase()}` }, $unset: { holdExpiresAt: '' } },
+      );
+      if (result.matchedCount !== 1) throw new Error('No pending booking with that id');
+      return {};
     },
     /** Caches rates for `base`: units of each currency per one `base`, e.g. rates={"EGP":50}. */
     async rates({ base, rates, stale = 'false' }) {

@@ -141,6 +141,19 @@ export function BudgetSummaryPanel({ itineraryId, refreshKey, onLoaded }: {
                     </li>
                   ))}
                 </ul>
+                {summary.linkedBookings && summary.linkedBookings.length > 0 && (
+                  <div className="grid gap-1 text-sm">
+                    <p className="m-0 font-semibold text-ink">Linked bookings</p>
+                    <ul className="m-0 grid list-none gap-1 p-0">
+                      {summary.linkedBookings.map(link => (
+                        <li key={link.linkedBookingId} className="flex justify-between gap-3">
+                          <span>{link.label ?? link.type}{!link.countsInBudget && <span className="text-muted"> · not counted</span>}</span>
+                          <span className="font-semibold">{money(link.convertedAmount, summary.currency)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
                 {summary.originalTotals.length > 0 && (
                   <p className="m-0 text-xs text-muted">
                     As entered: {summary.originalTotals.map(total => money(total.amount, total.currency)).join(' + ')}
