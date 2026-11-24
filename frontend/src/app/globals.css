@@ -33,28 +33,35 @@
   --radius-card: 18px;
 }
 
-* { box-sizing: border-box; }
-html { color-scheme: light; }
-body {
-  margin: 0;
-  background: var(--surface-canvas);
-  color: var(--text-primary);
-  font-family: "Inter", sans-serif;
-  font-size: 16px;
-  line-height: 1.6;
-  -webkit-font-smoothing: antialiased;
+@layer base {
+  * { box-sizing: border-box; }
+  html { color-scheme: light; }
+  body {
+    margin: 0;
+    background: var(--surface-canvas);
+    color: var(--text-primary);
+    font-family: "Inter", sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2, h3 { color: var(--brand-ink); font-family: "Manrope", sans-serif; font-weight: 700; line-height: 1.2; letter-spacing: -.035em; }
+  h1 { font-size: 32px; }
+  h2 { font-size: 24px; }
+  h3 { font-size: 20px; }
+  a { color: var(--brand-primary); text-underline-offset: 4px; }
+  button, input, select, textarea { font: inherit; }
+  button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
+  :focus-visible { outline: 3px solid var(--brand-primary); outline-offset: 4px; }
+  button:disabled { cursor: not-allowed; opacity: .6; }
+  button, a { touch-action: manipulation; }
+  ::selection { background: var(--brand-sand); color: var(--brand-ink); }
+
+  @media (max-width: 767px) {
+    h1 { font-size: 28px; }
+    h2 { font-size: 22px; }
+  }
 }
-h1, h2, h3 { color: var(--brand-ink); font-family: "Manrope", sans-serif; font-weight: 700; line-height: 1.2; letter-spacing: -.035em; }
-h1 { font-size: 32px; }
-h2 { font-size: 24px; }
-h3 { font-size: 20px; }
-a { color: var(--brand-primary); text-underline-offset: 4px; }
-button, input, select, textarea { font: inherit; }
-button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
-:focus-visible { outline: 3px solid var(--brand-primary); outline-offset: 4px; }
-button:disabled { cursor: not-allowed; opacity: .6; }
-button, a { touch-action: manipulation; }
-::selection { background: var(--brand-sand); color: var(--brand-ink); }
 
 .page-container { width: min(100% - 48px, var(--content-max)); margin-inline: auto; }
 .page-content { min-height: 65vh; padding-block: 48px 64px; }
@@ -86,8 +93,6 @@ button, a { touch-action: manipulation; }
 .gallery-swatch { min-height: 80px; padding: 16px; border-radius: 12px; border: 1px solid var(--border-subtle); font-size: 14px; }
 
 @media (max-width: 767px) {
-  h1 { font-size: 28px; }
-  h2 { font-size: 22px; }
   .page-container { width: calc(100% - 32px); }
   .page-content { padding-block: 32px 48px; }
   .site-header-inner { min-height: 76px; }

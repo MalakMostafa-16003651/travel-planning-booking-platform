@@ -90,3 +90,12 @@ against the same build.
 Acceptance for booking, review, post and itinerary journeys requires the
 corresponding owner screens. Final role dashboards, shared Atlas test accounts
 and mail delivery through the team's private SMTP inbox need integration checks.
+
+## Shared button styles — 24 November 2026
+
+The frontend production build and its TypeScript check passed. Chrome verified
+white text on teal for the home registration link and login submit button,
+14 px semibold labels on both controls, and the teal default for the login
+recovery link. The home and login pages fit at 360 and 1440 px with no
+horizontal overflow. The browser used a stubbed signed-out session because
+this check covers CSS.
