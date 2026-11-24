@@ -142,6 +142,26 @@ live, so an expired hold disappears before the cleanup job runs, with the same f
 for the total. Added a test, checked that it fails without the fix, and opened a PR
 into develop. Details: docs/work-logs/16002979.md section 4.
 ================================================
+Date: 2026-11-24
+Student: 16002979 (Person 4)
+Tool: Claude Code (Anthropic)
+Related Requirement: FLT-19, FLT-21, FLT-22, FLT-23, FLT-25, FLT-26, GEN-11, FLT-27
+
+Prompt:
+(with the M2 split and the project description attached)
+here is the milestone(2) file, I am ismail ... start implementing what is required,
+also check the project description again ... check the issues on github ... make sure
+there are no conflicts and before anything make sure the code you're working on is up
+to date ... I want the front end to be very good and nice, also if you want to add
+anything extra as long as you don't change anything from the requirements, or what my
+teammates did
+
+How the output was used:
+Built the flight booking pages and the shared booking stepper and hold timer, with a
+browser suite on the real backend (21/21). Answered the open handoffs and raised issues
+for the integrations that depend on teammates. Details: docs/work-logs/16002979.md
+section 5 and docs/m2/FLIGHT_BOOKINGS.md.
+================================================
 Date: 2026-11-20
 Student: 16001313 (Person 7)
 Tool: Claude Code (Anthropic)
@@ -204,26 +224,4 @@ Student: 16003651 (Malak, Person 1)
 Tool: OpenAI Codex desktop app with delegated profile, email and shared UI work/review
 Prompt summary: Start Malak's M2 assignment from the optimized split and M1 contracts. Keep progress visible, use one PR and merge at the end of the session. Coordinate needed teammate exports through a handoff.
 Use: Implemented registration, editable profile and deactivation, email verification/resend, password recovery, shared controls, account navigation and the role-aware home shell using actual M1 APIs. Preserved internal sign-in return and guarded stale profile writes after account switches. Posted GitHub issue #127 for feature exports, bell/role destinations and shared test email/booking adoption. PR #128 groups all work. Both production builds and typecheck passed. 25 production-browser cases passed in the full run, and the corrected unknown-role noindex check passed in a focused rerun. Local Mongo and synthetic mail were used. See docs/m2/VALIDATION.md.
-================================================
-
-================================================
-Date: 2026-11-24
-Student: 16002979 (Person 4)
-Tool: Claude Code (Anthropic)
-Related Requirement: FLT-19, FLT-21, FLT-22, FLT-23, FLT-25, FLT-26, GEN-11, FLT-27
-
-Prompt:
-(with the M2 split and the project description attached)
-here is the milestone(2) file, I am ismail ... start implementing what is required,
-also check the project description again ... check the issues on github ... make sure
-there are no conflicts and before anything make sure the code you're working on is up
-to date ... I want the front end to be very good and nice, also if you want to add
-anything extra as long as you don't change anything from the requirements, or what my
-teammates did
-
-How the output was used:
-Built the flight booking pages and the shared booking stepper and hold timer, with a
-browser suite on the real backend (21/21). Answered the open handoffs and raised issues
-for the integrations that depend on teammates. Details: docs/work-logs/16002979.md
-section 5 and docs/m2/FLIGHT_BOOKINGS.md.
 ================================================
