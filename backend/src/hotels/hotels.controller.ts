@@ -45,7 +45,7 @@ import { MAX_HOTEL_PHOTOS, MAX_PHOTO_BYTES } from './hotels.rules';
 import { Hotel } from './schemas/hotel.schema';
 import { Room } from './schemas/room.schema';
 import { RoomAvailability } from './schemas/room-availability.schema';
-import { HotelsService, HotelSearchPage, AvailableRoomsPage, RoomAvailabilityPage, UploadedPhoto } from './hotels.service';
+import { HotelsService, HotelSearchPage, AvailableRoomsPage, RoomAvailabilityPage, RoomsPage, UploadedPhoto } from './hotels.service';
 import { OptionalAuthGuard } from './optional-auth.guard';
 
 @ApiTags('Hotels')
@@ -72,6 +72,18 @@ export class HotelsController {
   @ApiOkResponse({ description: 'A page of matching hotels', type: Object })
   search(@Query() query: SearchHotelsQueryDto): Promise<HotelSearchPage> {
     return this.hotels.search(query);
+  }
+
+  @Get('me')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(UserRole.HOTEL_MODERATOR)
+  @ApiCookieAuth('accessToken')
+  @ApiOperation({ summary: 'HTL-01: view my assigned hotel (hotel moderator)' })
+  @ApiOkResponse({ description: "The moderator's assigned hotel", type: Object })
+  @ApiUnauthorizedResponse({ type: ApiErrorDto })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'Hotel moderator role and one assigned hotel are required.' })
+  me(@Req() req: AuthenticatedRequest): Promise<Hotel> {
+    return this.hotels.getMine(req.user!.userId);
   }
 
   @Get(':id')
@@ -123,6 +135,19 @@ export class HotelsController {
   @ApiNotFoundResponse({ type: ApiErrorDto, description: ':id is not the caller\'s assigned hotel.' })
   createRoom(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: CreateRoomDto): Promise<Room> {
     return this.hotels.createRoom(req.user!.userId, id, body);
+  }
+
+  @Get(':id/rooms')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(UserRole.HOTEL_MODERATOR)
+  @ApiCookieAuth('accessToken')
+  @ApiOperation({ summary: "List the moderator's own rooms, active and inactive (HTL-03, HTL-05, HTL-06)", description: 'Page size 10, name order. Unlike rooms/available, dates are not required: this is the management list, not a stay-specific search.' })
+  @ApiOkResponse({ description: 'A page of rooms', type: Object })
+  @ApiUnauthorizedResponse({ type: ApiErrorDto })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'Hotel moderator role and one assigned hotel are required.' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: ':id is not the caller\'s assigned hotel.' })
+  listOwnRooms(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Query() query: HotelPageQueryDto): Promise<RoomsPage> {
+    return this.hotels.getOwnRooms(req.user!.userId, id, query.page ?? 1);
   }
 
   @Patch(':id/rooms/:roomId')
