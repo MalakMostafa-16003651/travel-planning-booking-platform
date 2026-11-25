@@ -10,10 +10,10 @@ export function TagList({ tags, label = 'Tags' }: { tags: string[]; label?: stri
         <li key={tag}>
           <Link
             href={blogHref({ tag })}
+            aria-label={`${tag}, show posts tagged ${tag}`}
             className="inline-flex min-h-9 items-center rounded-full border border-primary/25 bg-primary/10 px-3 text-sm font-semibold text-ink! no-underline hover:border-primary"
           >
             <span aria-hidden="true">#</span>{tag}
-            <span className="sr-only">, show posts tagged {tag}</span>
           </Link>
         </li>
       ))}

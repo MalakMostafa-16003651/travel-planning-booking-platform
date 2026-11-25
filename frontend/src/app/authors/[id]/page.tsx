@@ -8,8 +8,9 @@ import { Pager } from '@/features/blog/pager';
 import { PostCardList } from '@/features/blog/post-card';
 import { loadAuthor } from '@/features/blog/server';
 
-// Rendering: server-rendered per request (two page numbers in the URL) from a public, cookie-free API read
-// cached for 60 seconds. The backend answers 404 for a deactivated author (ACC-12). See docs/m2/BLOG.md.
+// Rendering: dynamic, server-rendered per request from a public, cookie-free API read that is never cached:
+// the backend answers 404 for a deactivated author (ACC-12) and that must apply at once. See docs/m2/BLOG.md.
+export const dynamic = 'force-dynamic';
 
 type Props = { params: Promise<{ id: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> };
 

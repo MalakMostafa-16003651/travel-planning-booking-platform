@@ -43,6 +43,11 @@ function publicGet<T>(path: string): Promise<Loaded<T>> {
   }));
 }
 
+/** Public but must reflect visibility changes at once (a deactivated author's page is 404 immediately, ACC-12). */
+function freshPublicGet<T>(path: string): Promise<Loaded<T>> {
+  return settle<T>(fetch(new URL(`/api${path}`, backendUrl()), { cache: 'no-store', signal: AbortSignal.timeout(TIMEOUT_MS) }));
+}
+
 /** Viewer-specific reads: the viewer's own cookies, never cached and never shared between requests. */
 async function privateGet<T>(path: string): Promise<Loaded<T>> {
   const jar = await cookies();
@@ -61,11 +66,14 @@ export function loadPublicPosts({ q, tag, page }: { q?: string; tag?: string; pa
   return publicGet(`/posts?${query}`);
 }
 
-/** BLG-12: public author page; each list has its own page number. */
-export function loadAuthor(userId: string, page: number, itinerariesPage: number): Promise<Loaded<AuthorProfile>> {
+/**
+ * BLG-12: public author page; each list has its own page number. Not cached: the page is about one person,
+ * and when that person deactivates their account (ACC-12) it must disappear on the next request.
+ */
+export const loadAuthor = cache((userId: string, page: number, itinerariesPage: number): Promise<Loaded<AuthorProfile>> => {
   const query = new URLSearchParams({ page: String(page), itinerariesPage: String(itinerariesPage) });
-  return publicGet(`/authors/${encodeURIComponent(userId)}?${query}`);
-}
+  return freshPublicGet(`/authors/${encodeURIComponent(userId)}?${query}`);
+});
 
 /**
  * BLG-02 post page. Read fresh with the viewer's cookies: the author sees their own draft or hidden post,
