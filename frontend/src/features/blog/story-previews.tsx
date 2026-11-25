@@ -20,10 +20,10 @@ export async function BlogStoryPreviews({ limit = 3 }: { limit?: number }) {
     <div className="grid gap-4">
       <ul className="m-0 grid list-none gap-4 p-0 md:grid-cols-3">
         {posts.map(post => (
-          <li key={post.postId} className="grid content-start gap-2 rounded-card border border-border bg-card p-5">
-            <h3 className="m-0 text-lg"><Link href={postHref(post.postId)} className="text-ink! no-underline hover:underline">{post.title}</Link></h3>
+          <li key={post.postId} className="grid min-w-0 content-start gap-2 rounded-card border border-border bg-card p-5">
+            <h3 className="m-0 text-lg wrap-anywhere"><Link href={postHref(post.postId)} className="text-ink! no-underline hover:underline">{post.title}</Link></h3>
             <p className="m-0 text-sm text-muted">{post.author.name} · <time dateTime={post.publishedAt}>{formatDate(post.publishedAt)}</time></p>
-            <p className="m-0 line-clamp-3 text-sm">{post.excerpt}</p>
+            <p className="m-0 line-clamp-3 text-sm wrap-anywhere">{post.excerpt}</p>
             <Counts likes={post.likesCount} comments={post.commentsCount} />
           </li>
         ))}

@@ -55,7 +55,11 @@ function CommentField({ id, label, value, onChange, error, disabled }: { id: str
   );
 }
 
-function CommentItem({ comment, mine, onChanged, onDeleted }: { comment: Comment; mine: boolean; onChanged: (comment: Comment) => void; onDeleted: () => Promise<void> }) {
+const GONE = 'That comment was already deleted, for example in another tab. The list is up to date again.';
+
+const isGone = (cause: unknown) => cause instanceof ApiError && cause.status === 404;
+
+function CommentItem({ comment, mine, onChanged, onDeleted }: { comment: Comment; mine: boolean; onChanged: (comment: Comment) => void; onDeleted: (note?: string) => Promise<void> }) {
   const fieldId = useId();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(comment.content);
@@ -73,6 +77,8 @@ function CommentItem({ comment, mine, onChanged, onDeleted }: { comment: Comment
       onChanged(await apiClient<Comment>(`/comments/${encodeURIComponent(comment.commentId)}`, { method: 'PATCH', body: JSON.stringify({ content: draft }) }));
       setEditing(false);
     } catch (cause) {
+      // Deleted elsewhere: close the editor and reload the page of comments instead of showing a dead form.
+      if (isGone(cause)) { setEditing(false); await onDeleted(GONE); return; }
       setError(messageOf(cause));
     } finally {
       setSaving(false);
@@ -80,12 +86,12 @@ function CommentItem({ comment, mine, onChanged, onDeleted }: { comment: Comment
   }
 
   return (
-    <article className="grid gap-2 rounded-card border border-border bg-card p-4" aria-label={`Comment by ${comment.author.name}`}>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+    <article className="grid min-w-0 gap-2 rounded-card border border-border bg-card p-4" aria-label={`Comment by ${comment.author.name}`}>
+      <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-sm wrap-anywhere">
         <span className="font-semibold text-ink"><AuthorName author={comment.author} /></span>
         <time dateTime={comment.createdAt} className="text-muted">{formatDate(comment.createdAt)}</time>
         {edited && <span className="text-muted">(edited)</span>}
-        {comment.isHidden && <Badge tone="warning">Hidden by a moderator, only you can see it</Badge>}
+        {comment.isHidden && <Badge tone="warning">Hidden by a moderator; only the author and admins can see it</Badge>}
       </div>
       {editing ? (
         <form onSubmit={save} className="grid gap-3" noValidate>
@@ -96,7 +102,7 @@ function CommentItem({ comment, mine, onChanged, onDeleted }: { comment: Comment
           </div>
         </form>
       ) : (
-        <p className="m-0 max-w-prose whitespace-pre-line break-words">{comment.content}</p>
+        <p className="m-0 max-w-prose whitespace-pre-line wrap-anywhere">{comment.content}</p>
       )}
       {mine && !editing && (
         <div className="flex flex-wrap gap-3">
@@ -108,12 +114,15 @@ function CommentItem({ comment, mine, onChanged, onDeleted }: { comment: Comment
             confirmLabel="Delete comment"
             pendingLabel="Deleting…"
             onConfirm={async () => {
+              let note: string | undefined;
               try {
                 await apiClient<void>(`/comments/${encodeURIComponent(comment.commentId)}`, { method: 'DELETE' });
               } catch (cause) {
-                throw new Error(messageOf(cause));
+                // Already gone (another tab): the goal is reached, so close and reload, like deleting a post.
+                if (!isGone(cause)) throw new Error(messageOf(cause));
+                note = GONE;
               }
-              await onDeleted();
+              await onDeleted(note);
             }}
           />
         </div>
@@ -135,12 +144,14 @@ export function Comments({ postId, initialPage, open }: { postId: string; initia
   const [text, setText] = useState('');
   const [formError, setFormError] = useState('');
   const [listError, setListError] = useState('');
+  const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
   const base = `/posts/${encodeURIComponent(postId)}/comments`;
 
   async function load(page: number) {
     setBusy(true);
     setListError('');
+    setNotice('');
     try {
       setData(await apiClient<Page<Comment>>(`${base}?page=${page}`));
     } catch (cause) {
@@ -169,17 +180,18 @@ export function Comments({ postId, initialPage, open }: { postId: string; initia
     }
   }
 
-  async function afterDelete() {
+  async function afterDelete(note?: string) {
     void refreshPublicBlog();
     const remaining = data.total - 1;
     await load(Math.min(data.page, Math.max(1, Math.ceil(remaining / data.pageSize))));
+    if (note) setNotice(note);
   }
 
   const here = `${postHref(postId)}#comments`;
   const over = text.trim().length > MAX;
 
   return (
-    <section id="comments" aria-labelledby="comments-heading" className="grid gap-4">
+    <section id="comments" aria-labelledby="comments-heading" className="grid min-w-0 gap-4">
       <h2 id="comments-heading" className="m-0">Comments <span className="text-base font-normal text-muted">({plural(data.total, 'comment')})</span></h2>
 
       {data.total === 0
@@ -187,7 +199,7 @@ export function Comments({ postId, initialPage, open }: { postId: string; initia
         : (
           <ol className="m-0 grid list-none gap-3 p-0" aria-busy={busy}>
             {data.items.map(comment => (
-              <li key={comment.commentId}>
+              <li key={comment.commentId} className="min-w-0">
                 <CommentItem
                   comment={comment}
                   mine={!!user && comment.author.userId === user.userId}
@@ -198,6 +210,7 @@ export function Comments({ postId, initialPage, open }: { postId: string; initia
             ))}
           </ol>
         )}
+      {notice && <p role="status" className="m-0 text-sm text-muted">{notice}</p>}
       {listError && <ErrorAlert message={listError} />}
       <Pager page={data.page} totalPages={data.totalPages} label="Comment pages" onPage={page => void load(page)} disabled={busy} />
 

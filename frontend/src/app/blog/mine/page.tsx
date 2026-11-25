@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { loginHref } from '@/config/routes';
 import { DeletePostButton } from '@/features/blog/delete-post';
+import { FlashNotice } from '@/features/blog/flash-notice';
 import { formatDate, linkButtonClass, pageParam, postHref } from '@/features/blog/format';
 import { LoadFailed, TravelerOnly } from '@/features/blog/page-states';
 import { Pager } from '@/features/blog/pager';
@@ -45,7 +46,7 @@ export default async function MyPostsPage({ searchParams }: Props) {
         </div>
         <Link href="/blog/new" className={linkButtonClass('primary')}>Write a post</Link>
       </header>
-      {query.deleted === '1' && <p role="status" className="m-0 rounded-control border border-success/25 bg-success/10 p-4 text-sm text-ink">The post was deleted.</p>}
+      <FlashNotice param="deleted" message={query.deleted === '1' ? 'The post was deleted.' : null} />
 
       {result.kind === 'ok' ? (
         result.data.total === 0 ? (
@@ -55,10 +56,10 @@ export default async function MyPostsPage({ searchParams }: Props) {
         ) : (
           <ul className="m-0 grid list-none gap-3 p-0" aria-label="Your posts">
             {result.data.items.map(post => (
-              <li key={post.postId} className="grid gap-3 rounded-card border border-border bg-card p-5 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+              <li key={post.postId} className="grid min-w-0 gap-3 rounded-card border border-border bg-card p-5 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
                 <div className="grid min-w-0 gap-2">
                   <StatusBadges post={post} />
-                  <h2 className="m-0 break-words text-lg"><Link href={postHref(post.postId)} className="text-ink! no-underline hover:underline">{post.title}</Link></h2>
+                  <h2 className="m-0 text-lg wrap-anywhere"><Link href={postHref(post.postId)} className="text-ink! no-underline hover:underline">{post.title}</Link></h2>
                   <p className="m-0 text-sm text-muted">
                     {post.status === 'PUBLISHED' && post.publishedAt
                       ? <>Published <time dateTime={post.publishedAt}>{formatDate(post.publishedAt)}</time></>
@@ -68,7 +69,8 @@ export default async function MyPostsPage({ searchParams }: Props) {
                 </div>
                 <div className="flex flex-wrap gap-3">
                   <Link href={`${postHref(post.postId)}/edit`} className={linkButtonClass('secondary')}>Edit<span className="sr-only"> {post.title}</span></Link>
-                  <DeletePostButton postId={post.postId} title={post.title} afterDelete="refresh" />
+                  {/* Deleting the only post on a later page goes back one page instead of showing an empty one. */}
+                  <DeletePostButton postId={post.postId} title={post.title} afterDelete={result.data.items.length === 1 && page > 1 ? mineHref(page - 1) as `/${string}` : 'refresh'} />
                 </div>
               </li>
             ))}

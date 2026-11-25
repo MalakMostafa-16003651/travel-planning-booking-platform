@@ -43,22 +43,24 @@ export default async function PostPage({ params }: Props) {
   if (result.kind === 'error') return <LoadFailed message={result.message} retryHref={`/blog/${encodeURIComponent(id)}`} />;
   const post = result.data;
   const open = isPublic(post);
-  const date = post.publishedAt ?? post.createdAt;
+  // A post moved back to drafts keeps its first publishedAt; it is only "Published" while it is.
+  const published = post.status === 'PUBLISHED' && !!post.publishedAt;
+  const date = published ? post.publishedAt! : post.createdAt;
 
   return (
-    <article className="mx-auto grid w-full max-w-3xl gap-8">
+    <article className="mx-auto grid w-full min-w-0 max-w-3xl gap-8">
       <div><Link href="/blog" className="text-sm">All stories</Link></div>
 
-      <header className="grid gap-4">
+      <header className="grid min-w-0 gap-4">
         {(post.status === 'DRAFT' || post.isHidden) && (
           <div className="flex flex-wrap gap-2">
             {post.status === 'DRAFT' && <Badge tone="warning">Draft: only you can see it</Badge>}
             {post.isHidden && <Badge tone="danger">Hidden by a moderator: only the author and admins can see it</Badge>}
           </div>
         )}
-        <h1 className="m-0 break-words">{post.title}</h1>
-        <p className="m-0 text-muted">
-          By <AuthorName author={post.author} /> · {post.publishedAt ? 'Published' : 'Created'} <time dateTime={date}>{formatDate(date)}</time>
+        <h1 className="m-0 wrap-anywhere">{post.title}</h1>
+        <p className="m-0 text-muted wrap-anywhere">
+          By <AuthorName author={post.author} /> · {published ? 'Published' : 'Created'} <time dateTime={date}>{formatDate(date)}</time>
         </p>
         <TagList tags={post.tags} />
         <OwnerActions postId={post.postId} authorId={post.author.userId} title={post.title} />
@@ -76,14 +78,14 @@ export default async function PostPage({ params }: Props) {
       )}
 
       {/* A narrow reading measure (about 65 characters) for the story text. */}
-      <div className="grid max-w-[65ch] gap-4 text-lg leading-relaxed">
-        {paragraphs(post.content).map((paragraph, index) => <p key={index} className="m-0 whitespace-pre-line break-words">{paragraph}</p>)}
+      <div className="grid min-w-0 max-w-[65ch] gap-4 text-lg leading-relaxed">
+        {paragraphs(post.content).map((paragraph, index) => <p key={index} className="m-0 whitespace-pre-line wrap-anywhere">{paragraph}</p>)}
       </div>
 
       {post.itinerary && (
-        <aside aria-labelledby="attached-itinerary" className="grid gap-2 rounded-card border border-border bg-card p-5">
+        <aside aria-labelledby="attached-itinerary" className="grid min-w-0 gap-2 rounded-card border border-border bg-card p-5">
           <p id="attached-itinerary" className="m-0 inline-flex items-center gap-2 text-sm font-semibold text-muted"><MapIcon size={16} aria-hidden="true" />Attached itinerary</p>
-          <h2 className="m-0 text-xl">
+          <h2 className="m-0 text-xl wrap-anywhere">
             <Link href={`/explore/itineraries/${encodeURIComponent(post.itinerary.itineraryId)}`}>{post.itinerary.title}</Link>
           </h2>
           <p className="m-0 text-sm text-muted">

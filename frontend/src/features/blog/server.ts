@@ -34,7 +34,8 @@ async function settle<T>(request: Promise<Response>): Promise<Loaded<T>> {
 
 /**
  * Public reads send NO cookies, so the cached response is the same for everyone and can never hold a draft,
- * a hidden post or the viewer's like. Hidden or deactivated content leaves the cache within 60 seconds.
+ * a hidden post or the viewer's like. Changes expire it at once through refreshPublicBlog (actions.ts);
+ * the 60-second revalidation is only the fallback when nobody called it.
  */
 function publicGet<T>(path: string): Promise<Loaded<T>> {
   return settle<T>(fetch(new URL(`/api${path}`, backendUrl()), {
@@ -63,7 +64,8 @@ export function loadPublicPosts({ q, tag, page }: { q?: string; tag?: string; pa
   const query = new URLSearchParams({ page: String(page) });
   if (q) query.set('q', q);
   if (tag) query.set('tag', tag);
-  return publicGet(`/posts?${query}`);
+  // Keyword searches are endless free text: caching each one would only fill the cache, so they are read fresh.
+  return q ? freshPublicGet(`/posts?${query}`) : publicGet(`/posts?${query}`);
 }
 
 /**

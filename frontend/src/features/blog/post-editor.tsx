@@ -12,6 +12,7 @@ import { Select } from '@/components/ui/select';
 import { MediaUploader, type MediaItem } from '@/features/media/media-uploader';
 import { ApiError, apiClient, uploadFile } from '@/lib/api/client';
 import { refreshPublicBlog } from './actions';
+import { useDropQueryParam } from './flash-notice';
 import { plural, postHref } from './format';
 import { BLOG_LIMITS, type AuthorProfile, type ItinerarySummary, type Post, type PostStatus } from './types';
 
@@ -89,19 +90,30 @@ export function PostEditor({ userId, post, notice }: { userId: string; post?: Po
   const [saving, setSaving] = useState<PostStatus | null>(null);
   const [message, setMessage] = useState(notice ?? '');
   const itineraries = useOwnPublicItineraries(userId);
+  // The "saved" notice came in the URL (?saved=draft); drop it so a reload does not repeat it.
+  useDropQueryParam('saved');
 
   const status = saved?.status ?? 'DRAFT';
   const images = saved?.images ?? [];
 
+  /** Adds the typed tag; a pasted list such as "nile, luxor" becomes separate tags. Stops at the first problem. */
   function addTag() {
-    const tag = normalizeTag(tagInput);
-    if (!tag) return;
-    if (tag.length > BLOG_LIMITS.tagMax) { setErrors(current => ({ ...current, tags: `Each tag can be at most ${BLOG_LIMITS.tagMax} characters.` })); return; }
-    if (tags.includes(tag)) { setErrors(current => ({ ...current, tags: `“${tag}” is already added.` })); return; }
-    if (tags.length >= BLOG_LIMITS.maxTags) { setErrors(current => ({ ...current, tags: `A post can have at most ${BLOG_LIMITS.maxTags} tags.` })); return; }
-    setTags([...tags, tag]);
-    setTagInput('');
-    setErrors(current => ({ ...current, tags: undefined }));
+    const candidates = tagInput.split(',').map(normalizeTag).filter(Boolean);
+    const next = [...tags];
+    let problem = '';
+    let used = 0;
+    for (const tag of candidates) {
+      if (tag.length > BLOG_LIMITS.tagMax) problem = `Each tag can be at most ${BLOG_LIMITS.tagMax} characters.`;
+      else if (next.includes(tag)) problem = `“${tag}” is already added.`;
+      else if (next.length >= BLOG_LIMITS.maxTags) problem = `A post can have at most ${BLOG_LIMITS.maxTags} tags.`;
+      if (problem) break;
+      next.push(tag);
+      used += 1;
+    }
+    setTags(next);
+    // Keep the tags that could not be added in the field, so nothing typed is lost silently.
+    setTagInput(candidates.slice(used).join(', '));
+    setErrors(current => ({ ...current, tags: problem || undefined }));
   }
 
   function onTagKey(event: KeyboardEvent<HTMLInputElement>) {
@@ -144,7 +156,14 @@ export function PostEditor({ userId, post, notice }: { userId: string; post?: Po
   async function uploadImage(file: File, onProgress: (percent: number) => void): Promise<MediaItem> {
     if (!saved) throw new Error('Save the post first.');
     const before = new Set(images.map(image => image.imageId));
-    const result = await uploadFile<Post>(`/posts/${encodeURIComponent(saved.postId)}/images`, 'image', file, onProgress);
+    let result: Post;
+    try {
+      result = await uploadFile<Post>(`/posts/${encodeURIComponent(saved.postId)}/images`, 'image', file, onProgress);
+    } catch (cause) {
+      // The backend's message is the generic "Validation failed"; the reason is in the `image` field error.
+      if (cause instanceof ApiError) throw new ApiError(cause.status, cause.fields.image?.[0] ?? cause.message, cause.fields);
+      throw cause;
+    }
     setSaved(result);
     void refreshPublicBlog();
     const added = result.images.find(image => !before.has(image.imageId)) ?? result.images[result.images.length - 1];
@@ -187,14 +206,14 @@ export function PostEditor({ userId, post, notice }: { userId: string; post?: Po
         {tags.length > 0 && (
           <ul aria-label="Added tags" className="m-0 flex list-none flex-wrap gap-2 p-0">
             {tags.map(tag => (
-              <li key={tag} className="inline-flex min-h-9 items-center gap-1 rounded-full border border-primary/25 bg-primary/10 pl-3 text-sm font-semibold text-ink">
+              <li key={tag} className="inline-flex min-h-11 items-center gap-1 rounded-full border border-primary/25 bg-primary/10 pl-3 text-sm font-semibold text-ink">
                 #{tag}
                 <button
                   type="button"
                   onClick={() => setTags(tags.filter(item => item !== tag))}
                   disabled={busy}
                   aria-label={`Remove tag ${tag}`}
-                  className="inline-flex size-9 items-center justify-center rounded-full border-0 bg-transparent text-ink"
+                  className="inline-flex size-11 items-center justify-center rounded-full border-0 bg-transparent text-ink"
                 >
                   <X size={14} aria-hidden="true" />
                 </button>

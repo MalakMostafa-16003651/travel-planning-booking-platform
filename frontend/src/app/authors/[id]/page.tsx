@@ -48,11 +48,11 @@ export default async function AuthorPage(props: Props) {
     <div className="stack">
       <header>
         <Link href="/blog" className="text-sm">All stories</Link>
-        <h1 className="m-0 mt-3 break-words">{author.name}</h1>
+        <h1 className="m-0 mt-3 wrap-anywhere">{author.name}</h1>
         <p className="m-0 mt-2 text-muted">Joined <time dateTime={author.joinedAt}>{formatMonth(author.joinedAt)}</time></p>
       </header>
 
-      <section aria-labelledby="author-posts" className="grid gap-4">
+      <section aria-labelledby="author-posts" className="grid min-w-0 gap-4">
         <h2 id="author-posts" className="m-0">Published posts <span className="text-base font-normal text-muted">({author.posts.total})</span></h2>
         {author.posts.items.length === 0
           ? <EmptyState title={author.posts.total === 0 ? 'No published posts yet' : 'This page is empty'} />
@@ -60,15 +60,15 @@ export default async function AuthorPage(props: Props) {
         <Pager page={author.posts.page} totalPages={author.posts.totalPages} label="Post pages" href={target => here(target, itinerariesPage)} />
       </section>
 
-      <section aria-labelledby="author-itineraries" className="grid gap-4">
+      <section aria-labelledby="author-itineraries" className="grid min-w-0 gap-4">
         <h2 id="author-itineraries" className="m-0">Public itineraries <span className="text-base font-normal text-muted">({author.itineraries.total})</span></h2>
         {author.itineraries.items.length === 0 ? (
           <EmptyState title={author.itineraries.total === 0 ? 'No public itineraries yet' : 'This page is empty'} />
         ) : (
           <ul className="m-0 grid list-none gap-3 p-0 md:grid-cols-2">
             {author.itineraries.items.map(itinerary => (
-              <li key={itinerary.itineraryId} className="grid gap-1 rounded-card border border-border bg-card p-5">
-                <h3 className="m-0 text-lg">
+              <li key={itinerary.itineraryId} className="grid min-w-0 gap-1 rounded-card border border-border bg-card p-5">
+                <h3 className="m-0 text-lg wrap-anywhere">
                   {/* Kiki's public itinerary page (ITN-21). */}
                   <Link href={`/explore/itineraries/${encodeURIComponent(itinerary.itineraryId)}`}>{itinerary.title}</Link>
                 </h3>

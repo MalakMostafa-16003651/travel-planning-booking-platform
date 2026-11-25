@@ -6,7 +6,8 @@ import { ApiError, apiClient } from '@/lib/api/client';
 import { refreshPublicBlog } from './actions';
 
 /** BLG-04 with GEN-03: deleting a post asks first, and also removes its comments, likes and images. */
-export function DeletePostButton({ postId, title, afterDelete = 'mine' }: { postId: string; title: string; afterDelete?: 'mine' | 'refresh' }) {
+/** afterDelete: 'mine' goes to My posts, 'refresh' re-reads the current page, a path goes there (e.g. the previous page). */
+export function DeletePostButton({ postId, title, afterDelete = 'mine' }: { postId: string; title: string; afterDelete?: 'mine' | 'refresh' | `/${string}` }) {
   const router = useRouter();
   return (
     <ConfirmDialog
@@ -24,7 +25,8 @@ export function DeletePostButton({ postId, title, afterDelete = 'mine' }: { post
         }
         await refreshPublicBlog();
         if (afterDelete === 'mine') router.push('/blog/mine?deleted=1');
-        else router.refresh();
+        else if (afterDelete === 'refresh') router.refresh();
+        else router.push(afterDelete);
       }}
     />
   );
