@@ -339,3 +339,21 @@ message. Added a development preview and docs/m2/REPORTS.md for Osama, Kiki and 
 Checked in Chromium with sample data: every answer above, Escape and focus return, and no
 sideways scroll at 360 px. typecheck passes. The real-backend check is recorded separately.
 ================================================
+Date: 2026-11-25
+Student: 16002483 (Arwa, Person 2)
+Tool: Claude Code (Anthropic)
+Related requirements: GEN-01, GEN-05
+
+Prompt summary:
+Continue with the notification bell and the /notifications page, following the registry
+contract for the header slot.
+
+How the output was used:
+Added @/features/notifications: NotificationBell (no props) mounted once in the header's
+notificationSlot, reading GET /api/notifications/unread-count on sign-in, navigation, focus and
+inbox changes with no polling timer; and the /notifications inbox (ten per page with the shared
+Pagination, Unread filter in the URL, mark one and mark all, local-time dates, empty and error
+states). No deep links, because NotificationDto has no target. Wrote docs/m2/NOTIFICATIONS.md.
+Checked in Chromium with sample data: counts, both mark actions updating the bell without a
+reload, filters, paging, guest return and 360 px layout. typecheck and build pass.
+================================================
