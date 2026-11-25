@@ -37,7 +37,7 @@ export default async function NotificationsPage({ searchParams }: { searchParams
   );
 
   return (
-    <div className="page-container page-content stack">
+    <div className="page-container page-content stack content-start">
       <div>
         <h1 className="m-0">Notifications</h1>
         <p className="muted mb-0">

@@ -357,3 +357,22 @@ states). No deep links, because NotificationDto has no target. Wrote docs/m2/NOT
 Checked in Chromium with sample data: counts, both mark actions updating the bell without a
 reload, filters, paging, guest return and 360 px layout. typecheck and build pass.
 ================================================
+Date: 2026-11-25
+Student: 16002483 (Arwa, Person 2)
+Tool: Claude Code (Anthropic)
+Related requirements: ACC-16, ACC-07a, ACC-14
+
+Prompt summary:
+Build the /admin landing page and the account actions on the accounts list, using only the
+existing backend endpoints and rules.
+
+How the output was used:
+Added /admin (cards and a menu that only lists built sections) and an Actions column on
+/admin/accounts: Suspend and Reactivate with an optional 3-500 character audit reason, and
+Reset password with a temporary password checked against the shared password rule. No actions
+for administrators; deactivated accounts can only get a temporary password. A shared admin
+ActionDialog confirms each action, blocks double submission and keeps server errors in the
+dialog; 409 asks the admin to reload. Wrote docs/m2/ADMIN.md. Checked in Chromium with sample
+data at 360, 768, 1024 and 1440 px; a stretched menu on short pages was found and fixed.
+typecheck and build pass.
+================================================
