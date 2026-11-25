@@ -129,6 +129,12 @@ async function main() {
       if (result.matchedCount !== 1) throw new Error('No pending booking with that id');
       return {};
     },
+    /** Revokes every session of a user, as a server-side expiry or sign-out elsewhere would. */
+    async 'end-sessions'({ email }) {
+      const user = await connection.models.User.findOne({ email });
+      await connection.models.AuthSession.updateMany({ userId: user._id }, { $set: { revokedAt: new Date() } });
+      return {};
+    },
     /** Caches rates for `base`: units of each currency per one `base`, e.g. rates={"EGP":50}. */
     async rates({ base, rates, stale = 'false' }) {
       const fetchedAt = new Date(Date.now() - (stale === 'true' ? 2 * 86_400_000 : 0));

@@ -607,3 +607,38 @@ test('ITN-28: authorized PDF download and clear errors', async ({ page, browser 
   await expect(other.getByRole('main').getByText('This itinerary is no longer available to you, so it cannot be exported.')).toBeVisible();
   await other.close();
 });
+
+// ---------------------------------------------------------------- expired session and refresh recovery
+
+test('an expired session mid-edit explains itself, keeps unsaved text, and recovers after signing in again', async ({ page }) => {
+  const account = await newTraveler(page, 'Session Tester');
+  const id = await seedTrip(page, 'Session trip', ['EG'], ['Cairo'], 'PRIVATE');
+  await page.goto(`/itineraries/${id}/edit`);
+  const form = page.getByRole('region', { name: 'Add a day' });
+  await form.getByLabel('City').selectOption({ label: 'Cairo' });
+  await form.getByLabel('Notes (optional)').fill('Felucca ride at sunset');
+
+  // The server ends the session (idle timeout, sign-out elsewhere) while the page is open.
+  await fixture('end-sessions', { email: account.email });
+  await form.getByRole('button', { name: 'Add day' }).click();
+  await expect(page.getByRole('main').getByText('Your session has ended. Sign in again to keep editing; unsaved text is kept on this page.')).toBeVisible();
+  await expect(form.getByLabel('Notes (optional)')).toHaveValue('Felucca ride at sunset');
+  await expect(page.getByRole('main').getByText('1 of 60 days')).toBeVisible();
+  // The shared header reflects the ended session.
+  await expect(page.getByRole('banner').getByRole('link', { name: 'Sign in' })).toBeVisible();
+
+  // A refresh while signed out goes to sign-in and returns to the editor afterwards (ACC-10).
+  await page.reload();
+  await expect(page).toHaveURL(/\/login\?returnTo=%2Fitineraries%2F[a-f0-9]{24}%2Fedit/);
+  await page.getByLabel('Email').fill(account.email);
+  await page.getByLabel('Password').fill(account.password);
+  await page.getByRole('button', { name: /sign in/i }).click();
+  await expect(page).toHaveURL(new RegExp(`/itineraries/${id}/edit$`));
+
+  // Nothing was half-saved; the same edit now succeeds.
+  await expect(page.getByRole('main').getByText('1 of 60 days')).toBeVisible();
+  await addDay(page, 'Cairo');
+  await expect(page.getByRole('main').getByText('2 of 60 days')).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('main').getByText('2 of 60 days')).toBeVisible();
+});

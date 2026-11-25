@@ -118,7 +118,13 @@ Browser proof (suite now 11/11):
 - **ITN-28:** the download is a real `%PDF` file named `itinerary-<id>.pdf`; a guest sees the sign-in link; another user is told clearly once the trip becomes private.
 - **Not automated:** the browser print dialog (headless Chromium cannot show it).
 
+## Session expiry and regression checks (2026-11-25)
+
+- New browser test: the server revokes the session while the editor is open. The next save shows "Your session has ended…", unsaved form text stays on the page, and the shared header switches to "Sign in". A refresh goes to sign-in and returns to the editor; nothing was half-saved and the same edit then succeeds. Suite now 12/12.
+- Teammates' suites run unchanged against this branch: account/auth `playwright.config.ts` 26/26, flight bookings `playwright.bookings.config.ts` 21/21. The browser came from a local Chromium via a temporary `PLAYWRIGHT_BROWSERS_PATH`; no repository files were changed for that.
+- Open teammate PRs relevant to Person 7, checked on 2026-11-25: Arwa's `ReportAction` (#153) has the `targetType`/`targetId` props in the registry, ready to mount at the marked spot on `/explore/itineraries/[id]` once merged. Hicham's blog (#158) links to `/explore/itineraries/[id]` and plans to swap its select for `ItineraryPicker` after #148 merges. Arwa's shared `Pagination` (#152) can replace the local `Pager` after it merges.
+
 ## Remaining Person 7 work
 
-1. Mount Osama's FavoriteButton (BON-02) and Arwa's ReportAction (GEN-09) on public itineraries when they reach develop (mount point marked in `/explore/itineraries/[id]`).
+1. Mount Arwa's ReportAction (GEN-09, PR #153) and Osama's FavoriteButton (BON-02, not yet pushed) on public itineraries when they reach develop (mount point marked in `/explore/itineraries/[id]`); swap the local `Pager` for Arwa's Pagination (PR #152).
 2. Switch the hotel "View booking" link to Osama's detail route when it lands.
