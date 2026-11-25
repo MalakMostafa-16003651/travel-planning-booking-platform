@@ -7,14 +7,14 @@ Feature folder: `frontend/src/features/blog`. Backend contract: `backend/src/blo
 
 | Route | Purpose | Rendering and why |
 | --- | --- | --- |
-| `/blog?q=&tag=&page=` | Published posts, keyword search (BLG-09), tag filter (BLG-02, BLG-08), pages of ten | Dynamic SSR (the URL decides the content). The API read is public and cookie-free. Without `q` it is cached (tag `blog-public`, 60 s fallback); keyword searches are read fresh |
+| `/blog?q=&tag=&page=` | Published posts, keyword search (BLG-09), tag filter (BLG-02, BLG-08), pages of ten | Dynamic SSR (the URL decides the content). The API read is public and cookie-free. The plain list's first three pages are cached (tag `blog-public`, 60 s fallback); keyword searches, tag pages and later pages are read fresh, so random URLs cannot fill the server's cache |
 | `/blog/[id]` | Post: title, author, date, tags, images, story, attached itinerary, likes, comments | Dynamic SSR, read with the viewer's cookies and `no-store` (see below) |
 | `/blog/new` | Write a post, save as draft or publish | Dynamic, private, `noindex`. Server session check: guests go to sign in and come back (ACC-10) |
 | `/blog/[id]/edit` | Edit title, story, tags, status, images, itinerary; delete | Dynamic, private, `noindex`, fresh with the author's cookies |
 | `/blog/mine?page=` | My posts with drafts: title, status, date, likes, comments | Dynamic, private, `noindex`, `no-store` |
 | `/authors/[id]?page=&itinerariesPage=` | Name, join date, published posts, public itineraries (BLG-12) | Dynamic SSR from a public, cookie-free read, never cached |
 
-**The cached experience (course section 9).** The plain list, tag pages and the home story previews read
+**The cached experience (course section 9).** The plain list (first three pages) and the home story previews read
 `GET /api/posts` without cookies, so every response is the same for everyone and can never contain a draft, a
 hidden post or a personal like. These reads are cached and tagged `blog-public`. Every change expires the tag
 through the `refreshPublicBlog` Server Action (`updateTag`): an author creating, publishing, editing or
@@ -119,7 +119,7 @@ unavailable, set `PLAYWRIGHT_CHROMIUM_PATH` to an installed Chromium (or `PLAYWR
 
 Covered (17 tests): guest browsing with tag filter and pages of ten, clickable tags; keyword search by title,
 tag and author name with interaction ordering and "No results"; guest like/comment/write sent to sign in and
-returned; draft only in My posts and not in search or its (cached) tag page, publish puts it in both;
+returned; draft only in My posts and not in search or its tag page, publish puts it in both;
 pasted tag list split; `?saved=` removed after showing; field errors; 6th tag and 31-character tag refused,
 tags edited; another user cannot edit (clear page, API 403) and an admin cannot
 write; delete with confirmation and cancel; deleting the only post on page 2 returns to page 1, and

@@ -37,6 +37,8 @@ async function settle<T>(request: Promise<Response>): Promise<Loaded<T>> {
  * a hidden post or the viewer's like. Changes expire it at once through refreshPublicBlog (actions.ts);
  * the 60-second revalidation is only the fallback when nobody called it.
  */
+const MAX_CACHED_PAGE = 3;
+
 function publicGet<T>(path: string): Promise<Loaded<T>> {
   return settle<T>(fetch(new URL(`/api${path}`, backendUrl()), {
     next: { revalidate: PUBLIC_REVALIDATE_SECONDS, tags: [BLOG_CACHE_TAG] },
@@ -64,8 +66,10 @@ export function loadPublicPosts({ q, tag, page }: { q?: string; tag?: string; pa
   const query = new URLSearchParams({ page: String(page) });
   if (q) query.set('q', q);
   if (tag) query.set('tag', tag);
-  // Keyword searches are endless free text: caching each one would only fill the cache, so they are read fresh.
-  return q ? freshPublicGet(`/posts?${query}`) : publicGet(`/posts?${query}`);
+  // Only the plain list's first pages (and the home previews) are cached. Searches, tags and deep pages are
+  // free-form URLs: caching each one would fill the server's disk, so they are read fresh.
+  const cacheable = !q && !tag && page <= MAX_CACHED_PAGE;
+  return cacheable ? publicGet(`/posts?${query}`) : freshPublicGet(`/posts?${query}`);
 }
 
 /**
