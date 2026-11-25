@@ -5,6 +5,7 @@ import { loginHref } from '@/config/routes';
 import { authCookies, backendUrl } from '@/lib/api/upstream';
 import { getServerSession } from '@/lib/api/server-session';
 import type { AuthenticatedUser } from '@/types/auth';
+import type { ReportPage, ReportStatus, TargetType } from './moderation-types';
 import type { AccountFilters, AdminAccountPage, Loaded } from './types';
 
 /**
@@ -47,4 +48,13 @@ export function loadAccounts(filters: AccountFilters, returnTo: string): Promise
   if (filters.role) query.set('role', filters.role);
   if (filters.status) query.set('status', filters.status);
   return adminGet<AdminAccountPage>(`/api/admin/accounts${query.size ? `?${query}` : ''}`, returnTo);
+}
+
+/** GEN-10: GET /api/admin/reports, OPEN by default, newest first, 10 per page. */
+export function loadReports(filters: { page: number; status?: ReportStatus; targetType?: TargetType }, returnTo: string): Promise<Loaded<ReportPage>> {
+  const query = new URLSearchParams();
+  if (filters.page > 1) query.set('page', String(filters.page));
+  if (filters.status) query.set('status', filters.status);
+  if (filters.targetType) query.set('targetType', filters.targetType);
+  return adminGet<ReportPage>(`/api/admin/reports${query.size ? `?${query}` : ''}`, returnTo);
 }

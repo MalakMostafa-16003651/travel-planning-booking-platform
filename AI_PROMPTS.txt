@@ -376,3 +376,21 @@ dialog; 409 asks the admin to reload. Wrote docs/m2/ADMIN.md. Checked in Chromiu
 data at 360, 768, 1024 and 1440 px; a stretched menu on short pages was found and fixed.
 typecheck and build pass.
 ================================================
+Date: 2026-11-25
+Student: 16002483 (Arwa, Person 2)
+Tool: Claude Code (Anthropic)
+Related requirements: GEN-09, GEN-10, ACC-13, ACC-15
+
+Prompt summary:
+Continue with the moderator page. When the assistant found that no admin endpoint lists
+airlines and hotels, I chose to ask the team leader first (issue #156) and build the reports
+and content moderation pages meanwhile.
+
+How the output was used:
+Added /admin/reports (open by default, status and type filters in the URL, Dismiss, Hide and
+Delete with confirmations, 409 handling, "Moderate directly" link) and /admin/content (hide,
+unhide or delete any post, comment, review or public itinerary by type and ID, ID checked
+first, click-only actions, delete confirmation, clear 404 message). No content preview links,
+because content owners supply them per the registry. Updated docs/m2/ADMIN.md. Checked in
+Chromium with sample data at 360, 768 and 1440 px; typecheck and build pass.
+================================================
