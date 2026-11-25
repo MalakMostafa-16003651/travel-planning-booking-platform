@@ -68,7 +68,7 @@ export default async function BlogPage({ searchParams }: Props) {
       {result.kind === 'ok' ? (
         <section aria-labelledby="blog-results" className="grid gap-4">
           <h2 id="blog-results" className="m-0 text-lg">
-            {q ? `${plural(result.data.total, 'result')} for “${q}”` : plural(result.data.total, 'story')}
+            {q ? `${plural(result.data.total, 'result')} for “${q}”` : plural(result.data.total, 'post')}
             {q && <span className="block text-sm font-normal tracking-normal text-muted">Most liked and discussed first, newest first on ties.</span>}
           </h2>
           {result.data.total === 0 ? (
