@@ -24,7 +24,8 @@ denied; another traveler's booking is Not found (ACC-11).
 
 | With | Contract | State |
 | --- | --- | --- |
-| Gamila, selection | `/bookings/flights/new?selection=<encoded JSON>` with `{ segments: [{ flightId, cabinId }], adults, children, infants }` (issue #131) | Implemented and validated here; waiting for PR #130 |
+| Gamila, selection | `/bookings/flights/new?selection=<encoded JSON>` with `{ segments: [{ flightId, cabinId }], adults, children, infants }` (issue #131) | Joined and tested with the merged results page: search, selection, sign-in return, family round trip and sell-out |
+| Gamila, search | `searchHref` builds `/flights?…` with her `criteriaToParams`, so Back to flights and Search flights again restore the trip and travelers | Ready |
 | Gamila, SeatSelector | `SeatSelectorProps` in `seat-selection.tsx`: her proposed props, presentation only. `SeatSelection` loads the map and saves | Data layer ready; not mounted until her component exists |
 | Hicham, checkout | Links to `/checkout/flight/{flightBookingId}` and `/checkout/flight-change/{flightBookingChangeId}`. After payment send the traveler to `/bookings/flights/{id}/ticket` or the change page | Links ready; route pending |
 | Hicham, refund status | `refund-status.tsx` shows the booking's own refund until `PaymentRefundStatus` exists | Pending |
@@ -72,8 +73,8 @@ Co-verifiers: Osama (hotel holds) and Hicham (payments and refunds).
 | Pending to Confirmed | Verified webhook only | Ticket page appears by itself | Browser test with a signed webhook | Pending | Pending |
 | Pending to Expired | 10 minutes without payment | Timer ends, payment link removed, seats released | Browser test | Pending | Pending |
 | Confirmed to Cancelled (traveler) | Confirmed before departure | Quote, confirmation, refund status | Browser test | Pending | Pending |
-| Confirmed to Cancelled (airline) | Gamila's FLT-06 | "The airline cancelled this flight" and refund | Backend test only | Not applicable | Pending |
-| Confirmed to Completed | Last flight departed | Moves to Past, ticket stays | Backend test only | Pending | Not applicable |
+| Confirmed to Cancelled (airline) | Gamila's FLT-06 | "The airline cancelled this flight" and full refund | Browser test through the real moderator endpoint | Not applicable | Pending |
+| Confirmed to Completed | Last flight departed | Moves to Past, ticket stays | Browser test | Pending | Not applicable |
 | Any other change | Not allowed | Actions hidden, server refuses | Browser test after departure | Pending | Pending |
 
 Booking status and refund status are separate: a Cancelled booking can have a Pending,
@@ -107,6 +108,6 @@ signed and verified.
 - The payment pages are Hicham's. Until they are merged, the payment links lead to Not found.
 - A pending change has no "find my change" endpoint. Its id is kept in the URL and in this
   tab. If both are lost, the replacement hold ends by itself within 10 minutes.
-- `features/flight-bookings/types.ts` repeats the few flight fields used here until Gamila's
-  `lib/flights` is on `develop`.
+- Flight, airport and selection types and the airport-time formatters come from Gamila's
+  `lib/flights`. `features/flight-bookings/types.ts` keeps only the booking responses.
 - Arwa's shared pagination will replace the previous/next links.
