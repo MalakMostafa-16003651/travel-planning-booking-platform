@@ -27,9 +27,10 @@ export interface PaymentFormProps {
   /** Where Stripe sends the traveler back after a redirect (3-D Secure, bank pages). It verifies with the backend. */
   returnUrl: string;
   payLabel: string;
-  /** Hold expired or another action running. */
-  disabled?: boolean;
-  /** Stripe accepted the payment details. This is NOT a confirmed payment: the result page asks the backend. */
+  /**
+   * Stripe accepted the payment details, or this PaymentIntent was already submitted earlier (the traveler
+   * came back with the Back button). This is NOT a confirmed payment: the result page asks the backend.
+   */
   onSubmitted: () => void;
   /** The card was declined or Stripe failed. The payment must be started again (see checkout.tsx). */
   onFailed: (message: string) => void;
@@ -65,7 +66,10 @@ export function PaymentForm(props: PaymentFormProps) {
   );
 }
 
-function CardForm({ returnUrl, payLabel, disabled = false, onSubmitted, onFailed }: PaymentFormProps) {
+// Intent states in which the payment was already submitted: paying again would only fail at Stripe.
+const SUBMITTED_STATES = ['processing', 'succeeded', 'requires_capture'];
+
+function CardForm({ clientSecret, returnUrl, payLabel, onSubmitted, onFailed }: PaymentFormProps) {
   const stripe = useStripe();
   const elements = useElements();
   const [ready, setReady] = useState(false);
@@ -74,14 +78,37 @@ function CardForm({ returnUrl, payLabel, disabled = false, onSubmitted, onFailed
   const [fieldError, setFieldError] = useState('');
   // A ref, not only state: a quick double click arrives before React re-renders the disabled button.
   const busy = useRef(false);
+  // Pay stays off until Stripe says whether this intent can still be paid.
+  const [intentChecked, setIntentChecked] = useState(false);
+  const submittedRef = useRef(onSubmitted);
+  useEffect(() => { submittedRef.current = onSubmitted; }, [onSubmitted]);
+
+  useEffect(() => {
+    if (!stripe) return;
+    let active = true;
+    stripe.retrievePaymentIntent(clientSecret)
+      .then(({ paymentIntent }) => {
+        if (!active) return;
+        if (paymentIntent && SUBMITTED_STATES.includes(paymentIntent.status)) {
+          busy.current = true;
+          setSubmitted(true);
+          submittedRef.current();
+          return;
+        }
+        setIntentChecked(true);
+      })
+      // Stripe could not be asked: let the traveler try; confirmPayment reports a wrong state itself.
+      .catch(() => { if (active) setIntentChecked(true); });
+    return () => { active = false; };
+  }, [stripe, clientSecret]);
 
   async function pay(event: FormEvent) {
     event.preventDefault();
-    if (!stripe || !elements || busy.current || disabled) return;
+    if (!stripe || !elements || busy.current || !intentChecked) return;
     busy.current = true;
     setPaying(true);
     setFieldError('');
-    let error: { type?: string; message?: string } | undefined;
+    let error: { type?: string; code?: string; message?: string } | undefined;
     try {
       // redirect 'if_required': cards finish here; 3-D Secure and bank methods come back to returnUrl.
       ({ error } = await stripe.confirmPayment({ elements, redirect: 'if_required', confirmParams: { return_url: returnUrl } }));
@@ -89,7 +116,9 @@ function CardForm({ returnUrl, payLabel, disabled = false, onSubmitted, onFailed
       error = { message: 'We could not reach Stripe. Check your connection and try again.' };
     }
     setPaying(false);
-    if (!error) {
+    // payment_intent_unexpected_state: this intent was already submitted (for example in another tab).
+    // The money may be on its way, so the result page checks instead of saying "nothing was charged".
+    if (!error || error.code === 'payment_intent_unexpected_state') {
       // Stays locked while the result page opens: the same payment must never be submitted twice.
       setSubmitted(true);
       onSubmitted();
@@ -106,7 +135,7 @@ function CardForm({ returnUrl, payLabel, disabled = false, onSubmitted, onFailed
       {!ready && <LoadingState label="Loading the secure card form…" />}
       <PaymentElement onReady={() => setReady(true)} onLoadError={() => onFailed('The card form could not be loaded. Please try again.')} />
       {fieldError && <p role="alert" className="m-0 text-sm text-danger">{fieldError}</p>}
-      <Button type="submit" className="w-full" disabled={!ready || !stripe || !elements || paying || submitted || disabled} aria-busy={paying || submitted}>
+      <Button type="submit" className="w-full" disabled={!ready || !intentChecked || !stripe || !elements || paying || submitted} aria-busy={paying || submitted}>
         {submitted ? 'Checking your payment…' : paying ? 'Processing your payment…' : payLabel}
       </Button>
       <p className="m-0 text-xs text-muted">Card details are entered in Stripe’s secure form and are never sent to or stored by us.</p>

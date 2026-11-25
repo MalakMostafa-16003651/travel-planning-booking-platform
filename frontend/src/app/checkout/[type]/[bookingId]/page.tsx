@@ -40,7 +40,7 @@ export default async function CheckoutPage({ params }: { params: Promise<{ type:
     return (
       <CheckoutNotice
         title="Your hold has expired"
-        message="The time to pay for this booking has ended and nothing was charged. Go back to make a new one."
+        message="The time to pay for this booking has ended. If you were charged, the full amount is refunded. Go back to make a new booking."
         action={<ActionLink href={links.back} variant="secondary">Back to booking</ActionLink>}
       />
     );

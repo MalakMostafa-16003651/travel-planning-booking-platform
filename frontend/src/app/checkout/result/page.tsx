@@ -4,7 +4,7 @@ import { BookingStepper } from '@/components/booking/booking-stepper';
 import { LoadFailed, TravelersOnly } from '@/features/payments/checkout-states';
 import { ResultWatch } from '@/features/payments/result-watch';
 import { checkoutLinks, checkoutPath, checkoutSteps, resultPath } from '@/features/payments/routes';
-import { loadChange, loadPayment, settle } from '@/features/payments/server';
+import { loadBookingState, loadPayment, settle } from '@/features/payments/server';
 import { isCheckoutType, isObjectId, type Payment } from '@/features/payments/types';
 
 // Rendering: dynamic SSR, never cached. The query string only says WHICH payment to check; the status
@@ -38,19 +38,19 @@ export default async function CheckoutResultPage({ searchParams }: { searchParam
   // A link that pairs a payment with another booking is not trusted for the "continue" link either.
   if (payment.bookingType !== type || paidFor(payment)?.toLowerCase() !== bookingId.toLowerCase()) notFound();
 
-  // A flight change returns to its booking's change page, so the booking id is read from the change.
-  let flightBookingId: string | undefined;
-  if (type === 'flight-change') {
-    const change = await loadChange(bookingId);
-    if (change.kind === 'ok') flightBookingId = change.data.flightBookingId;
-  }
-  const links = checkoutLinks(type, bookingId, flightBookingId);
+  // The booking's own status decides success (see outcome.ts). A change also names its booking, for the return link.
+  const booking = await loadBookingState(type, bookingId);
+  const state = booking.kind === 'ok' ? booking.data.state : null;
+  const links = checkoutLinks(type, bookingId, booking.kind === 'ok' ? booking.data.flightBookingId : undefined);
   const doneLabel = type === 'flight' ? 'View your ticket' : type === 'hotel' ? 'View your booking' : 'Back to your change';
 
   return (
     <section className="stack max-w-3xl">
       <BookingStepper steps={checkoutSteps} current="confirmation" label="Checkout progress" />
-      <ResultWatch initial={payment} links={links} retryHref={checkoutPath(type, bookingId)} doneLabel={doneLabel} />
+      <ResultWatch
+        type={type} bookingId={bookingId} initialPayment={payment} initialBooking={state} serverNow={new Date().toISOString()}
+        links={links} retryHref={checkoutPath(type, bookingId)} here={here} doneLabel={doneLabel}
+      />
     </section>
   );
 }

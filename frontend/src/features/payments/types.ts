@@ -93,6 +93,8 @@ export interface BookingPolicies {
 /** POST /api/bookings/:type/:id/accept-policies: the stored PolicyAcceptance. */
 export interface PolicyAcceptance {
   _id: string;
+  /** The policies as the server stored them at acceptance time. */
+  policies: Policies;
   acceptedAt: string;
 }
 

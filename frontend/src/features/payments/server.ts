@@ -3,6 +3,7 @@ import { cookies } from 'next/headers';
 import { notFound, redirect } from 'next/navigation';
 import { loginHref } from '@/config/routes';
 import { authCookies, backendUrl } from '@/lib/api/upstream';
+import { bookingReadPath, toBookingState, type BookingState } from './outcome';
 import type {
   BookingPolicies, CheckoutSummary, CheckoutType, FlightBookingSummary, FlightChangeSummary, FlightSegmentSummary,
   HotelBookingSummary, Payment,
@@ -138,7 +139,9 @@ export function loadPayment(id: string): Promise<Loaded<Payment>> {
   return loadPrivate(`/payments/${encodeURIComponent(id)}`);
 }
 
-/** Only needed to find the booking a flight change belongs to. */
-export function loadChange(id: string): Promise<Loaded<FlightChangeSummary>> {
-  return loadPrivate(`/flight-booking-changes/${encodeURIComponent(id)}`);
+/** Status, hold and refund of the booking (or change) a payment is for; a change also names its booking. */
+export async function loadBookingState(type: CheckoutType, id: string): Promise<Loaded<{ state: BookingState; flightBookingId?: string }>> {
+  const result = await loadPrivate<Parameters<typeof toBookingState>[0] & { flightBookingId?: string }>(bookingReadPath(type, id));
+  if (result.kind !== 'ok') return result;
+  return { kind: 'ok', data: { state: toBookingState(result.data), flightBookingId: type === 'flight-change' ? result.data.flightBookingId : undefined } };
 }

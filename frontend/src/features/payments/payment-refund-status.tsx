@@ -5,6 +5,7 @@ import { Badge, type BadgeTone } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ApiError, apiClient } from '@/lib/api/client';
 import { formatPaymentAmount, formatRefundAmount } from './money';
+import { AMOUNT_MISMATCH_REASON } from './outcome';
 import type { Payment, PaymentStatus, Refund, RefundStatus } from './types';
 
 export interface PaymentRefundStatusProps {
@@ -20,7 +21,7 @@ export interface PaymentRefundStatusProps {
 const paymentMeta: Record<PaymentStatus, { label: string; tone: BadgeTone; text: string }> = {
   PENDING: { label: 'Payment processing', tone: 'warning', text: 'Stripe has not confirmed this payment yet.' },
   SUCCEEDED: { label: 'Paid', tone: 'success', text: 'Stripe confirmed this payment.' },
-  FAILED: { label: 'Payment failed', tone: 'danger', text: 'This payment did not go through. Nothing was charged.' },
+  FAILED: { label: 'Payment failed', tone: 'danger', text: 'This payment did not go through.' },
   REFUNDED: { label: 'Payment refunded', tone: 'info', text: 'The whole payment was refunded.' },
 };
 
@@ -102,7 +103,9 @@ export function PaymentRefundStatusView({ payment, refund, currency, checking = 
           slot={payment}
           meta={data => paymentMeta[data.status]}
           amount={data => formatPaymentAmount(withCurrency(data))}
-          detail={data => data.status === 'FAILED' && data.failureReason ? data.failureReason : undefined}
+          detail={data => data.status !== 'FAILED' || !data.failureReason ? undefined
+            : data.failureReason === AMOUNT_MISMATCH_REASON ? 'An administrator is checking this payment. Please do not pay again.'
+              : data.failureReason}
         />
       )}
       {refund && (

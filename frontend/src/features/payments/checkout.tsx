@@ -44,6 +44,34 @@ function failedPaymentId(error: unknown): string | null {
   return FAILED_PAYMENT_MESSAGE.exec(error.message)?.[1] ?? null;
 }
 
+// Friendly words for the backend's 409 answers (payments.service.ts, policies.service.ts). A conflict
+// means the booking moved on, so checkout also refreshes itself from the server when one happens.
+const CONFLICTS: [RegExp, string][] = [
+  [/already paid/iu, 'This booking is already paid.'],
+  [/hold (has expired|ended)/iu, 'Your hold has expired, so this booking can no longer be paid.'],
+  [/only a pending|while the booking is pending/iu, 'This booking can no longer be paid.'],
+  [/accept the current booking policies/iu, 'The policies changed. Read them again and accept to continue.'],
+  [/in progress|still processing/iu, 'A payment for this booking is already in progress. Wait a moment, then check again.'],
+  [/manual check/iu, 'This payment needs a check by an administrator and cannot be retried.'],
+  [/equal\/lower fare/iu, 'There is nothing to pay for this change. Confirm it on the change page.'],
+  [/last payment failed/iu, 'Your last payment did not go through. Reload checkout to try again.'],
+];
+
+function isConflict(error: unknown): error is ApiError {
+  return error instanceof ApiError && error.status === 409;
+}
+
+function conflictMessage(error: ApiError): string {
+  return CONFLICTS.find(([pattern]) => pattern.test(error.message))?.[1] ?? 'This booking changed in the meantime. We are reloading it for you.';
+}
+
+/** JSON with sorted keys, so the stored policies compare equal to the displayed ones whatever their key order. */
+function stableJson(value: unknown): string {
+  return JSON.stringify(value, (_key, item: unknown) => item && typeof item === 'object' && !Array.isArray(item)
+    ? Object.fromEntries(Object.entries(item as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)))
+    : item);
+}
+
 function acceptedLabel(iso: string): string {
   return new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(iso));
 }
@@ -66,6 +94,15 @@ function CheckoutError({ error, returnTo }: { error: unknown; returnTo: string }
       </div>
     );
   }
+  if (isConflict(error)) {
+    return (
+      <div className="grid gap-2">
+        <ErrorAlert message={conflictMessage(error)} />
+        {/* The page refreshes by itself; a full load is the fallback if that does not help. */}
+        <a href={returnTo}>Reload checkout</a>
+      </div>
+    );
+  }
   const message = error instanceof Error && error.message ? error.message : 'Something went wrong. Please try again.';
   return <ErrorAlert message={message} />;
 }
@@ -82,6 +119,8 @@ export function Checkout({ type, bookingId, policies, summary, serverNow, links 
   const [acceptedAt, setAcceptedAt] = useState<string | null>(null);
   const [accepting, setAccepting] = useState(false);
   const [acceptError, setAcceptError] = useState<unknown>(null);
+  const [policiesChanged, setPoliciesChanged] = useState(false);
+  const acceptedNote = useRef<HTMLParagraphElement>(null);
   // The countdown only says "ask the server now". A newer server render (new serverNow) clears it.
   const [expiredAt, setExpiredAt] = useState<string | null>(null);
   const holdEnded = expiredAt === serverNow;
@@ -91,17 +130,40 @@ export function Checkout({ type, bookingId, policies, summary, serverNow, links 
     if (!checked || accepting) return;
     setAccepting(true);
     setAcceptError(null);
+    setPoliciesChanged(false);
     try {
       const acceptance = await apiClient<PolicyAcceptance>(`/bookings/${type}/${encodeURIComponent(bookingId)}/accept-policies`, {
         method: 'POST', body: JSON.stringify({ accepted: true }),
       });
+      // The server stores the policies as they are NOW. If the provider changed them after this page
+      // loaded, the traveler accepted text they never saw: show the new text and ask again.
+      if (stableJson(acceptance.policies) !== stableJson(policies.policies)) {
+        setChecked(false);
+        setPoliciesChanged(true);
+        router.refresh();
+        return;
+      }
       setAcceptedAt(acceptance.acceptedAt);
     } catch (error) {
       setAcceptError(error);
+      if (isConflict(error)) router.refresh();
     } finally {
       setAccepting(false);
     }
   }
+
+  // Keyboard and screen reader users land on the confirmation instead of a control that disappeared.
+  useEffect(() => { if (acceptedAt) acceptedNote.current?.focus(); }, [acceptedAt]);
+
+  /** A 409 while paying: if it is about the policies, they must be accepted again; always re-read the page. */
+  const onConflict = useCallback((error: ApiError) => {
+    if (/polic/iu.test(error.message)) {
+      setAcceptedAt(null);
+      setChecked(false);
+      setAcceptError(error);
+    }
+    router.refresh();
+  }, [router]);
 
   const onExpire = useCallback(() => {
     setExpiredAt(serverNow);
@@ -122,7 +184,7 @@ export function Checkout({ type, bookingId, policies, summary, serverNow, links 
             <h2 className="m-0">1. Review the policies</h2>
             <PolicyDetails type={type} policies={policies.policies} currency={policies.currency} airlineLabels={summary.airlineLabels} />
             {acceptedAt ? (
-              <p role="status" className="m-0 rounded-control border border-success/25 bg-success/10 px-4 py-3 text-sm text-ink">
+              <p ref={acceptedNote} tabIndex={-1} role="status" className="m-0 rounded-control border border-success/25 bg-success/10 px-4 py-3 text-sm text-ink">
                 <strong>Policies accepted</strong> on {acceptedLabel(acceptedAt)}
               </p>
             ) : (
@@ -137,6 +199,9 @@ export function Checkout({ type, bookingId, policies, summary, serverNow, links 
                   />
                   I have read and accept these cancellation{type === 'hotel' ? ' and stay' : ' and baggage'} policies.
                 </label>
+                {policiesChanged && (
+                  <ErrorAlert title="The policies changed" message="They changed while you were reading. The current policies are shown above; read them and accept again." />
+                )}
                 {acceptError !== null && <CheckoutError error={acceptError} returnTo={here} />}
                 <div>
                   <Button variant="secondary" onClick={accept} disabled={!checked || accepting || holdEnded}>
@@ -153,7 +218,7 @@ export function Checkout({ type, bookingId, policies, summary, serverNow, links 
               <LoadingState label="Your hold time is up. Checking with the server…" />
             ) : acceptedAt ? (
               <BookingEmailGate returnTo={here}>
-                <PaymentPanel type={type} bookingId={bookingId} amount={amount} returnTo={here} />
+                <PaymentPanel type={type} bookingId={bookingId} amount={amount} returnTo={here} onConflict={onConflict} />
               </BookingEmailGate>
             ) : (
               <div className="grid gap-3">
@@ -189,7 +254,9 @@ export function Checkout({ type, bookingId, policies, summary, serverNow, links 
 }
 
 /** Starts (or resumes, or retries) the payment, then shows Stripe's card form. Mounted inside BookingEmailGate. */
-function PaymentPanel({ type, bookingId, amount, returnTo }: { type: CheckoutType; bookingId: string; amount: string; returnTo: string }) {
+function PaymentPanel({ type, bookingId, amount, returnTo, onConflict }: {
+  type: CheckoutType; bookingId: string; amount: string; returnTo: string; onConflict: (error: ApiError) => void;
+}) {
   const router = useRouter();
   const [attempt, setAttempt] = useState<PaymentStart | null>(null);
   const [starting, setStarting] = useState(false);
@@ -197,16 +264,9 @@ function PaymentPanel({ type, bookingId, amount, returnTo }: { type: CheckoutTyp
   const [cardError, setCardError] = useState('');
   const startedOnce = useRef(false);
 
-  /** POST /payments returns the open payment again; after a failed one the backend asks for its retry route. */
-  const begin = useCallback(async (): Promise<PaymentStart> => {
-    try {
-      return await apiClient<PaymentStart>('/payments', { method: 'POST', body: JSON.stringify({ bookingType: type, bookingId }) });
-    } catch (error) {
-      const failedId = failedPaymentId(error);
-      if (!failedId) throw error;
-      return apiClient<PaymentStart>(`/payments/${failedId}/retry`, { method: 'POST' });
-    }
-  }, [type, bookingId]);
+  /** POST /payments creates the payment, or returns the open one again (same PaymentIntent). */
+  const create = useCallback(() => apiClient<PaymentStart>('/payments', { method: 'POST', body: JSON.stringify({ bookingType: type, bookingId }) }), [type, bookingId]);
+  const retry = useCallback((paymentId: string) => apiClient<PaymentStart>(`/payments/${encodeURIComponent(paymentId)}/retry`, { method: 'POST' }), []);
 
   const start = useCallback(async (previous?: Payment) => {
     setStarting(true);
@@ -214,18 +274,29 @@ function PaymentPanel({ type, bookingId, amount, returnTo }: { type: CheckoutTyp
     setCardError('');
     try {
       if (previous) {
-        // GET re-checks a PENDING payment with Stripe, so a decline is recorded as FAILED before we
-        // ask again. That makes the next step a clean retry with a new PaymentIntent.
-        const latest = await apiClient<Payment>(`/payments/${previous._id}`);
-        if (latest.status === 'SUCCEEDED') { router.push(resultPath(type, bookingId, latest._id)); return; }
+        // GET re-checks a PENDING payment with Stripe, so a decline is recorded as FAILED first.
+        // A FAILED payment is then retried (new PaymentIntent); a PENDING one is simply reopened.
+        const latest = await apiClient<Payment>(`/payments/${encodeURIComponent(previous._id)}`);
+        if (latest.status === 'SUCCEEDED' || latest.status === 'REFUNDED') { router.push(resultPath(type, bookingId, latest._id)); return; }
+        setAttempt(latest.status === 'FAILED' ? await retry(latest._id) : await create());
+        return;
       }
-      setAttempt(await begin());
+      // A fresh page does not know the earlier payment. After a failed one, the backend answers 409 with
+      // its retry route, and that message is the only place its id is given.
+      try {
+        setAttempt(await create());
+      } catch (error) {
+        const failedId = failedPaymentId(error);
+        if (!failedId) throw error;
+        setAttempt(await retry(failedId));
+      }
     } catch (error) {
       setStartError(error);
+      if (isConflict(error)) onConflict(error);
     } finally {
       setStarting(false);
     }
-  }, [begin, router, type, bookingId]);
+  }, [create, retry, onConflict, router, type, bookingId]);
 
   useEffect(() => {
     // Once per mount; the ref survives React's development double effect.
@@ -242,7 +313,7 @@ function PaymentPanel({ type, bookingId, amount, returnTo }: { type: CheckoutTyp
         <div className="flex flex-wrap items-center gap-4">
           <Button variant="secondary" onClick={() => void start(attempt?.payment)}>Try again</Button>
           {/* A full load, so changed policies or a new booking status are read again. */}
-          <a href={returnTo}>Reload checkout</a>
+          {!isConflict(startError) && <a href={returnTo}>Reload checkout</a>}
         </div>
       </div>
     );
