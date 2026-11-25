@@ -69,12 +69,12 @@ Co-verifiers: Osama (hotel holds) and Hicham (payments and refunds).
 | Transition | Trigger | Flight UI | Flight proof | Hotel (Osama) | Payment (Hicham) |
 | --- | --- | --- | --- | --- | --- |
 | new to Pending Payment | Hold created | Timer and payment link | Browser test | Pending | Not applicable |
-| Pending to Confirmed | Verified webhook only | Ticket page appears by itself | Browser test with a signed webhook | Pending | Pending |
-| Pending to Expired | 10 minutes without payment | Timer ends, payment link removed, seats released | Browser test | Pending | Pending |
-| Confirmed to Cancelled (traveler) | Confirmed before departure | Quote, confirmation, refund status | Browser test | Pending | Pending |
-| Confirmed to Cancelled (airline) | Gamila's FLT-06 | "The airline cancelled this flight" and refund | Backend test only | Not applicable | Pending |
+| Pending to Confirmed | Verified webhook only | Ticket page appears by itself | Browser test with a signed webhook | Pending | Browser test (checkout suite): result page confirms only after the signed webhook, from the booking status; flight, hotel and flight-change |
+| Pending to Expired | 10 minutes without payment | Timer ends, payment link removed, seats released | Browser test | Pending | Browser test: expired hold blocks paying; a success webhook after expiry is refunded in full and never shown as confirmed |
+| Confirmed to Cancelled (traveler) | Confirmed before departure | Quote, confirmation, refund status | Browser test | Pending | Browser test: an old result link shows paid-then-cancelled with the refund. `PaymentRefundStatus` ready to mount in place of `refund-status.tsx` |
+| Confirmed to Cancelled (airline) | Gamila's FLT-06 | "The airline cancelled this flight" and refund | Backend test only | Not applicable | Backend test only (M1 refunds suite, 100% refund) |
 | Confirmed to Completed | Last flight departed | Moves to Past, ticket stays | Backend test only | Pending | Not applicable |
-| Any other change | Not allowed | Actions hidden, server refuses | Browser test after departure | Pending | Pending |
+| Any other change | Not allowed | Actions hidden, server refuses | Browser test after departure | Pending | Browser test: checkout shows already paid / cancelled and the server refuses a second payment |
 
 Booking status and refund status are separate: a Cancelled booking can have a Pending,
 Refunded or Failed refund.
