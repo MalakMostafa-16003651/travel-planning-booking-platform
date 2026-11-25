@@ -321,3 +321,21 @@ survive reload, and no sideways page scroll at 360 px; this check found that lon
 squeezed the table on phones, so cells now stay on one line and the table scrolls inside
 its own frame. typecheck and build pass. The real-backend check is recorded separately.
 ================================================
+Date: 2026-11-25
+Student: 16002483 (Arwa, Person 2)
+Tool: Claude Code (Anthropic)
+Related requirements: GEN-09
+
+Prompt summary:
+After the DataTable pull request, build the shared ReportAction from the handoff registry
+contract while the first pull request is reviewed.
+
+How the output was used:
+Added @/features/reports ReportAction({ targetType, targetId, onReported? }), which posts to
+POST /api/reports. Only travelers see the reason dialog (5 to 500 characters, counter,
+double-submit guard); guests return to the same page after sign-in; admins and moderators see
+nothing, matching the backend role rule. 201, 409, 400, 404 and 401 answers each have their own
+message. Added a development preview and docs/m2/REPORTS.md for Osama, Kiki and Hicham.
+Checked in Chromium with sample data: every answer above, Escape and focus return, and no
+sideways scroll at 360 px. typecheck passes. The real-backend check is recorded separately.
+================================================
