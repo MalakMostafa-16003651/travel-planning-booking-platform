@@ -7,6 +7,7 @@ import { expect, request as playwrightRequest, test, type Page } from '@playwrig
 type Flight = { flightId: string; cabinId: string; date: string; flightNumber: string };
 type Account = { email: string; password: string };
 type FixturePayment = { found: boolean; paymentId?: string; intent?: string; status?: string };
+type Hotel = { hotelId: string; roomId: string; hotelName: string; checkIn: string; checkOut: string };
 
 async function fixture<T = Record<string, never>>(control: string, query: Record<string, string | number> = {}): Promise<T> {
   const context = await playwrightRequest.newContext();
@@ -66,6 +67,11 @@ const FAKE_STRIPE_JS = `(() => {
     return {
       _registerWrapper() {}, registerAppInfo() {},
       createToken() {}, createPaymentMethod() {}, confirmCardPayment() {},
+      // Like Stripe, the intent's state outlives the page: kept per clientSecret in this tab.
+      async retrievePaymentIntent(secret) {
+        const status = sessionStorage.getItem('fake-intent:' + secret) || 'requires_payment_method';
+        return { paymentIntent: { id: secret.split('_secret')[0], status } };
+      },
       elements(options) {
         clientSecret = options && options.clientSecret;
         return {
@@ -96,6 +102,10 @@ const FAKE_STRIPE_JS = `(() => {
       async confirmPayment({ confirmParams }) {
         window.__fakeStripe.confirmations.push({ clientSecret, returnUrl: confirmParams && confirmParams.return_url });
         if (window.__fakeStripe.next === 'decline') return { error: { type: 'card_error', code: 'card_declined', message: 'Your card was declined.' } };
+        if (sessionStorage.getItem('fake-intent:' + clientSecret)) {
+          return { error: { type: 'invalid_request_error', code: 'payment_intent_unexpected_state', message: 'This PaymentIntent was already confirmed.' } };
+        }
+        sessionStorage.setItem('fake-intent:' + clientSecret, 'processing');
         return { paymentIntent: { id: clientSecret.split('_secret')[0], status: 'processing' } };
       },
     };
@@ -115,7 +125,7 @@ async function acceptPolicies(page: Page) {
   await expect(main(page).getByText(/Policies accepted on \d/)).toBeVisible();
 }
 
-async function paymentFor(query: { booking?: string; change?: string }): Promise<Required<FixturePayment>> {
+async function paymentFor(query: { booking?: string; change?: string; hotel?: string }): Promise<Required<FixturePayment>> {
   const payment = await fixture<FixturePayment>('payment', query);
   expect(payment.found).toBe(true);
   return payment as Required<FixturePayment>;
@@ -181,7 +191,7 @@ test.describe('PAY-01 and PAY-02: flight checkout', () => {
     expect(payment.status).toBe('PENDING');
     expect((await fixture<{ status: number }>('paid', { intent: payment.intent })).status).toBe(200);
     await expect(page.getByRole('heading', { name: 'Payment confirmed' })).toBeVisible();
-    await expect(main(page).getByText('We received $150.00.', { exact: false })).toBeVisible();
+    await expect(main(page).getByText('We received $150.00 and your booking is confirmed.')).toBeVisible();
     await page.getByRole('link', { name: 'View your ticket' }).click();
     await expect(page).toHaveURL(`/bookings/flights/${id}/ticket`);
 
@@ -330,5 +340,144 @@ test.describe('FLT-27: higher-fare flight change', () => {
     await page.goto(`/checkout/flight-change/${changeId}`);
     await expect(page.getByRole('heading', { name: 'Nothing to pay for this change' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Back to your change' })).toHaveAttribute('href', `/bookings/flights/${id}/change?change=${changeId}`);
+  });
+});
+
+test.describe('PAY-01 and PAY-02: hotel checkout', () => {
+  test('hotel policies show check-in/out and tiers; payment confirmed by the webhook returns to the hotel booking', async ({ page }) => {
+    const hotel = await fixture<Hotel>('hotel');
+    await newTraveler(page);
+    const held = await api<{ hotelBookingId: string }>(page, 'POST', '/hotel-bookings', {
+      hotelId: hotel.hotelId, checkIn: hotel.checkIn, checkOut: hotel.checkOut, rooms: [{ roomId: hotel.roomId, adults: 2, childrenAges: [] }],
+    });
+    expect(held.status, JSON.stringify(held.body)).toBe(201);
+    const id = held.body.hotelBookingId;
+
+    await page.goto(`/checkout/hotel/${id}`);
+    await expect(page.getByRole('heading', { name: 'Pay for your stay' })).toBeVisible();
+    const summary = page.getByRole('complementary', { name: 'Payment summary' });
+    await expect(summary).toContainText(hotel.hotelName);
+    await expect(summary).toContainText('3 nights');
+    await expect(summary).toContainText('$375.00');
+    await expect(main(page).getByText('14 days or more before check-in: 100% back')).toBeVisible();
+    await expect(main(page).getByText('3 days or more before check-in: 50% back')).toBeVisible();
+    await expect(main(page).getByText('Check-in from 15:00 · Check-out by 11:00 (hotel local time)')).toBeVisible();
+    await expect(main(page).getByRole('heading', { name: 'Extra baggage' })).toHaveCount(0);
+
+    await acceptPolicies(page);
+    await page.getByRole('button', { name: 'Pay $375.00' }).click();
+    await expect(page).toHaveURL(new RegExp(`/checkout/result\\?type=hotel&bookingId=${id}&`));
+    await expect(page.getByRole('heading', { name: 'Confirming your payment' })).toBeVisible();
+    const payment = await paymentFor({ hotel: id });
+    await fixture('paid', { intent: payment.intent });
+    await expect(page.getByRole('heading', { name: 'Payment confirmed' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'View your booking' })).toHaveAttribute('href', `/bookings/hotels/${id}`);
+  });
+});
+
+test.describe('Edge cases from review', () => {
+  async function heldCheckout(page: Page) {
+    const flight = await fixture<Flight>('flight');
+    await newTraveler(page);
+    const id = await hold(page, [flight]);
+    await page.goto(`/checkout/flight/${id}`);
+    await acceptPolicies(page);
+    return id;
+  }
+
+  test('a payment that succeeds after the hold ended is not "confirmed": it is refunded', async ({ page }) => {
+    const id = await heldCheckout(page);
+    await page.getByRole('button', { name: 'Pay $150.00' }).click();
+    await expect(page.getByRole('heading', { name: 'Confirming your payment' })).toBeVisible();
+    const payment = await paymentFor({ booking: id });
+    await fixture('hold-ends', { booking: id });
+    expect((await fixture<{ status: number }>('paid', { intent: payment.intent })).status).toBe(200);
+    expect((await paymentFor({ booking: id })).status).toBe('SUCCEEDED'); // The money arrived...
+    await expect(page.getByRole('heading', { name: 'Your hold ended before the payment completed' })).toBeVisible();
+    await expect(main(page).getByText('If you were charged, the full amount is refunded')).toBeVisible();
+    await expect(main(page).getByRole('region', { name: 'Payment' })).toContainText('$150.00');
+    await expect(page.getByRole('heading', { name: 'Payment confirmed' })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'View your ticket' })).toHaveCount(0);
+    // ...and a fresh server render says the same.
+    await page.reload();
+    await expect(page.getByRole('heading', { name: 'Your hold ended before the payment completed' })).toBeVisible();
+  });
+
+  test('an amount mismatch is sent to an admin, with no retry', async ({ page }) => {
+    const id = await heldCheckout(page);
+    await page.getByRole('button', { name: 'Pay $150.00' }).click();
+    await expect(page.getByRole('heading', { name: 'Confirming your payment' })).toBeVisible();
+    const payment = await paymentFor({ booking: id });
+    await fixture('paid', { intent: payment.intent, amount: 100 });
+    await expect(page.getByRole('heading', { name: 'We are checking this payment' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Try again' })).toHaveCount(0);
+  });
+
+  test('Back from a submitted payment does not offer to pay the same intent again', async ({ page }) => {
+    const id = await heldCheckout(page);
+    await page.getByRole('button', { name: 'Pay $150.00' }).click();
+    await expect(page.getByRole('heading', { name: 'Confirming your payment' })).toBeVisible();
+    await page.goBack();
+    await expect(page).toHaveURL(`/checkout/flight/${id}`);
+    await acceptPolicies(page);
+    // Stripe says this intent is already processing, so checkout goes straight back to the result page.
+    await expect(page).toHaveURL(/\/checkout\/result\?/);
+    await expect(page.getByRole('heading', { name: 'Confirming your payment' })).toBeVisible();
+    const confirmations = await page.evaluate(() => (window as unknown as { __fakeStripe: { confirmations: unknown[] } }).__fakeStripe.confirmations.length);
+    expect(confirmations).toBeLessThanOrEqual(1);
+
+    await fixture('paid', { intent: (await paymentFor({ booking: id })).intent });
+    await expect(page.getByRole('heading', { name: 'Payment confirmed' })).toBeVisible();
+    // Back again after the confirmation: the page ends on "already paid", never on a raw 409.
+    await page.goBack();
+    await expect(page).toHaveURL(`/checkout/flight/${id}`);
+    const stale = page.getByRole('checkbox', { name: /accept these cancellation/ });
+    if (await stale.isVisible().catch(() => false)) {
+      await stale.check();
+      await page.getByRole('button', { name: 'Accept policies' }).click();
+    }
+    await expect(page.getByRole('heading', { name: 'This booking is already paid' })).toBeVisible();
+  });
+
+  test('reloading after accepting asks again and reuses the open payment', async ({ page }) => {
+    const id = await heldCheckout(page);
+    await expect(page.getByRole('button', { name: 'Pay $150.00' })).toBeEnabled();
+    const first = await paymentFor({ booking: id });
+    await page.reload();
+    await expect(page.getByRole('checkbox', { name: /accept these cancellation/ })).not.toBeChecked();
+    await acceptPolicies(page);
+    await expect(page.getByRole('button', { name: 'Pay $150.00' })).toBeEnabled();
+    expect((await paymentFor({ booking: id })).intent).toBe(first.intent);
+  });
+
+  test('the result page trusts neither the query string nor a mismatched type', async ({ page }) => {
+    const id = await heldCheckout(page);
+    await page.getByRole('button', { name: 'Pay $150.00' }).click();
+    await expect(page).toHaveURL(/\/checkout\/result\?/);
+    const paymentId = new URL(page.url()).searchParams.get('paymentId')!;
+    await page.goto(`/checkout/result?type=hotel&bookingId=${id}&paymentId=${paymentId}`);
+    await expect(page.getByRole('heading', { name: 'Page not found' })).toBeVisible();
+    await page.goto(`/checkout/result?type=flight&bookingId=${id}&paymentId=${paymentId}&redirect_status=succeeded`);
+    await expect(page.getByRole('heading', { name: 'Confirming your payment' })).toBeVisible();
+  });
+
+  test('the result page stops and offers sign-in when the session ends', async ({ page, context }) => {
+    await heldCheckout(page);
+    await page.getByRole('button', { name: 'Pay $150.00' }).click();
+    await expect(page.getByRole('heading', { name: 'Confirming your payment' })).toBeVisible();
+    await context.clearCookies();
+    await expect(main(page).getByText('Your session has ended', { exact: true })).toBeVisible();
+    await expect(main(page).getByRole('link', { name: 'Sign in' })).toHaveAttribute('href', /^\/login\?returnTo=%2Fcheckout%2Fresult/);
+  });
+
+  test('a long wait ends in "still processing" with Check again', async ({ page }) => {
+    test.setTimeout(150_000);
+    const id = await heldCheckout(page);
+    await page.getByRole('button', { name: 'Pay $150.00' }).click();
+    await expect(page.getByRole('button', { name: 'Check again' })).toBeVisible({ timeout: 100_000 });
+    await expect(main(page).getByText('Your payment is still processing')).toBeVisible();
+    await fixture('paid', { intent: (await paymentFor({ booking: id })).intent });
+    await page.getByRole('button', { name: 'Check again' }).click();
+    await expect(page.getByRole('heading', { name: 'Payment confirmed' })).toBeVisible();
   });
 });

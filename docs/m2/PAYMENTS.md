@@ -32,17 +32,46 @@ Access denied, because only role USER can pay; another traveler's booking or pay
    `stripe.confirmPayment({ redirect: 'if_required' })` sends the card to Stripe. Card details never
    reach our frontend server or backend.
 3. **Confirmation.** A resolved `confirmPayment` is **not** a success. Checkout opens
-   `/checkout/result`, which reads `GET /api/payments/:id` every 2 seconds for about a minute. The
-   backend changes the status only from the signed webhook, or by asking Stripe itself while the
-   payment is PENDING. SUCCEEDED shows "Payment confirmed" and the continue link. FAILED shows the
-   `failureReason` and Try again. Still PENDING after a minute shows "still processing" and Check
-   again (a late webhook). Stripe's redirect query (`payment_intent`, `redirect_status`) is ignored.
+   `/checkout/result`, which reads the payment (`GET /api/payments/:id`) **and** the booking or change
+   (`GET /api/flight-bookings/:id`, `/api/hotel-bookings/:id`, `/api/flight-booking-changes/:id`)
+   every 2 seconds for about a minute. The backend changes the payment only from the signed webhook,
+   or by asking Stripe itself while it is PENDING. The decision is in `features/payments/outcome.ts`:
+   - booking CONFIRMED or COMPLETED: "Payment confirmed" and the continue link. This is the only success;
+   - payment PENDING, or SUCCEEDED while the booking is still PENDING inside its hold: "Confirming";
+     after a minute "still processing" with Check again (a late webhook);
+   - payment FAILED with a normal reason: the `failureReason`, "Nothing was charged" and Try again;
+   - payment FAILED with "Paid amount does not match the booking amount": an administrator checks
+     it, no Try again;
+   - the hold ended or the booking was cancelled (whatever the payment says): "Your hold ended before
+     the payment completed. If you were charged, the full amount is refunded", with
+     `PaymentRefundStatus` for the payment and the booking's refund.
+
+   Stripe's redirect query (`payment_intent`, `redirect_status`) is ignored. A 401 stops the watch
+   and offers sign-in back to the same page; a 404 stops it with "Payment not found".
+
+**Late success after expiry.** If Stripe's success arrives after the hold ended, the backend marks the
+Payment SUCCEEDED but does not confirm the booking and refunds the full amount automatically. The
+result page therefore never reads success from the payment alone.
 
 **Retrying.** After a declined card, Try again first reads `GET /api/payments/:id`, so the backend
-records the decline, then calls `POST /api/payments` again. For a FAILED payment the backend answers
-409 "The last payment failed. Use POST /api/payments/<id>/retry"; checkout takes the id from that
-message (a small commented regex, it is our own message) and calls the retry route, which gives a new
-PaymentIntent on the same Payment. This also covers a reload or the result page's Try again.
+records the decline. A FAILED payment then goes straight to `POST /api/payments/:id/retry` (a new
+PaymentIntent on the same Payment); a still PENDING one is reopened with `POST /api/payments`. A
+fresh page (a reload, or the result page's Try again) does not know the earlier payment: there
+`POST /api/payments` answers 409 "The last payment failed. Use POST /api/payments/<id>/retry", and
+checkout takes the id from that message with a small commented regex (it is our own message).
+
+**Conflicts.** Any other 409 from accepting or paying (already paid, hold expired, policies changed,
+payment in progress) is shown in plain words and checkout refreshes itself from the server, which
+then shows "already paid" or "hold expired". A Reload checkout link stays as a fallback. If the
+policies accepted on the server differ from the ones on screen (the provider changed them while the
+traveler was reading), checkout does not mark them accepted and asks the traveler to read the
+current ones and accept again.
+
+**Back button.** Coming back to checkout after submitting a card: before Pay is enabled, the form
+asks Stripe (`stripe.retrievePaymentIntent`) about the open PaymentIntent. If it is processing,
+succeeded or requires capture, checkout goes to the result page instead of offering to pay again;
+`payment_intent_unexpected_state` from `confirmPayment` is treated the same. After a confirmed
+payment, Back shows "This booking is already paid" (directly, or after the 409 refresh above).
 
 **Hold expiry.** `HoldTimer` gets `serverNow` from the server render. When it reaches zero, checkout
 disables payment and refreshes the page; only the server decides whether the hold ended. An ended hold
@@ -51,6 +80,10 @@ itself.
 
 **Double submission.** Accept and Pay are disabled while they run. A successful card submission stays
 locked while the result page opens. After any error the traveler can act again.
+
+**Accessibility.** After accepting, focus moves to the "Policies accepted" confirmation. The result
+page has one polite live region that announces each change of outcome once. Every status is written
+out, not only coloured.
 
 ## Contracts
 
@@ -131,13 +164,14 @@ npm --prefix ../backend run build:test
 npx playwright test -c playwright.checkout.config.ts
 ```
 
-The config builds Next with a placeholder publishable key and starts `scripts/payments-backend.cjs`:
+The config **rebuilds `.next`** with a placeholder publishable key, so run `npm run build` again
+before `npm start` or another suite that uses `next start`. It starts `scripts/payments-backend.cjs`:
 the real Nest app on a throwaway MongoDB replica set (ports 3120 and 3121), with the backend's
 FakeStripe and signed, verified webhooks. js.stripe.com is not reachable in CI, so the spec serves a
 tiny fake Stripe.js through `page.route`. Set `PLAYWRIGHT_CHROMIUM_PATH` to use a preinstalled
 Chromium, or `PLAYWRIGHT_CHANNEL=chrome` for installed Chrome. The harness is a copy of Ismail's
-`flight-bookings-backend.cjs` with two more controls (read a booking's payment, signed failure
-webhook); his file is unchanged.
+`flight-bookings-backend.cjs` with more controls (a bookable hotel, read a booking's payment, a
+signed failure webhook, a success with another amount, unverify an email); his file is unchanged.
 
 Covered: guest sign-in and return; Pay disabled until the policies are accepted, with the accepted
 time shown; a double-clicked Pay confirms once; success only after the signed webhook, then the ticket
@@ -145,7 +179,13 @@ link; a declined card, then a retry with a new PaymentIntent; a failed payment o
 its retry through checkout; an expired hold, also one that ends while the page is open; another
 traveler's booking and an unknown type are Not found; an admin is denied; an unverified email is
 sent to verification; a higher-fare change is paid and returns to the change page; an equal fare
-never reaches payment; no sideways scrolling at 360, 768, 1024 and 1440 pixels.
+never reaches payment; no sideways scrolling at 360, 768, 1024 and 1440 pixels. Also: a hotel
+journey (check-in/out times and check-in tiers, webhook, link to `/bookings/hotels/{id}`); a success
+after the hold ended shows the refund, not "confirmed"; an amount mismatch goes to an admin with no
+retry; Back after submitting goes to the result page instead of paying again, and Back after paying
+ends on "already paid"; a reload asks for acceptance again and reuses the open payment; a forged
+`redirect_status` or mismatched type is not trusted; an ended session stops the watch with a sign-in
+link; a minute-long wait ends in "still processing" and Check again.
 
 ### By hand, with real Stripe test mode
 
@@ -171,8 +211,9 @@ in Swagger) and opening `/checkout/hotel/{hotelBookingId}`: Osama's booking page
 
 - The backend has no "read my acceptance" endpoint, so after a reload the traveler ticks the box
   again. Accepting again only refreshes the stored timestamp.
-- Hotel checkout has no browser test: the disposable backend has no hotel fixtures and Osama's pages
-  are pending. It uses the same code path as flights.
+- Osama's hotel booking pages are pending, so the hotel return link is Not found until they merge.
+- "Payment SUCCEEDED but the booking still PENDING inside its hold" has no browser test: the signed
+  webhook confirms the booking in the same request, so the state is too short to hold in a test.
 - `PaymentRefundStatus` is not yet mounted on Ismail's or Osama's pages; they swap it in.
 - The policies name an airline only by id, so checkout labels it by its flight numbers
   ("Airline of MS1234").

@@ -112,16 +112,35 @@ async function main() {
       });
       return { flightId: String(flight._id), cabinId: String(cabin._id), date: local, flightNumber: flight.flightNumber };
     },
+    /**
+     * An active hotel with one bookable room for the next year. The traveler then holds it through the real
+     * POST /api/hotel-bookings, so the booking's policy snapshot is made by the hotel module itself.
+     */
+    async hotel({ price = '12500', days = '20', nights = '3' }) {
+      const hotel = await connection.models.Hotel.create({
+        name: `Nile View ${randomBytes(3).toString('hex')}`, city: 'Cairo', countryCode: 'EG', address: '1 Corniche', isActive: true,
+        checkInTime: '15:00', checkOutTime: '11:00',
+        cancellationTiers: [{ daysBeforeCheckIn: 14, refundPercentage: 100 }, { daysBeforeCheckIn: 3, refundPercentage: 50 }],
+      });
+      const room = await connection.models.Room.create({ hotelId: hotel._id, name: 'Deluxe King', type: 'DELUXE', beds: 1, capacity: 2, pricePerNight: Number(price), isActive: true });
+      const day = (offset) => new Date(Date.now() + offset * DAY_MS).toISOString().slice(0, 10);
+      await connection.models.RoomAvailability.create({
+        roomId: room._id, hotelId: hotel._id, bookableRanges: [{ startDate: day(0), endDate: day(365) }], blockedRanges: [], bookedRanges: [],
+      });
+      return { hotelId: String(hotel._id), roomId: String(room._id), hotelName: hotel.name, checkIn: day(Number(days)), checkOut: day(Number(days) + Number(nights)) };
+    },
     /** The payment checkout created for a booking or change, so a test can play Stripe's part for it. */
-    async payment({ booking, change }) {
-      const filter = change ? { flightBookingChangeId: new Types.ObjectId(change) } : { flightBookingId: new Types.ObjectId(booking) };
+    async payment({ booking, change, hotel }) {
+      const filter = change ? { flightBookingChangeId: new Types.ObjectId(change) }
+        : hotel ? { hotelBookingId: new Types.ObjectId(hotel) } : { flightBookingId: new Types.ObjectId(booking) };
       const payment = await collection('payments').findOne(filter);
       if (!payment) return { found: false };
       return { found: true, paymentId: String(payment._id), intent: payment.stripePaymentIntentId, status: payment.status };
     },
     /** Stripe reports success: the same signed webhook the real service sends. */
-    async paid({ intent }) {
-      return webhook('payment_intent.succeeded', stripe.succeed(intent));
+    async paid({ intent, amount }) {
+      // amount (minor units) lets a test report a different amount than requested, as a tampered payment would.
+      return webhook('payment_intent.succeeded', stripe.succeed(intent, amount === undefined ? undefined : Number(amount)));
     },
     /** Stripe reports a declined card: the intent records the error and the signed failure webhook is sent. */
     async declined({ intent, message = 'Your card was declined.' }) {
