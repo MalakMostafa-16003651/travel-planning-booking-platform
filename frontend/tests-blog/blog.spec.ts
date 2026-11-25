@@ -9,7 +9,7 @@ type Account = { email: string; password: string; userId: string };
 async function fixture<T = Record<string, never>>(control: string, query: Record<string, string | number> = {}): Promise<T> {
   const context = await playwrightRequest.newContext();
   const params = new URLSearchParams(Object.entries(query).map(([key, value]) => [key, String(value)]));
-  const response = await context.post(`http://127.0.0.1:3130/__m2-blog-fixture/${control}?${params}`, { headers: { 'X-M2-Blog-Fixture': 'blog' } });
+  const response = await context.post(`http://127.0.0.1:${process.env.BLOG_E2E_BACKEND_PORT || '3130'}/__m2-blog-fixture/${control}?${params}`, { headers: { 'X-M2-Blog-Fixture': 'blog' } });
   const body = await response.json();
   expect(response.status(), JSON.stringify(body)).toBe(200);
   await context.dispose();
@@ -161,6 +161,7 @@ test.describe('BLG-01, BLG-03, BLG-04, BLG-08: writing posts', () => {
   test('a draft is only in my posts; publishing puts it in search', async ({ page, browser }) => {
     await newUser(page, { name: 'Sara Mostafa' });
     const word = unique('draft');
+    const tag = unique('tg');
     await page.goto('/blog/new');
 
     // Field errors before anything is sent.
@@ -170,12 +171,15 @@ test.describe('BLG-01, BLG-03, BLG-04, BLG-08: writing posts', () => {
 
     await main(page).getByLabel('Title').fill(`Felucca ${word}`);
     await main(page).getByLabel('Story').fill('We sailed at dawn.\n\nThe river was calm.');
-    await main(page).getByLabel('New tag').fill('Nile');
+    // A pasted list becomes separate tags.
+    await main(page).getByLabel('New tag').fill(`Nile, ${tag}`);
     await main(page).getByRole('button', { name: 'Add tag' }).click();
-    await expect(main(page).getByRole('list', { name: 'Added tags' })).toContainText('#nile');
+    await expect(main(page).getByRole('list', { name: 'Added tags' }).getByRole('listitem')).toHaveText([/#nile/, new RegExp(`#${tag}`)]);
     await main(page).getByRole('button', { name: 'Save draft' }).click();
 
-    await expect(page).toHaveURL(/\/blog\/[a-f0-9]{24}\/edit\?saved=draft$/);
+    await expect(main(page).getByRole('status').filter({ hasText: 'Saved as a draft' })).toBeVisible();
+    // The one-time ?saved=draft is removed, so a reload does not repeat the message.
+    await expect(page).toHaveURL(/\/blog\/[a-f0-9]{24}\/edit$/);
     await expect(main(page).getByRole('status').filter({ hasText: 'Saved as a draft' })).toBeVisible();
     const postId = page.url().match(/\/blog\/([a-f0-9]{24})\//)![1];
 
@@ -188,6 +192,9 @@ test.describe('BLG-01, BLG-03, BLG-04, BLG-08: writing posts', () => {
 
     await page.goto(`/blog?q=${word}`);
     await expect(main(page).getByText('No results', { exact: true })).toBeVisible();
+    // Tag pages are cached for everyone: this read puts "no posts" in the cache.
+    await page.goto(`/blog?tag=${tag}`);
+    await expect(main(page).getByText('No results', { exact: true })).toBeVisible();
     // The author sees their own draft; a guest gets Not found.
     await page.goto(`/blog/${postId}`);
     await expect(main(page).getByText('Draft: only you can see it')).toBeVisible();
@@ -198,8 +205,10 @@ test.describe('BLG-01, BLG-03, BLG-04, BLG-08: writing posts', () => {
     await page.goto(`/blog/${postId}/edit`);
     await main(page).getByRole('button', { name: 'Publish' }).click();
     await expect(main(page).getByRole('status').filter({ hasText: 'Your changes are published.' })).toBeVisible();
-    // The cached search result for this keyword was expired by the author's own change.
+    // Search is read fresh; the cached tag page was expired by the author's own change.
     await page.goto(`/blog?q=${word}`);
+    await expect(cards(page).getByRole('heading')).toHaveText([`Felucca ${word}`]);
+    await page.goto(`/blog?tag=${tag}`);
     await expect(cards(page).getByRole('heading')).toHaveText([`Felucca ${word}`]);
     await guest.page.goto(`/blog/${postId}`);
     await expect(guest.page.getByRole('heading', { name: `Felucca ${word}` })).toBeVisible();
@@ -279,6 +288,32 @@ test.describe('BLG-01, BLG-03, BLG-04, BLG-08: writing posts', () => {
     await page.goto(`/blog/${postId}`);
     await expect(page.getByRole('heading', { name: 'Page not found' })).toBeVisible();
   });
+
+  test('deleting the only post on page 2 goes back to page 1; deleting from the editor says so once', async ({ page }) => {
+    const author = await newUser(page);
+    const [oldest] = await seedPosts(author.userId, { title: unique('Oldest ') });
+    await seedPosts(author.userId, { count: 10, title: 'Newer' });
+    // My posts are newest first by creation, so the first seeded post is alone on page 2.
+    await page.goto('/blog/mine?page=2');
+    const items = main(page).getByRole('list', { name: 'Your posts' }).getByRole('listitem');
+    await expect(items).toHaveCount(1);
+    await items.first().getByRole('button', { name: 'Delete post' }).click();
+    await page.getByRole('dialog', { name: 'Delete this post?' }).getByRole('button', { name: 'Delete post' }).click();
+    await expect(page).toHaveURL(/\/blog\/mine$/);
+    await expect(items).toHaveCount(10);
+    await page.goto(`/blog/${oldest}`);
+    await expect(page.getByRole('heading', { name: 'Page not found' })).toBeVisible();
+
+    await page.goto('/blog/mine');
+    await items.first().getByRole('link', { name: /^Edit/ }).click();
+    await main(page).getByRole('button', { name: 'Delete post' }).first().click();
+    await page.getByRole('dialog', { name: 'Delete this post?' }).getByRole('button', { name: 'Delete post' }).click();
+    await expect(main(page).getByRole('status').filter({ hasText: 'The post was deleted.' })).toBeVisible();
+    await expect(page).toHaveURL(/\/blog\/mine$/);
+    await expect(main(page).getByRole('status').filter({ hasText: 'The post was deleted.' })).toBeVisible();
+    await page.reload();
+    await expect(main(page).getByText('The post was deleted.')).toHaveCount(0);
+  });
 });
 
 test.describe('BLG-05, BLG-06, BLG-07: likes and comments', () => {
@@ -295,6 +330,13 @@ test.describe('BLG-05, BLG-06, BLG-07: likes and comments', () => {
     // A second like is refused by the server; the page keeps the real state after reload.
     expect((await api(page, 'POST', `/posts/${postId}/like`)).status).toBe(409);
     await page.reload();
+    await expect(main(page).getByRole('button', { name: 'Liked', exact: true })).toBeVisible();
+    await expect(main(page).getByText('1 like', { exact: true })).toBeVisible();
+    await main(page).getByRole('button', { name: 'Liked', exact: true }).click();
+    await expect(main(page).getByText('0 likes')).toBeVisible();
+    // Liked again in another tab: this tab's Like gets a 409 and re-reads the real count.
+    expect((await api(page, 'POST', `/posts/${postId}/like`)).status).toBe(201);
+    await main(page).getByRole('button', { name: 'Like', exact: true }).click();
     await expect(main(page).getByRole('button', { name: 'Liked', exact: true })).toBeVisible();
     await expect(main(page).getByText('1 like', { exact: true })).toBeVisible();
     await main(page).getByRole('button', { name: 'Liked', exact: true }).click();
@@ -338,6 +380,25 @@ test.describe('BLG-05, BLG-06, BLG-07: likes and comments', () => {
     await expect(comments).toHaveCount(1);
     await expect(main(page).getByRole('heading', { name: /Comments \(1 comment\)/ })).toBeVisible();
 
+    // Deleted in another tab: Edit/Save and Delete close and reload instead of failing.
+    const gone = await api<{ commentId: string }>(page, 'POST', `/posts/${postId}/comments`, { content: 'Soon gone' });
+    await page.reload();
+    const goneItem = main(page).getByRole('article', { name: /^Comment by/ }).filter({ hasText: 'Soon gone' });
+    await goneItem.getByRole('button', { name: 'Edit' }).click();
+    expect((await api(page, 'DELETE', `/comments/${gone.body.commentId}`)).status).toBe(204);
+    await goneItem.getByRole('button', { name: 'Save comment' }).click();
+    await expect(main(page).getByText(/That comment was already deleted/)).toBeVisible();
+    await expect(goneItem).toHaveCount(0);
+    const gone2 = await api<{ commentId: string }>(page, 'POST', `/posts/${postId}/comments`, { content: 'Also gone' });
+    await page.reload();
+    const goneItem2 = main(page).getByRole('article', { name: /^Comment by/ }).filter({ hasText: 'Also gone' });
+    await goneItem2.getByRole('button', { name: 'Delete' }).click();
+    expect((await api(page, 'DELETE', `/comments/${gone2.body.commentId}`)).status).toBe(204);
+    await page.getByRole('dialog', { name: 'Delete this comment?' }).getByRole('button', { name: 'Delete comment' }).click();
+    await expect(main(page).getByText(/That comment was already deleted/)).toBeVisible();
+    await expect(goneItem2).toHaveCount(0);
+    await expect(comments).toHaveCount(1);
+
     // Someone else sees the comment but cannot change it.
     const reader = await otherPerson(browser);
     await newUser(reader.page);
@@ -379,6 +440,9 @@ test.describe('BLG-10 and BLG-13: images and an attached itinerary', () => {
 
     await main(page).getByLabel('Post images').setInputFiles({ name: 'bad.gif', mimeType: 'image/gif', buffer: PNG });
     await expect(main(page).getByText('Only JPG or PNG images are accepted.')).toBeVisible();
+    // Named PNG but not a PNG inside: the server's content check refuses it with its field message.
+    await main(page).getByLabel('Post images').setInputFiles({ name: 'fake.png', mimeType: 'image/png', buffer: Buffer.from('not an image at all') });
+    await expect(main(page).getByText('Image must be a JPG or PNG file')).toBeVisible();
     await main(page).getByLabel('Post images').setInputFiles({ name: 'nile.png', mimeType: 'image/png', buffer: PNG });
     await expect(main(page).getByText('1 / 5')).toBeVisible();
 
@@ -471,10 +535,14 @@ test.describe('BLG-12, GEN-10, ACC-12: author page and visibility', () => {
 
   test('blog pages fit 360, 768, 1024 and 1440 px widths without sideways scrolling', async ({ page }) => {
     const author = await fixture<Account>('user');
-    const [postId] = await seedPosts(author.userId, { title: unique('Narrow '), tags: 'a-rather-long-tag-name-here', content: 'Long words '.repeat(80) });
+    const longTitle = `Narrow${'a'.repeat(90)}`;
+    const [postId] = await seedPosts(author.userId, { title: longTitle, tags: 'a-rather-long-tag-name-here', content: `${'Long words '.repeat(40)}${'b'.repeat(300)}` });
+    await fixture('itinerary', { author: author.userId, title: `Trip${'c'.repeat(90)}` });
+    await signIn(page, author);
+    expect((await api(page, 'POST', `/posts/${postId}/comments`, { content: 'd'.repeat(400) })).status).toBe(201);
     for (const width of [360, 768, 1024, 1440]) {
       await page.setViewportSize({ width, height: 900 });
-      for (const path of ['/blog', `/blog/${postId}`, `/authors/${author.userId}`]) {
+      for (const path of ['/blog', `/blog/${postId}`, `/authors/${author.userId}`, '/blog/mine']) {
         await page.goto(path);
         await expect(main(page).getByRole('heading', { level: 1 })).toBeVisible();
         await noSidewaysScroll(page);
