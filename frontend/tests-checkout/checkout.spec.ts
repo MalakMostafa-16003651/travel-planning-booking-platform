@@ -431,11 +431,11 @@ test.describe('Edge cases from review', () => {
     // Back again after the confirmation: the page ends on "already paid", never on a raw 409.
     await page.goBack();
     await expect(page).toHaveURL(`/checkout/flight/${id}`);
+    // The router shows its stale copy of checkout; accepting there gets a 409 and the page refreshes itself.
     const stale = page.getByRole('checkbox', { name: /accept these cancellation/ });
-    if (await stale.isVisible().catch(() => false)) {
-      await stale.check();
-      await page.getByRole('button', { name: 'Accept policies' }).click();
-    }
+    await expect(stale).toBeVisible();
+    await stale.check();
+    await page.getByRole('button', { name: 'Accept policies' }).click();
     await expect(page.getByRole('heading', { name: 'This booking is already paid' })).toBeVisible();
   });
 
@@ -468,6 +468,24 @@ test.describe('Edge cases from review', () => {
     await context.clearCookies();
     await expect(main(page).getByText('Your session has ended', { exact: true })).toBeVisible();
     await expect(main(page).getByRole('link', { name: 'Sign in' })).toHaveAttribute('href', /^\/login\?returnTo=%2Fcheckout%2Fresult/);
+  });
+
+  test('an old result link for a paid, then cancelled booking says so (not "hold ended")', async ({ page }) => {
+    const id = await heldCheckout(page);
+    await page.getByRole('button', { name: 'Pay $150.00' }).click();
+    await expect(page.getByRole('heading', { name: 'Confirming your payment' })).toBeVisible();
+    const resultUrl = new URL(page.url()).pathname + new URL(page.url()).search;
+    await fixture('paid', { intent: (await paymentFor({ booking: id })).intent });
+    await expect(page.getByRole('heading', { name: 'Payment confirmed' })).toBeVisible();
+    const cancelled = await api(page, 'POST', `/flight-bookings/${id}/cancel`);
+    expect(cancelled.status, JSON.stringify(cancelled.body)).toBe(200);
+
+    await page.goto(resultUrl);
+    await expect(page.getByRole('heading', { name: 'This booking was paid and later cancelled' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Your hold ended before the payment completed' })).toHaveCount(0);
+    await expect(main(page).getByRole('region', { name: 'Payment' })).toContainText('$150.00');
+    await expect(main(page).getByRole('region', { name: 'Refund' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'View booking' })).toHaveAttribute('href', `/bookings/flights/${id}`);
   });
 
   test('a long wait ends in "still processing" with Check again', async ({ page }) => {

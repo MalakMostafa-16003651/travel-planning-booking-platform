@@ -15,6 +15,10 @@ export interface BookingState {
   status: BookingStatus;
   holdExpiresAt?: string;
   refundId?: string;
+  /** The payment that confirmed it (flight and hotel bookings record it on confirmation). */
+  paymentId?: string;
+  /** Flight changes: set once the change was applied, which needs its payment (or no payment at all). */
+  appliedAt?: string;
 }
 
 /** GET path of the booking (or change) a payment is for. */
@@ -26,8 +30,13 @@ export function bookingReadPath(type: CheckoutType, bookingId: string): string {
 }
 
 /** Reads BookingState from any of the three booking responses (field names from their DTOs). */
-export function toBookingState(raw: { status: BookingStatus; holdExpiresAt?: string; refundId?: string; refund?: { refundId?: string } }): BookingState {
-  return { status: raw.status, holdExpiresAt: raw.holdExpiresAt, refundId: raw.refundId ?? raw.refund?.refundId };
+export function toBookingState(raw: {
+  status: BookingStatus; holdExpiresAt?: string; refundId?: string; refund?: { refundId?: string }; paymentId?: string; appliedAt?: string;
+}): BookingState {
+  return {
+    status: raw.status, holdExpiresAt: raw.holdExpiresAt, refundId: raw.refundId ?? raw.refund?.refundId,
+    paymentId: raw.paymentId, appliedAt: raw.appliedAt,
+  };
 }
 
 export type Outcome =
@@ -39,6 +48,8 @@ export type Outcome =
   | 'failed'
   /** Stripe's amount did not match: an admin checks it, no retry. */
   | 'review'
+  /** This payment confirmed the booking, which was cancelled later (an old result link). */
+  | 'cancelled'
   /** The hold ended (or the booking was cancelled) before the payment completed. */
   | 'ended';
 
@@ -50,6 +61,9 @@ export function paymentOutcome(payment: Payment, booking: BookingState | null, n
   const status = booking ? effectiveStatus(booking.status, booking.holdExpiresAt, now) : null;
   if (status === 'CONFIRMED' || status === 'COMPLETED') return 'confirmed';
   const bookingOver = status === 'EXPIRED' || status === 'CANCELLED';
+  // The booking records the payment that confirmed it; only then was it really paid, then cancelled.
+  const paidByThis = !!booking && (booking.paymentId === payment._id || !!booking.appliedAt);
+  if (status === 'CANCELLED' && paidByThis) return 'cancelled';
   if (payment.status === 'FAILED') {
     if (payment.failureReason === AMOUNT_MISMATCH_REASON) return 'review';
     return bookingOver || payment.failureReason === HOLD_EXPIRED_REASON ? 'ended' : 'failed';

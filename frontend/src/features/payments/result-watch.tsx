@@ -41,6 +41,7 @@ const headlines: Record<Outcome, string> = {
   waiting: 'Confirming your payment',
   failed: 'Your payment did not go through',
   review: 'We are checking this payment',
+  cancelled: 'This booking was paid and later cancelled',
   ended: 'Your hold ended before the payment completed',
 };
 
@@ -115,12 +116,27 @@ function Body({ outcome, payment, booking, stop, stopped, error, links, retryHre
     );
   }
 
+  if (outcome === 'cancelled') {
+    return (
+      <>
+        <div><Badge tone="neutral">Cancelled</Badge></div>
+        <h1 className="m-0">{headlines.cancelled}</h1>
+        <p className="m-0 text-body">This payment confirmed the booking, which was cancelled afterwards. Any refund it gets is shown below.</p>
+        <PaymentRefundStatus paymentId={payment._id} refundId={booking?.refundId} currency={payment.currency} />
+        <div><Link href={links.back}>View booking</Link></div>
+      </>
+    );
+  }
+
   if (outcome === 'ended') {
     return (
       <>
         <div><Badge tone="neutral">Hold ended</Badge></div>
         <h1 className="m-0">{headlines.ended}</h1>
         <p className="m-0 text-body">This booking was not confirmed. If you were charged, the full amount is refunded to your payment method.</p>
+        {/* Explains a "Paid" row below: the money arrived, but too late for the booking. */}
+        {payment.status === 'SUCCEEDED' && <p className="m-0 text-body">Stripe took the payment; it is being refunded in full.</p>}
+        {payment.status === 'REFUNDED' && <p className="m-0 text-body">Stripe took the payment and it has been refunded in full.</p>}
         <PaymentRefundStatus paymentId={payment._id} refundId={booking?.refundId} currency={payment.currency} />
         <div><Link href={links.back}>Back to booking</Link></div>
       </>

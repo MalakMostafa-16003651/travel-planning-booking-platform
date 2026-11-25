@@ -42,9 +42,13 @@ Access denied, because only role USER can pay; another traveler's booking or pay
    - payment FAILED with a normal reason: the `failureReason`, "Nothing was charged" and Try again;
    - payment FAILED with "Paid amount does not match the booking amount": an administrator checks
      it, no Try again;
-   - the hold ended or the booking was cancelled (whatever the payment says): "Your hold ended before
-     the payment completed. If you were charged, the full amount is refunded", with
-     `PaymentRefundStatus` for the payment and the booking's refund.
+   - the booking was confirmed by this payment (its `paymentId` is this payment, or the change has
+     `appliedAt`) and is now CANCELLED, as on an old result link: "This booking was paid and later
+     cancelled", with `PaymentRefundStatus` and a link to the booking;
+   - the hold ended, or the booking was cancelled without this payment ever being recorded on it:
+     "Your hold ended before the payment completed. If you were charged, the full amount is
+     refunded" (plus "Stripe took the payment; it is being refunded in full" when the payment is
+     SUCCEEDED), with `PaymentRefundStatus` for the payment and the booking's refund.
 
    Stripe's redirect query (`payment_intent`, `redirect_status`) is ignored. A 401 stops the watch
    and offers sign-in back to the same page; a 404 stops it with "Payment not found".
@@ -185,7 +189,8 @@ after the hold ended shows the refund, not "confirmed"; an amount mismatch goes 
 retry; Back after submitting goes to the result page instead of paying again, and Back after paying
 ends on "already paid"; a reload asks for acceptance again and reuses the open payment; a forged
 `redirect_status` or mismatched type is not trusted; an ended session stops the watch with a sign-in
-link; a minute-long wait ends in "still processing" and Check again.
+link; a minute-long wait ends in "still processing" and Check again; an old result link for a booking
+that was paid and then cancelled says so instead of "hold ended".
 
 ### By hand, with real Stripe test mode
 
