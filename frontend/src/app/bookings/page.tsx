@@ -58,7 +58,7 @@ export default async function BookingsHubPage() {
         <ul className="m-0 grid list-none gap-4 p-0 sm:grid-cols-3">
           {bookingGroups.map(({ group, label }) => (
             <li key={group}>
-              <Link href={listHref(group)} className="flex min-h-11 items-baseline justify-between gap-3 rounded-card border border-border bg-card p-5 text-ink! no-underline transition-colors duration-200 hover:border-primary">
+              <Link href={listHref(group)} className="flex min-h-11 items-baseline justify-between gap-3 rounded-card border border-border bg-card p-5 text-ink no-underline transition-colors duration-200 hover:border-primary">
                 <span className="font-semibold">{label}</span>
                 <span className="font-heading text-2xl font-bold tabular-nums">{totals[group] ?? '–'}</span>
               </Link>
