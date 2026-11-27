@@ -1,10 +1,10 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { Pagination } from '@/components/data-table';
 import { EmptyState } from '@/components/ui/empty-state';
 import { authorHref, formatDateOnly, formatMonth, pageParam, plural } from '@/features/blog/format';
 import { LoadFailed } from '@/features/blog/page-states';
-import { Pager } from '@/features/blog/pager';
 import { PostCardList } from '@/features/blog/post-card';
 import { loadAuthor } from '@/features/blog/server';
 
@@ -57,7 +57,7 @@ export default async function AuthorPage(props: Props) {
         {author.posts.items.length === 0
           ? <EmptyState title={author.posts.total === 0 ? 'No published posts yet' : 'This page is empty'} />
           : <PostCardList posts={author.posts.items} headingLevel="h3" />}
-        <Pager page={author.posts.page} totalPages={author.posts.totalPages} label="Post pages" href={target => here(target, itinerariesPage)} />
+        <Pagination page={author.posts.page} totalPages={author.posts.totalPages} label="Post pages" hrefForPage={target => here(target, itinerariesPage)} />
       </section>
 
       <section aria-labelledby="author-itineraries" className="grid min-w-0 gap-4">
@@ -81,7 +81,7 @@ export default async function AuthorPage(props: Props) {
             ))}
           </ul>
         )}
-        <Pager page={author.itineraries.page} totalPages={author.itineraries.totalPages} label="Itinerary pages" href={target => here(page, target)} />
+        <Pagination page={author.itineraries.page} totalPages={author.itineraries.totalPages} label="Itinerary pages" hrefForPage={target => here(page, target)} />
       </section>
     </div>
   );

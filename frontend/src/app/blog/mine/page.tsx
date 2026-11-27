@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
+import { Pagination } from '@/components/data-table';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { loginHref } from '@/config/routes';
@@ -8,7 +9,6 @@ import { DeletePostButton } from '@/features/blog/delete-post';
 import { FlashNotice } from '@/features/blog/flash-notice';
 import { formatDate, linkButtonClass, pageParam, postHref } from '@/features/blog/format';
 import { LoadFailed, TravelerOnly } from '@/features/blog/page-states';
-import { Pager } from '@/features/blog/pager';
 import { Counts } from '@/features/blog/post-card';
 import { loadMyPosts } from '@/features/blog/server';
 import type { MyPostItem } from '@/features/blog/types';
@@ -79,7 +79,7 @@ export default async function MyPostsPage({ searchParams }: Props) {
       ) : (
         <LoadFailed message={result.kind === 'error' ? result.message : 'Your posts could not be loaded.'} retryHref={mineHref(page)} />
       )}
-      {result.kind === 'ok' && <Pager page={result.data.page} totalPages={result.data.totalPages} label="Your post pages" href={mineHref} />}
+      {result.kind === 'ok' && <Pagination page={result.data.page} totalPages={result.data.totalPages} label="Your post pages" hrefForPage={mineHref} />}
     </div>
   );
 }

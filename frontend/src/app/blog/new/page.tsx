@@ -23,7 +23,7 @@ export default async function NewPostPage() {
         <h1 className="m-0 mt-3">Write a post</h1>
         <p className="m-0 mt-2 text-muted">Save it as a draft that only you can see, or publish it to the blog and search.</p>
       </header>
-      <PostEditor userId={user.userId} />
+      <PostEditor />
     </div>
   );
 }

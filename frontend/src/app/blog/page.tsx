@@ -1,10 +1,10 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { X } from 'lucide-react';
+import { Pagination } from '@/components/data-table';
 import { EmptyState } from '@/components/ui/empty-state';
 import { blogHref, linkButtonClass, pageParam, plural, textParam } from '@/features/blog/format';
 import { LoadFailed } from '@/features/blog/page-states';
-import { Pager } from '@/features/blog/pager';
 import { PostCardList } from '@/features/blog/post-card';
 import { SearchForm } from '@/features/blog/search-form';
 import { loadPublicPosts } from '@/features/blog/server';
@@ -82,7 +82,7 @@ export default async function BlogPage({ searchParams }: Props) {
           ) : (
             <PostCardList posts={result.data.items} />
           )}
-          <Pager page={result.data.page} totalPages={result.data.totalPages} label="Story pages" href={target => blogHref({ q, tag, page: target })} />
+          <Pagination page={result.data.page} totalPages={result.data.totalPages} label="Story pages" hrefForPage={target => blogHref({ q, tag, page: target })} />
         </section>
       ) : result.kind === 'not-found' ? (
         <EmptyState title="No results" description="That search could not be run. Try a shorter keyword or another tag." action={<Link href="/blog" className={linkButtonClass('secondary')}>Show all stories</Link>} />

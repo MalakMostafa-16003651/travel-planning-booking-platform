@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Comments } from '@/features/blog/comments';
 import { formatDate, formatDateOnly, paragraphs, plural } from '@/features/blog/format';
 import { LikeButton } from '@/features/blog/like-button';
-import { OwnerActions } from '@/features/blog/owner-actions';
+import { OwnerActions, ReportPost } from '@/features/blog/owner-actions';
 import { LoadFailed } from '@/features/blog/page-states';
 import { AuthorName } from '@/features/blog/post-card';
 import { loadPost } from '@/features/blog/server';
@@ -100,8 +100,7 @@ export default async function PostPage({ params }: Props) {
         {open
           ? <LikeButton postId={post.postId} initialLiked={post.likedByMe} initialCount={post.likesCount} />
           : <span className="text-sm text-muted">{plural(post.likesCount, 'like')}. Likes open once the post is published.</span>}
-        {/* TODO(after PR #153): mount Arwa's report action here when the viewer is not the author:
-            <ReportAction targetType="POST" targetId={post.postId} /> (it sends guests to sign in, ACC-10). */}
+        {open && <ReportPost postId={post.postId} authorId={post.author.userId} />}
       </div>
 
       <Comments postId={post.postId} initialPage={post.comments} open={open} />

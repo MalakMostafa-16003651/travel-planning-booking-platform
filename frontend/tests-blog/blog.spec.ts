@@ -466,13 +466,16 @@ test.describe('BLG-10 and BLG-13: images and an attached itinerary', () => {
     await fixture('itinerary', { author: author.userId, title: privateTrip, visibility: 'PRIVATE' });
     const [postId] = await seedPosts(author.userId, { title: unique('Trip post ') });
 
+    // Kiki's shared ItineraryPicker: private trips are listed but cannot be chosen.
     await page.goto(`/blog/${postId}/edit`);
-    const select = main(page).getByLabel('Attach an itinerary (optional)');
-    await expect(select.locator('option', { hasText: publicTrip })).toHaveCount(1);
-    await expect(select.locator('option', { hasText: privateTrip })).toHaveCount(0);
-    await select.selectOption(itineraryId);
+    const picker = main(page).getByRole('group', { name: 'Attach an itinerary (optional)' });
+    await expect(picker.getByRole('radio', { name: 'No itinerary' })).toBeChecked();
+    await expect(picker.getByRole('radio', { name: new RegExp(privateTrip) })).toBeDisabled();
+    await picker.getByRole('radio', { name: new RegExp(publicTrip) }).check();
     await main(page).getByRole('button', { name: 'Save changes' }).click();
     await expect(main(page).getByRole('status').filter({ hasText: 'Your changes are published.' })).toBeVisible();
+    await page.reload();
+    await expect(picker.getByRole('radio', { name: new RegExp(publicTrip) })).toBeChecked();
 
     const guest = await otherPerson(browser);
     await guest.page.goto(`/blog/${postId}`);
@@ -480,6 +483,49 @@ test.describe('BLG-10 and BLG-13: images and an attached itinerary', () => {
     await expect(attached.getByRole('link', { name: publicTrip })).toHaveAttribute('href', `/explore/itineraries/${itineraryId}`);
     await expect(attached).toContainText('2 days · Luxor, Aswan');
     await guest.context.close();
+  });
+});
+
+test.describe('GEN-09: reporting posts and comments (Arwa\'s ReportAction)', () => {
+  test('readers report a post and a comment; the author has no report button on their own post', async ({ page, browser }) => {
+    const author = await newUser(page);
+    const [postId] = await seedPosts(author.userId, { title: unique('Reportable ') });
+    const reader = await fixture<Account>('user', { name: 'Careful Reader' });
+    const other = await otherPerson(browser);
+    await signIn(other.page, reader);
+    expect((await api(page, 'POST', `/posts/${postId}/comments`, { content: 'Author comment' })).status).toBe(201);
+
+    // The author sees Edit and Delete, and no Report for the post or their own comment.
+    await page.goto(`/blog/${postId}`);
+    await expect(main(page).getByRole('link', { name: 'Edit post' })).toBeVisible();
+    await expect(main(page).getByRole('button', { name: /^Report/ })).toHaveCount(0);
+
+    await other.page.goto(`/blog/${postId}`);
+    await main(other.page).getByRole('button', { name: 'Report this post' }).click();
+    const dialog = other.page.getByRole('dialog', { name: 'Report this post' });
+    await dialog.getByLabel('Reason').fill('Spam link in the story');
+    await dialog.getByRole('button', { name: 'Send report' }).click();
+    await expect(main(other.page).getByRole('status').filter({ hasText: 'Reported. Thank you.' })).toBeVisible();
+
+    const comment = main(other.page).getByRole('article', { name: /^Comment by / });
+    await comment.getByRole('button', { name: 'Report this comment' }).click();
+    const commentDialog = other.page.getByRole('dialog', { name: 'Report this comment' });
+    await commentDialog.getByLabel('Reason').fill('Rude words in this comment');
+    await commentDialog.getByRole('button', { name: 'Send report' }).click();
+    await expect(comment.getByRole('status')).toHaveText('Reported. Thank you.');
+    await other.context.close();
+  });
+
+  test('a guest who reports is sent to sign in and back to the post', async ({ page }) => {
+    const author = await fixture<Account>('user');
+    const [postId] = await seedPosts(author.userId, { title: unique('Guest report ') });
+    const reader = await fixture<Account>('user');
+    await page.goto(`/blog/${postId}`);
+    await main(page).getByRole('button', { name: 'Report this post' }).click();
+    await expect(page).toHaveURL(/\/login\?returnTo=/);
+    await signInWithForm(page, reader);
+    await expect(page).toHaveURL(new RegExp(`/blog/${postId}$`));
+    await expect(main(page).getByRole('button', { name: 'Report this post' })).toBeVisible();
   });
 });
 

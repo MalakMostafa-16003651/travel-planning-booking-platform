@@ -51,7 +51,7 @@ export default async function EditPostPage({ params, searchParams }: Props) {
           <DeletePostButton postId={post.postId} title={post.title} />
         </div>
       </header>
-      <PostEditor userId={user.userId} post={post} notice={notice} />
+      <PostEditor post={post} notice={notice} />
     </div>
   );
 }

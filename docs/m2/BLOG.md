@@ -47,7 +47,9 @@ answers 404, and that has to apply immediately rather than after a cache period.
 | `POST` / `DELETE /api/posts/:id/like` | `LikeButton` | Role USER, public posts only. `{ liked, likesCount }`; 409 already liked, 404 not liked |
 | `GET` / `POST /api/posts/:id/comments` | `Comments` | Oldest first, pages of ten. Content 1-500 after trimming |
 | `PATCH` / `DELETE /api/comments/:id` | `Comments` | Own comments only |
-| `GET /api/authors/:id?page=&itinerariesPage=` | `/authors/[id]`, editor itinerary list | `{ userId, name, joinedAt, posts, itineraries }`; 404 for a deactivated author |
+| `GET /api/authors/:id?page=&itinerariesPage=` | `/authors/[id]` | `{ userId, name, joinedAt, posts, itineraries }`; 404 for a deactivated author |
+| `GET /api/itineraries?page=` | editor, through Kiki's `ItineraryPicker` | The author's own itineraries; only PUBLIC and not hidden can be chosen |
+| `POST /api/reports` | post and comments, through Arwa's `ReportAction` | `{ targetType: POST\|COMMENT, targetId, reason 5-500 }`; 409 when already reported |
 
 Not used: `GET /api/tags/:tag/posts` returns the same posts as `GET /api/posts?tag=`; the list uses one
 endpoint so a tag and a keyword can be combined. `PATCH /api/posts/:id/itinerary` does the same as
@@ -63,9 +65,9 @@ Writing, liking and commenting are role **USER** only; other roles see a short e
 | With | Contract | State |
 | --- | --- | --- |
 | Malak, home | `BlogStoryPreviews` from `@/features/blog` (file `features/blog/story-previews.tsx`). Async Server Component, props `{ limit?: number }` (default 3, at most 10): the newest published posts as cards with a "Read all stories" link and friendly empty/error states. Mount as `<HomeContent stories={<BlogStoryPreviews />} />` | Ready; not mounted (the home page is Malak's) |
-| Arwa, reporting (PR #153) | Mount `<ReportAction targetType="POST" targetId={post.postId} />` beside the like button in `app/blog/[id]/page.tsx`, and `targetType="COMMENT" targetId={comment.commentId}` in `features/blog/comments.tsx`. Both places are marked with a `TODO(after PR #153)` comment. No placeholder button is shown | Waiting for PR #153 |
-| Arwa, pagination (PR #152) | `features/blog/pager.tsx` (Previous/Next, "Page X of Y", page in the URL; button mode for comments) is replaced by her `Pagination` | Waiting for PR #152 |
-| Kiki, itinerary picker (PR #148) | The editor's itinerary `<select>` (in `post-editor.tsx`, `useOwnPublicItineraries`) lists the author's own public itineraries from `GET /api/authors/:me`, exactly the set the backend accepts. Replace it with `ItineraryPicker({ value, onChange })` and keep sending `itineraryId` | Waiting for PR #148 |
+| Arwa, reporting (#153) | `ReportAction` from `@/features/reports`: `targetType="POST"` beside the like button on a public post (`ReportPost` in `owner-actions.tsx` hides it from the author), and `targetType="COMMENT"` on other people's comments in `comments.tsx`. Guests go to sign in and come back | Integrated (tested) |
+| Arwa, pagination (#152) | `Pagination` from `@/components/data-table` on `/blog`, `/blog/mine`, both lists of `/authors/[id]` (links, page in the URL) and the comments (button mode, `onPageChange`). The local pager was removed | Integrated (tested) |
+| Kiki, itinerary picker (#148) | `ItineraryPicker` from `@/features/itineraries/itinerary-picker` in the editor with `value`, `selected={post.itinerary}` (keeps the saved choice visible on another page), `error` (the backend's 400 for `itineraryId`) and `disabled`. The blog shares her `ItinerarySummary` type, since the backend sends the same DTO. `itineraryId` is still sent only when it changed; `null` detaches | Integrated (tested) |
 | Kiki, public itinerary page | The attached itinerary and the author page link to `/explore/itineraries/{itineraryId}` | Route is Kiki's; these links give Not found until it is on `develop` |
 | Arwa (GEN-10) and Malak (ACC-12), hiding and deactivation | Nothing to call. Public lists, the home previews and author pages are read fresh on every request, so a hidden post or a deactivated author's posts leave them on the next request | Done (tested) |
 | Lama, media | `MediaUploader` with `onUpload` posting field `image` to the post's endpoint and `onRemove` deleting by `imageId` | Integrated |
@@ -110,7 +112,7 @@ every journey runs through the browser, the Next proxy and the real API. If mong
 download MongoDB, set `MONGOMS_SYSTEM_BINARY` to a local `mongod`. If Playwright's browser download is
 unavailable, set `PLAYWRIGHT_CHROMIUM_PATH` to an installed Chromium (or `PLAYWRIGHT_CHANNEL=chrome`).
 
-Covered (17 tests): guest browsing with tag filter and pages of ten, clickable tags; keyword search by title,
+Covered (20 tests): guest browsing with tag filter and pages of ten, clickable tags; keyword search by title,
 tag and author name with interaction ordering and "No results"; guest like/comment/write sent to sign in and
 returned; draft only in My posts and not in search or its tag page, publish puts it in both;
 pasted tag list split; `?saved=` removed after showing; field errors; 6th tag and 31-character tag refused,
@@ -119,15 +121,13 @@ write; delete with confirmation and cancel; deleting the only post on page 2 ret
 `?deleted=` is removed after showing; like once (409 on a second like, and a like from another tab re-reads
 the count) and unlike; comments in order, 501 characters refused, edit and delete own, and edit/delete of a
 comment deleted in another tab; comment pages of ten; PNG upload, display and removal; a GIF refused by the
-uploader in the browser and a fake PNG refused by the server with its own message; attach a public itinerary, private ones not offered; author page with posts and public itineraries
-only; hidden post only for its author, "Deleted user" comments, deactivated author's page and post gone;
+uploader in the browser and a fake PNG refused by the server with its own message; attach a public itinerary with the shared picker (private ones disabled, saved choice still checked after a reload); reporting a post and a comment (author sees no report button on their own post, guest sent to sign in and back); author page with posts and public itineraries
+only; hidden post only for its author, "Deleted user" comments, deactivated author's page and post gone; `/blog` and a tag page drop a post on the next request after hiding and after deactivating;
 no sideways scroll at 360, 768, 1024 and 1440 px on the list, post, author page and My posts, with a
 90-character unbroken title, a 300-character unbroken word in the body, a 400-character unbroken comment and
 a long itinerary title.
 
 ## Known limits
 
-- Reporting, shared pagination and the itinerary picker wait for Arwa's and Kiki's PRs (see Contracts).
-- The editor's itinerary list reads at most five pages (50) of the author's public itineraries.
 - `BlogStoryPreviews` is not mounted anywhere yet, so it has no browser test of its own; it reuses the
   tested list read and card parts.

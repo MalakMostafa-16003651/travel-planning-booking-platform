@@ -1,6 +1,7 @@
 // Wire types for the blog API, copied from backend/src/blog (blog.service.ts toResponse/findPublicPosts/listMine,
 // comments.service.ts shape, likes.service.ts) and backend/src/itineraries/dto/itinerary-response.dto.ts.
 // Ids are endpoint-specific: postId, commentId, imageId, itineraryId, userId (never _id). Dates are ISO strings.
+import type { ItinerarySummary } from '@/features/itineraries/types';
 
 /** backend/src/blog/blog.rules.ts, repeated so the forms can explain the limits before the server refuses. */
 export const BLOG_LIMITS = {
@@ -66,19 +67,11 @@ export interface PostImage {
   uploadedAt: string;
 }
 
-/** The fields of ItinerarySummaryDto that the blog shows (BLG-12, BLG-13). */
-export interface ItinerarySummary {
-  itineraryId: string;
-  title: string;
-  description?: string;
-  countries: string[];
-  cities: string[];
-  /** Date-only YYYY-MM-DD. */
-  startDate: string;
-  endDate?: string;
-  dayCount: number;
-  visibility: 'PUBLIC' | 'PRIVATE';
-}
+/**
+ * BLG-12, BLG-13: the backend sends the full ItinerarySummaryDto, the same shape Kiki's itinerary
+ * feature uses, so the blog shares her type (and her picker can show a post's saved itinerary).
+ */
+export type { ItinerarySummary };
 
 export interface Comment {
   commentId: string;

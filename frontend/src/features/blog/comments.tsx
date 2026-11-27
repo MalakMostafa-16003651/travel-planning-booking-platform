@@ -4,14 +4,15 @@ import { useId, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonClassName } from '@/components/ui/button';
+import { Pagination } from '@/components/data-table';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ErrorAlert } from '@/components/ui/error-alert';
 import { loginHref } from '@/config/routes';
 import { useSession } from '@/features/auth/session-provider';
+import { ReportAction } from '@/features/reports';
 import { ApiError, apiClient } from '@/lib/api/client';
 import { formatDate, plural, postHref } from './format';
-import { Pager } from './pager';
 import { AuthorName } from './post-card';
 import { BLOG_LIMITS, type Comment, type Page } from './types';
 
@@ -126,8 +127,8 @@ function CommentItem({ comment, mine, onChanged, onDeleted }: { comment: Comment
           />
         </div>
       )}
-      {/* TODO(after PR #153): mount Arwa's report action here for other people's comments:
-          {!mine && <ReportAction targetType="COMMENT" targetId={comment.commentId} />} (guests are sent to sign in). */}
+      {/* GEN-09: other people's comments can be reported (guests are sent to sign in). */}
+      {!mine && <div className="mt-1"><ReportAction targetType="COMMENT" targetId={comment.commentId} /></div>}
     </article>
   );
 }
@@ -209,7 +210,7 @@ export function Comments({ postId, initialPage, open }: { postId: string; initia
         )}
       {notice && <p role="status" className="m-0 text-sm text-muted">{notice}</p>}
       {listError && <ErrorAlert message={listError} />}
-      <Pager page={data.page} totalPages={data.totalPages} label="Comment pages" onPage={page => void load(page)} disabled={busy} />
+      <Pagination page={data.page} totalPages={data.totalPages} label="Comment pages" onPageChange={page => void load(page)} disabled={busy} />
 
       {!open ? (
         <p className="m-0 text-sm text-muted">Comments open once the post is published and visible to everyone.</p>

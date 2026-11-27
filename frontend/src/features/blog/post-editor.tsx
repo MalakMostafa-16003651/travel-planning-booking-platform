@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useId, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { useId, useState, type FormEvent, type KeyboardEvent } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { X } from 'lucide-react';
@@ -8,16 +8,15 @@ import { Button } from '@/components/ui/button';
 import { ErrorAlert } from '@/components/ui/error-alert';
 import { FormField } from '@/components/ui/form-field';
 import { Input } from '@/components/ui/input';
-import { Select } from '@/components/ui/select';
+import { ItineraryPicker } from '@/features/itineraries/itinerary-picker';
 import { MediaUploader, type MediaItem } from '@/features/media/media-uploader';
 import { ApiError, apiClient, uploadFile } from '@/lib/api/client';
 import { useDropQueryParam } from './flash-notice';
-import { plural, postHref } from './format';
-import { BLOG_LIMITS, type AuthorProfile, type ItinerarySummary, type Post, type PostStatus } from './types';
+import { postHref } from './format';
+import { BLOG_LIMITS, type Post, type PostStatus } from './types';
 
 type Errors = Partial<Record<'title' | 'content' | 'tags' | 'itineraryId' | 'form', string>>;
 
-const MAX_ITINERARY_PAGES = 5;
 
 /** The same normalisation as the backend DTO: trimmed and lowercased. */
 const normalizeTag = (tag: string) => tag.trim().toLowerCase();
@@ -46,37 +45,10 @@ function serverErrors(cause: unknown): Errors {
 }
 
 /**
- * BLG-13 (bonus): the author's own PUBLIC itineraries, read from their public author page, which lists
- * exactly the itineraries the backend accepts for attachment.
- * TODO(after PR #148): replace this select with Kiki's ItineraryPicker from '@/features/itineraries/itinerary-picker'.
- */
-function useOwnPublicItineraries(userId: string) {
-  const [items, setItems] = useState<ItinerarySummary[] | null>(null);
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      const found: ItinerarySummary[] = [];
-      for (let page = 1; page <= MAX_ITINERARY_PAGES; page += 1) {
-        const author = await apiClient<AuthorProfile>(`/authors/${encodeURIComponent(userId)}?itinerariesPage=${page}`);
-        found.push(...author.itineraries.items);
-        if (page >= author.itineraries.totalPages) break;
-      }
-      if (active) setItems(found);
-    })().catch(() => { if (active) { setFailed(true); setItems([]); } });
-    return () => { active = false; };
-  }, [userId]);
-  return { items, failed };
-}
-
-const itineraryLabel = (itinerary: ItinerarySummary) =>
-  `${itinerary.title}${itinerary.cities.length ? ` (${itinerary.cities.join(', ')})` : ''}, ${plural(itinerary.dayCount, 'day')}`;
-
-/**
  * BLG-01, BLG-04, BLG-08, BLG-10 and BLG-13: one editor for new and existing posts. A new post is saved
  * first; images are then added on its edit page, because the image endpoints need the post id.
  */
-export function PostEditor({ userId, post, notice }: { userId: string; post?: Post; notice?: string }) {
+export function PostEditor({ post, notice }: { post?: Post; notice?: string }) {
   const router = useRouter();
   const id = useId();
   const [saved, setSaved] = useState<Post | undefined>(post);
@@ -88,7 +60,6 @@ export function PostEditor({ userId, post, notice }: { userId: string; post?: Po
   const [errors, setErrors] = useState<Errors>({});
   const [saving, setSaving] = useState<PostStatus | null>(null);
   const [message, setMessage] = useState(notice ?? '');
-  const itineraries = useOwnPublicItineraries(userId);
   // The "saved" notice came in the URL (?saved=draft); drop it so a reload does not repeat it.
   useDropQueryParam('saved');
 
@@ -236,22 +207,14 @@ export function PostEditor({ userId, post, notice }: { userId: string; post?: Po
         {errors.tags && <p id={`${id}-tag-error`} className="m-0 text-sm text-danger">{errors.tags}</p>}
       </fieldset>
 
-      <FormField
-        id={`${id}-itinerary`}
-        label="Attach an itinerary (optional)"
+      {/* BLG-13 (bonus): Kiki's shared picker lists the author's own itineraries; only public ones can be chosen. */}
+      <ItineraryPicker
+        value={itineraryId || null}
+        selected={saved?.itinerary ?? null}
         error={errors.itineraryId}
-        hint={itineraries.failed
-          ? 'Your itineraries could not be loaded. You can attach one later.'
-          : itineraries.items?.length === 0 && !itineraryId ? 'You have no public itineraries yet. Only your own public itineraries can be attached.' : 'Only your own public itineraries can be attached.'}
-      >
-        <Select value={itineraryId} onChange={event => setItineraryId(event.target.value)} disabled={busy || itineraries.items === null}>
-          <option value="">{itineraries.items === null ? 'Loading your itineraries…' : 'No itinerary'}</option>
-          {saved?.itinerary && !itineraries.items?.some(item => item.itineraryId === saved.itinerary!.itineraryId) && (
-            <option value={saved.itinerary.itineraryId}>{itineraryLabel(saved.itinerary)}</option>
-          )}
-          {itineraries.items?.map(item => <option key={item.itineraryId} value={item.itineraryId}>{itineraryLabel(item)}</option>)}
-        </Select>
-      </FormField>
+        onChange={next => { setItineraryId(next ?? ''); setErrors(current => ({ ...current, itineraryId: undefined })); }}
+        disabled={busy}
+      />
 
       <section aria-label="Images" className="grid gap-2">
         {saved ? (
