@@ -299,3 +299,43 @@ correctly, the booking-link JSON matches the agreed contract exactly, the no-dat
 shows only the check-availability form, and an unknown hotel ID 404s through the shared
 not-found page. `npm run typecheck`/`build` pass clean; no test files committed.
 ================================================
+
+================================================
+Date: 2026-11-27
+Student: 16002622 (Lama, Person 5)
+Tool: Claude Code (model: Claude Sonnet 5, via the Claude desktop app)
+Related requirements: HTL-01/03-06/08-10/22 moderator dashboard (continued), GEN-08
+(logo replace), ACC-15 (HotelCreateForm)
+
+Prompt summary:
+Catch up on everything that happened since the last session: fetch latest GitHub state,
+check all open issues/PRs for anything needing a reply or a fix, then act on what was
+found (per the project's own AGENTS.md instruction to check GitHub state at the start of
+each session/message).
+
+How the output was used:
+Pulled the latest develop (30 commits ahead) and confirmed all 5 of the prior session's
+PRs (#134, #135, #136, #138, #144) merged cleanly, with both backend and frontend still
+typechecking/building against everyone else's merged work (flights, bookings, Malak's
+CSS fix in #145). Read every open issue for anything needing my input:
+- #137 (the CSS bug I reported): confirmed independently by Ismail, fixed properly by
+  Malak in #145 (@layer base), confirmed fixed by Ismail in #161.
+- #147 (Malak found a real bug in my MediaUploader: maxCount=1 with no onRemove hid the
+  upload picker once a logo existed, so there was no way to replace it): fixed in PR #162
+  (canPickFile = !atLimit || !onRemove; label switches to "Replace photo" at the limit).
+  Also removed my now-redundant !text-white workarounds from RoomSelector.tsx and
+  RoomsList.tsx now that #145 is on develop, same cleanup Ismail did for his own
+  workaround.
+- #149 (Arwa needs the HotelCreateForm contract): replied with the export/props/fields,
+  matching Gamila's AirlineCreateForm pattern exactly, then built it in PR #164 -
+  onCreated receives { id, name, city, isActive, createdAt } per Arwa's own #156 proposal.
+Verified both PR #162 and PR #164 against a real backend (local in-memory MongoDB, fresh
+each time since the C: drive was critically low again - redirected mongodb-memory-server's
+temp dir to E: each time): the MediaUploader fix confirmed via a throwaway /dev page
+(gallery still locks at its limit with onRemove; a logo-style uploader stays usable and
+replaces rather than appending); HotelCreateForm confirmed via a real admin login and a
+live POST /api/hotels (201 Created), with onCreated receiving the exact contract fields
+and the form clearing itself afterward.
+`npm run typecheck` and `npm run build` pass clean on both PRs. No test/debug files or
+local admin credentials committed.
+================================================
