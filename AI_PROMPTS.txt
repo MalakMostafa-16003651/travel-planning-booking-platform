@@ -403,3 +403,25 @@ live budget totals, and PDF download/print using the existing export endpoint. T
 real holds from the booking APIs; browser suite 11/11. Details: docs/work-logs/16001313.md
 (bonuses) and docs/m2/ITINERARIES.md.
 ================================================
+Date: 2026-11-25
+Student: 16002483 (Arwa, Person 2)
+Tool: Claude Code (Anthropic)
+Related requirements: GEN-05, ACC-14
+
+Prompt summary:
+Start Milestone 2 with the shared DataTable and Pagination, using only what the M2 split
+and handoff registry say, and prove it on my real /admin/accounts endpoint. I asked for a
+plain explanation of what the component is for before any code was written.
+
+How the output was used:
+Added @/components/data-table: DataTable (presentation only, one server page of rows),
+Pagination (link mode for URL-driven pages, callback mode for client lists), a GET-form
+filter bar and URL helpers (readPage, enumParam, pageCount, pageHref). Built the first
+consumer, the admin-only /admin/accounts list (ACC-14) with name/email search and role
+and status filters, page and filters kept in the URL, and empty, past-the-end, access
+denied and sign-in return states. Wrote the consumer contract in docs/m2/DATA_TABLE.md.
+Checked in Chromium with sample data: ten rows per page, filters return to page 1 and
+survive reload, and no sideways page scroll at 360 px; this check found that long emails
+squeezed the table on phones, so cells now stay on one line and the table scrolls inside
+its own frame. typecheck and build pass. The real-backend check is recorded separately.
+================================================
