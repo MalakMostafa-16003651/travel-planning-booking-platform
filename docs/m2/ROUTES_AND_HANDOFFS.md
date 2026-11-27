@@ -141,14 +141,14 @@ for another person's component.
 | Malak header; Arwa notification bell | Implemented `AppHeader({ accountSlot?: ReactNode, notificationSlot?: ReactNode })` | Account UI consumes shared session state; Arwa owns count/list/read state and mounts one bell in the slot. There is no `user` prop |
 | Malak email eligibility; Ismail, Osama and Hicham | `BookingEmailGate({ children, returnTo })`, `isEmailVerificationRequiredError(error)` and `verificationPath(returnTo)` from `@/features/auth/email-verification` | Mount around hold/payment actions and link back from an eligibility rejection. Each owner proves the live gate in their flow |
 | Arwa DataTable/Pagination; list owners | Column definitions, actual `{ items, page, pageSize, total }` or endpoint-specific envelope, URL/filter state and page-change callback | Arwa exports exact prop types with consumers; keep server page size 10 and do not slice one API page to fake pagination |
-| Gamila FlightSearch; Malak | `<FlightSearch variant="home" />` from `@/features/flights/flight-search` | Gamila confirmed the home interface. Mount it in `HomeContent` once her export reaches `develop` |
+| Gamila FlightSearch; Malak | `<FlightSearch variant="home" />` from `@/features/flights/flight-search` | Home mounts the widget supplied by #130 |
 | Gamila flight search and results; Ismail, Kiki | `initialCriteria` prefills search. Flight and cabin selection uses `{ segments: [{ flightId, cabinId }], adults, children, infants }` | Confirm the exported types with Gamila. Ismail validates one/two segments against the hold DTO and Kiki checks airport/date prefills |
-| Lama HotelSearch; Malak, Kiki | `<HotelSearch variant="home" />` for home. The submitted component in PR #135 accepts `initialCriteria` for prefills | Connect when the media/date controls and hotel search are on `develop`. Kiki sets checkout to the day after the group ends |
+| Lama HotelSearch; Malak, Kiki | `<HotelSearch variant="home" />` for home and `initialCriteria` for prefills | Home uses the export supplied by #135. Kiki sets checkout to the day after the group ends |
 | Lama hotel room selection; Osama | Selection includes `{ hotelId, roomIds, checkIn, checkOut, adults, childrenAges }` | Osama turns selection into per-room allocations. Verify the complete selection-to-booking journey after the owner PRs are integrated |
 | Gamila SeatSelector; Ismail | Verified booking/segment/cabin context, eligible passengers and selection-change/refresh callbacks | Gamila builds FLT-28 UI; Ismail supplies actual booking/seat mutation contracts and mounting. Exact props and conflict/retry behavior remain joint acceptance items |
 | Ismail steps/timer; Osama, Hicham | `BookingStepper` step model; `HoldTimer` server expiry and expiry callback | Presentation only: countdown does not release stock or confirm payment; consumers retain separate domain API contracts |
 | Ismail/Osama held records; Hicham checkout | `Checkout({ type: 'flight' \| 'hotel' \| 'flight-change', bookingId })`, plus server expiry/status refresh contract | Ordinary IDs are `flightBookingId`/`hotelBookingId`; for `flight-change`, `bookingId` is the change-record ID. Checkout re-fetches owned policies/amount/status and creates no duplicate hold |
-| Hicham status UI; Ismail, Osama | `PaymentRefundStatus({ type, bookingId })` with the three verified payment types | Exact exported props pending; backend status only, and redirects/query strings never confirm payment |
+| Hicham status UI; Ismail, Osama | `PaymentRefundStatus({ paymentId?, refundId?, currency? })` from `@/features/payments` | Supply the IDs from the booking or change DTO. Status comes from the backend. See [payments documentation](PAYMENTS.md) for amount units and checkout routes |
 | Hicham money adapters; P2/P3/P4/P5/P6/P7 | Endpoint/field-specific wire amount, declared unit/currency and display value | Hicham supplies an explicit field-to-unit map and types; preserve wire values and server-calculated amounts, with no repeated conversion |
 | Lama media/date controls; Gamila, Osama, Kiki, Hicham | Upload/gallery inputs include caller-supplied endpoint/action, value, maximum count, progress/error/remove callbacks; date-only controls preserve `YYYY-MM-DD` | Exact props pending; JPG/PNG <=5 MB, max five hotel/post/activity images or one airline logo. Domain endpoint authorization remains with consumer/backend |
 | Osama reviews; Lama | `ReviewList({ hotelId })`, `ReviewEditor({ hotelBookingId, onSaved? })`, rating data/refresh contract | Osama owns review/data widgets and backend; Lama builds moderator reply action against that contract. Eligibility, assigned-hotel authorization and aggregate refresh are verified together |
@@ -182,9 +182,9 @@ are pending. Gamila is targeting 27 November for the dashboard. The current
 airline sign-in lands at `/workspace/airline`. Switch that destination once the
 owner page is available on `develop` and its access check passes.
 
-When both surfaces are available, verify one-way and round-trip submissions
-from home, URL restoration after reload, and direct dashboard access with an
-airline moderator and with the wrong role.
+The joined booking suite verifies one-way, round-trip and price restoration
+on the search results route. Check submissions starting on home and airline
+moderator access as part of final integration.
 
 ### Hotel search on the home page
 
@@ -194,14 +194,14 @@ selected city or country, check-in, check-out, guests and rooms in the URL.
 The results page loads the matching hotels. In PR #135 the named export is in
 `@/features/hotels/hotel-search/HotelSearch` and the optional prefill prop is
 `initialCriteria`. Verify the final export after PR #134 and PR #135 are merged.
-Keep the hotel moderator's current workspace destination until the owner page
-at `/moderator/hotel` is available and its role check passes.
+The owner dashboard is available at `/moderator/hotel`. Verify sign-in with an
+assigned moderator and the reservations page before switching the landing route.
 [Lama's reply in issue #127](https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/issues/127#issuecomment-7141591556)
 
 ### Flight selection and the booking hub
 
 Ismail accepted Gamila's `/bookings/flights/new?selection=...` contract in issue
-#131. Add the traveler Bookings link after PR #139 supplies the hub. The seat
+#131. The traveler account menu and workspace link to the hub from PR #139. The seat
 selector displays and updates selection; the booking owner saves both flight
 segments together so editing one does not erase the other's seats.
 [Flight booking handoff](https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/issues/131)
@@ -214,6 +214,6 @@ segments together so editing one does not erase the other's seats.
 | Seat selection and moderator replies | Gamila-Ismail; Lama-Osama | Corrected frontend leads are Gamila for FLT-28 and Lama for HTL-26; backend owners stay unchanged |
 | Provider creation and direct moderation | Arwa with Gamila/Lama and content owners | `/admin/providers` and `/admin/content` belong to Arwa; domain forms/adapters and permitted content navigation are supplied by their owners |
 | Notification deep-links | Arwa + affected feature owners | Backend `NotificationDto` has no target ID/href; do not invent links from message text |
-| Landing flight/hotel/trip/blog widgets | Gamila, Lama, Kiki, Hicham + Malak | Flight and hotel contracts are recorded above. Check for the merged implementations and the remaining itinerary and story exports in [issue #127](https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/issues/127) |
+| Landing flight/hotel/trip/blog widgets | Gamila, Lama, Kiki, Hicham + Malak | Home mounts both search forms, `PublicItinerariesTeaser` from #148, and `BlogStoryPreviews` from #158. Both previews read fresh public data. See [issue #127](https://github.com/MalakMostafa-16003651/travel-planning-booking-platform/issues/127) |
 | Role destination domain pages | Arwa, Gamila, Lama | Owners confirm their dashboards are ready before their routes are promoted to login destinations. Tracked in issue #127 |
 | Shared contract changes | Malak + all consumers | Written PR note required before consumers migrate |

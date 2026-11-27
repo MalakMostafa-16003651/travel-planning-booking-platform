@@ -249,6 +249,15 @@ Use: Checked open PRs and handoffs against the M2 references. Fixed the shared C
 ================================================
 
 ================================================
+Date: 2026-11-27
+Student: 16003651 (Malak, Person 1)
+Tool: OpenAI Codex desktop app
+Related requirements: ACC-10, ACC-11, ACC-12, GEN-16, GEN-17 and shared navigation
+Prompt summary: Review new M2 PRs and handoffs, reply to teammates, merge reviewed work, sync the VS Code checkout and test against the workbook and course labs. Prepare the private test setup with Arwa and Lama in steps.
+Use: Reviewed fourteen PRs and merged nine. Coordinated provider, checkout, hotel booking and public visibility handoffs. Wired the four home sections and the traveler Bookings links using the merged exports. Ran production builds, isolated Chrome journeys and flight-change regressions. Verified the existing Atlas and Mailtrap authentication without sharing credentials. The lab guidance informed the rendering decisions, role tests and review records.
+================================================
+
+================================================
 Date: 2026-11-24
 Student: 16002622 (Lama, Person 5)
 Tool: Claude Code (model: Claude Sonnet 5, via the Claude desktop app)

@@ -16,6 +16,7 @@ export function Workspace({ role }: { role: UserRole }) {
           <h1>Your workspace</h1>
           <p>Welcome, {user?.name}.</p>
           <nav aria-label="Workspace shortcuts" className="flex flex-wrap gap-4">
+            {role === 'USER' && <Link href="/bookings" className="underline">Bookings</Link>}
             <Link href="/account/profile" className="underline">Edit profile</Link>
             <Link href="/account/security" className="underline">Change password</Link>
           </nav>
