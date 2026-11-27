@@ -313,3 +313,21 @@ correctly, the booking-link JSON matches the agreed contract exactly, the no-dat
 shows only the check-availability form, and an unknown hotel ID 404s through the shared
 not-found page. `npm run typecheck`/`build` pass clean; no test files committed.
 ================================================
+Date: 2026-11-25
+Student: 16002290 (Omar Hicham, Person 8)
+Tool: Claude Code (Anthropic), Claude project thread with separate writer and tester agents
+Related Requirement: PAY-01, PAY-02, PAY-03, PAY-04, FLT-27, BLG-01 to BLG-10, BLG-12, BLG-13
+
+Prompt (summary):
+I am still Person 8. Do all my Milestone 2 work with the same steps and guidelines as
+Milestone 1, go through what the team added to the repo for the AIs to communicate, do
+everything correctly and don't stop until it is finished.
+
+How the output was used:
+Two PRs into develop: feature/PAY-01-checkout (shared checkout for flights, hotels and
+flight changes, payment result checked only from the backend, PaymentRefundStatus and
+the PAY-04 money map, issue #140) and feature/BLG-01-blog-frontend (blog list/search,
+post page, editor, my posts, author page, story previews). A tester agent reviewed each
+branch; its findings were fixed before the PRs. Details and checks:
+docs/work-logs/16002290.md entries 18 and 19.
+================================================
