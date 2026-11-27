@@ -1,24 +1,19 @@
 import type { BookingStatus } from '@/components/booking/booking-status';
+import type { CabinClass, Flight, FlightCabin, FlightSelection, Page } from '@/lib/flights/types';
+
+// Flights, airports and the selection belong to Person 3.
+export type { Airport, CabinClass, FlightSelection } from '@/lib/flights/types';
+export type OfferedFlight = Flight;
+export type OfferedCabin = FlightCabin;
+export type OfferedFlightPage = Page<Flight>;
 
 // Wire types for Person 4's endpoints, copied from backend/src/flight-bookings/dto.
 // Every amount here is an integer in USD minor units; dates are ISO strings.
 
-export type CabinClass = 'ECONOMY' | 'PREMIUM_ECONOMY' | 'BUSINESS' | 'FIRST';
 export type PassengerType = 'ADULT' | 'CHILD' | 'INFANT';
 export type BookingGroup = 'UPCOMING' | 'PAST' | 'CANCELLED';
 
-export interface SegmentChoice {
-  flightId: string;
-  cabinId: string;
-}
-
-/** The selection Gamila's flight results send to /bookings/flights/new (issue #131). */
-export interface FlightSelection {
-  segments: SegmentChoice[];
-  adults: number;
-  children: number;
-  infants: number;
-}
+export type SegmentChoice = FlightSelection['segments'][number];
 
 export interface BookingSegment extends SegmentChoice {
   airlineId: string;
@@ -164,46 +159,4 @@ export interface ChangePolicies {
     cancellation: { tiers: CancellationTier[] };
     baggage: { airlineId: string; pricePerExtraBag: number; maxExtraBagsPerPassenger: number; cabinClass?: CabinClass }[];
   };
-}
-
-// The parts of Person 3's public flight and airport responses that booking pages read.
-
-export interface Airport {
-  code: string;
-  name: string;
-  city: string;
-  country: string;
-  timeZone: string;
-}
-
-export interface OfferedCabin {
-  cabinId: string;
-  cabinClass: CabinClass;
-  price: number;
-  seatsRemaining: number;
-  baggageAllowanceCount: number;
-  baggageMaxWeightKg: number;
-}
-
-export interface OfferedFlight {
-  flightId: string;
-  airlineName: string;
-  flightNumber: string;
-  status: 'SCHEDULED' | 'CANCELLED' | 'DEPARTED';
-  departureAirport: Airport;
-  arrivalAirport: Airport;
-  departureAtUtc: string;
-  arrivalAtUtc: string;
-  durationMinutes: number;
-  cabins: OfferedCabin[];
-  baggagePolicy?: { pricePerExtraBag: number; maxExtraBagsPerPassenger: number };
-  cancellationTiers?: CancellationTier[];
-}
-
-export interface OfferedFlightPage {
-  items: OfferedFlight[];
-  page: number;
-  pageSize: number;
-  total: number;
-  totalPages?: number;
 }

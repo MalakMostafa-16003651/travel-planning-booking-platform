@@ -98,7 +98,7 @@ export function RoomsList({ hotelId, initialPage }: RoomsListProps) {
   return (
     <div className="stack">
       <div className="flex justify-end">
-        <Link href="/moderator/hotel/rooms/new" className={buttonClassName("primary", "!text-white")}>Add room</Link>
+        <Link href="/moderator/hotel/rooms/new" className={buttonClassName("primary")}>Add room</Link>
       </div>
       {listError && <ErrorAlert message={listError} title="Could not load rooms" />}
       <div className="grid gap-3">
