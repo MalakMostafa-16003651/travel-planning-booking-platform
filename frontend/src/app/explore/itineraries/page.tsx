@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ErrorAlert } from '@/components/ui/error-alert';
 import { ItineraryCard } from '@/features/itineraries/itinerary-card';
-import { Pager } from '@/features/itineraries/pager';
+import { Pagination } from '@/components/data-table';
 import { PublicFilters } from '@/features/itineraries/public-filters';
 import { loadCities, loadCountryNames, searchPublicItineraries, type PublicSearch } from '@/features/itineraries/server';
 
@@ -93,7 +93,7 @@ export default async function ExploreItinerariesPage({ searchParams }: { searchP
               </li>
             ))}
           </ul>
-          <Pager page={result.data.page} totalPages={result.data.totalPages} hrefFor={page => hrefFor(search, page)} label="Search result pages" />
+          <Pagination page={result.data.page} totalPages={result.data.totalPages} total={result.data.total} pageSize={result.data.pageSize} hrefForPage={page => hrefFor(search, page)} label="Search result pages" />
         </section>
       ))}
     </div>

@@ -5,6 +5,7 @@ import { buttonClassName } from '@/components/ui/button';
 import { ErrorAlert } from '@/components/ui/error-alert';
 import { getServerSession } from '@/lib/api/server-session';
 import { CloneButton } from '@/features/itineraries/clone-button';
+import { ReportAction } from '@/features/reports/report-action';
 import { ItineraryView } from '@/features/itineraries/itinerary-view';
 import { loadCountryNames, loadPublicItinerary } from '@/features/itineraries/server';
 
@@ -42,8 +43,8 @@ export default async function PublicItineraryPage({ params }: Params) {
         isOwner={false}
         actions={isOwner
           ? <Link href={`/itineraries/${encodeURIComponent(id)}/edit`} className={buttonClassName('primary')}>Edit your itinerary</Link>
-          // Mount points for Osama's FavoriteButton (BON-02) and Arwa's ReportAction (GEN-09) once they are on develop.
-          : <CloneButton itineraryId={itinerary.itineraryId} returnTo={here} />}
+          // Osama's FavoriteButton (BON-02) joins these once it is on develop.
+          : <><CloneButton itineraryId={itinerary.itineraryId} returnTo={here} /><ReportAction targetType="ITINERARY" targetId={itinerary.itineraryId} /></>}
       />
     </div>
   );

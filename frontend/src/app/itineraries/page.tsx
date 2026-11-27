@@ -6,7 +6,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { ErrorAlert } from '@/components/ui/error-alert';
 import { loginHref } from '@/config/routes';
 import { ItineraryCard } from '@/features/itineraries/itinerary-card';
-import { Pager } from '@/features/itineraries/pager';
+import { Pagination } from '@/components/data-table';
 import { loadCountryNames, loadMyItineraries } from '@/features/itineraries/server';
 
 // Rendering: dynamic SSR. The list is private to the signed-in user, so it is fetched with
@@ -59,7 +59,7 @@ export default async function ItinerariesPage({ searchParams }: { searchParams: 
               </li>
             ))}
           </ul>
-          <Pager page={result.data.page} totalPages={result.data.totalPages} hrefFor={hrefFor} label="Itinerary pages" />
+          <Pagination page={result.data.page} totalPages={result.data.totalPages} total={result.data.total} pageSize={result.data.pageSize} hrefForPage={hrefFor} label="Itinerary pages" />
         </>
       ))}
     </div>

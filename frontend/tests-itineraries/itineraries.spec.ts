@@ -660,3 +660,46 @@ test('a 100-character title without spaces wraps on every itinerary page at 360 
     expect(overflow, `horizontal overflow on ${path}`).toBeLessThanOrEqual(0);
   }
 });
+
+// ---------------------------------------------------------------- follow-up: Arwa's ReportAction and Pagination
+
+test('GEN-09: other travelers can report a public itinerary once; the owner cannot', async ({ page, browser }) => {
+  await newTraveler(page, 'Reported Author');
+  const id = await seedTrip(page, 'Report me trip', ['EG'], ['Cairo'], 'PUBLIC');
+  await page.goto(`/explore/itineraries/${id}`);
+  await expect(page.getByRole('link', { name: 'Edit your itinerary' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Report this itinerary' })).toHaveCount(0);
+
+  const reader = await browser.newPage();
+  await newTraveler(reader, 'Careful Reader');
+  await reader.goto(`/explore/itineraries/${id}`);
+  await reader.getByRole('button', { name: 'Report this itinerary' }).click();
+  const dialog = reader.getByRole('dialog', { name: 'Report this itinerary' });
+  await dialog.getByLabel('Reason').fill('bad');
+  await dialog.getByRole('button', { name: 'Send report' }).click();
+  await expect(dialog.getByText('Reason must be 5 to 500 characters.')).toBeVisible();
+  await dialog.getByLabel('Reason').fill('Contains misleading safety advice.');
+  await dialog.getByRole('button', { name: 'Send report' }).click();
+  await expect(reader.getByRole('main').getByText('Reported. Thank you.')).toBeVisible();
+
+  // The same trip seen through /itineraries/[id]: a second report is refused politely (once per item).
+  await reader.goto(`/itineraries/${id}`);
+  await reader.getByRole('button', { name: 'Report this itinerary' }).click();
+  await reader.getByRole('dialog', { name: 'Report this itinerary' }).getByLabel('Reason').fill('Reporting it a second time.');
+  await reader.getByRole('dialog', { name: 'Report this itinerary' }).getByRole('button', { name: 'Send report' }).click();
+  await expect(reader.getByRole('main').getByText('You already reported this itinerary.')).toBeVisible();
+  await reader.close();
+});
+
+test('GEN-05: the shared Pagination pages the own-itinerary list by URL', async ({ page }) => {
+  await newTraveler(page, 'Many Trips');
+  for (let index = 1; index <= 11; index += 1) await seedTrip(page, `Paged trip ${String(index).padStart(2, '0')}`, ['EG'], ['Cairo'], 'PRIVATE');
+  await page.goto('/itineraries');
+  const pages = page.getByRole('navigation', { name: 'Itinerary pages' });
+  await expect(pages.getByText('Page 1 of 2')).toBeVisible();
+  await expect(pages.getByText('Showing 1–10 of 11')).toBeVisible();
+  await pages.getByRole('link', { name: 'Next' }).click();
+  await expect(page).toHaveURL(/\/itineraries\?page=2$/);
+  await expect(page.getByRole('main').getByRole('link', { name: 'Paged trip 01' })).toBeVisible();
+  await expect(pages.getByText('Showing 11–11 of 11')).toBeVisible();
+});

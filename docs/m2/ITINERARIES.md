@@ -136,7 +136,12 @@ Browser proof (suite now 11/11):
 
 Hicham approved #148 with four requested fixes, all done: the picker shows a selected itinerary that is on another page (`selected` prop); the preview docs no longer suggest passing `post.itinerary` unguarded; the picker takes an `error` prop and re-reads after a 400; long unbroken titles wrap (`min-w-0` + `overflow-wrap:anywhere`) on the picker and every itinerary page. His optional notes were also taken: busy state while paging, "No itinerary" stays available on error, the create link opens in a new tab so an unsaved post is not lost, and the card's icon-only labels now have screen-reader text. Ismail confirmed the ITN-27 flight-booking fields, the `FlightSelection` hand-off and the `/bookings/flights/[id]` detail link.
 
+## Follow-up after #148: shared report button and pagination (2026-11-27)
+
+- **GEN-09:** Arwa's `ReportAction` (`targetType="ITINERARY"`) is mounted next to "Clone" on `/explore/itineraries/[id]`, and on `/itineraries/[id]` when a public trip is viewed by someone else. Her component hides itself for admins/moderators and sends guests to sign in; the owner never sees it. The backend allows one report per person per item.
+- **GEN-05:** Arwa's shared `Pagination` replaces the local `Pager` everywhere in this domain. Link mode is used for `/itineraries` and `/explore/itineraries` (URL pages, "Showing 1–10 of N"); callback mode is used for the picker, hotel results, flight results and the booking-link list (disabled while a page loads). `features/itineraries/pager.tsx` is removed.
+
 ## Remaining Person 7 work
 
-1. Mount Arwa's ReportAction (GEN-09, PR #153) and Osama's FavoriteButton (BON-02, not yet pushed) on public itineraries when they reach develop (mount point marked in `/explore/itineraries/[id]`); swap the local `Pager` for Arwa's Pagination (PR #152).
-2. Switch the hotel "View booking" link to Osama's detail route when it lands.
+1. Mount Osama's FavoriteButton (BON-02) next to Clone/Report when it reaches develop.
+2. Switch the hotel "View booking" link to Osama's `/bookings/hotels/[id]` when it lands. Checkout (#159) also sends travelers there after a hotel payment, so until then a successful hotel payment ends on "Page not found".
