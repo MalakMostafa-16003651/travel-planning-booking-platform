@@ -19,7 +19,7 @@ export function ItineraryCard({ itinerary, href, countryNames = {}, showVisibili
   return (
     <article className="grid gap-3 rounded-card border border-border bg-card p-5">
       <div className="flex flex-wrap items-start justify-between gap-2">
-        <h3 className="m-0 text-lg">
+        <h3 className="m-0 min-w-0 text-lg [overflow-wrap:anywhere]">
           <Link href={href} className="text-ink no-underline hover:underline">{itinerary.title}</Link>
         </h3>
         <div className="flex flex-wrap gap-2">
@@ -30,17 +30,17 @@ export function ItineraryCard({ itinerary, href, countryNames = {}, showVisibili
       {showAuthor && itinerary.author && <p className="m-0 text-sm text-muted">By {itinerary.author.name}</p>}
       <dl className="m-0 grid gap-1 text-sm">
         <div className="flex items-center gap-2">
-          <dt><MapPin size={16} aria-label="Countries" /></dt>
-          <dd className="m-0">{countries}{itinerary.cities.length > 0 && <span className="text-muted"> · {itinerary.cities.join(', ')}</span>}</dd>
+          <dt><MapPin size={16} aria-hidden="true" /><span className="sr-only">Countries</span></dt>
+          <dd className="m-0 min-w-0">{countries}{itinerary.cities.length > 0 && <span className="text-muted"> · {itinerary.cities.join(', ')}</span>}</dd>
         </div>
         <div className="flex items-center gap-2">
-          <dt><CalendarDays size={16} aria-label="Dates" /></dt>
+          <dt><CalendarDays size={16} aria-hidden="true" /><span className="sr-only">Dates</span></dt>
           <dd className="m-0">{formatDateRange(itinerary.startDate, itinerary.endDate)} · {itinerary.dayCount === 0 ? 'No days yet' : pluralize(itinerary.dayCount, 'day')}</dd>
         </div>
         {itinerary.clonedFrom && (
           <div className="flex items-center gap-2">
-            <dt><Copy size={16} aria-label="Cloned from" /></dt>
-            <dd className="m-0 text-muted">Cloned from “{itinerary.clonedFrom.title}” by {itinerary.clonedFrom.authorName}</dd>
+            <dt><Copy size={16} aria-hidden="true" /><span className="sr-only">Cloned from</span></dt>
+            <dd className="m-0 min-w-0 text-muted [overflow-wrap:anywhere]">Cloned from “{itinerary.clonedFrom.title}” by {itinerary.clonedFrom.authorName}</dd>
           </div>
         )}
       </dl>

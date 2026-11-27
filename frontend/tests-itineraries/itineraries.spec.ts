@@ -642,3 +642,21 @@ test('an expired session mid-edit explains itself, keeps unsaved text, and recov
   await page.reload();
   await expect(page.getByRole('main').getByText('2 of 60 days')).toBeVisible();
 });
+
+// ---------------------------------------------------------------- peer review: long unbroken titles
+
+test('a 100-character title without spaces wraps on every itinerary page at 360 px', async ({ page }) => {
+  await newTraveler(page, 'Long Title Tester');
+  const title = 'Supercalifragilistic'.repeat(5); // 100 characters, no spaces
+  const id = await seedTrip(page, title, ['EG'], ['Cairo'], 'PUBLIC');
+  const activity = 'Longactivitytitle'.repeat(7).slice(0, 120);
+  const dayId = (await call<{ days: { dayId: string }[] }>(page, 'GET', `/itineraries/${id}`)).days[0].dayId;
+  await call(page, 'POST', `/itineraries/${id}/days/${dayId}/activities`, { title: activity });
+  await page.setViewportSize({ width: 360, height: 800 });
+  for (const path of ['/itineraries', `/itineraries/${id}`, `/itineraries/${id}/edit`, `/explore/itineraries?q=${title.slice(0, 40)}`, `/explore/itineraries/${id}`, `/itineraries/${id}/hotels`]) {
+    await page.goto(path);
+    await expect(page.getByRole('main').getByText(title).first()).toBeVisible();
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(overflow, `horizontal overflow on ${path}`).toBeLessThanOrEqual(0);
+  }
+});

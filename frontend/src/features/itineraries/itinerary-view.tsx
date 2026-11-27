@@ -25,15 +25,15 @@ export function ItineraryView({ itinerary, countryNames, isOwner, actions }: {
     <article className="stack">
       <header className="grid gap-3">
         <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="grid gap-2">
-            <h1 className="m-0 break-words">{itinerary.title}</h1>
+          <div className="grid min-w-0 gap-2">
+            <h1 className="m-0 [overflow-wrap:anywhere]">{itinerary.title}</h1>
             <p className="m-0 text-muted">
               {itinerary.countries.map(code => countryNames[code] ?? code).join(', ')}
               {' · '}{formatDateRange(itinerary.startDate, itinerary.endDate)}
               {' · '}{itinerary.dayCount === 0 ? 'No days yet' : pluralize(itinerary.dayCount, 'day')}
             </p>
             {itinerary.author && !isOwner && <p className="m-0 text-sm">By {itinerary.author.name}</p>}
-            {itinerary.clonedFrom && <p className="m-0 text-sm text-muted">Cloned from “{itinerary.clonedFrom.title}” by {itinerary.clonedFrom.authorName}</p>}
+            {itinerary.clonedFrom && <p className="m-0 text-sm text-muted [overflow-wrap:anywhere]">Cloned from “{itinerary.clonedFrom.title}” by {itinerary.clonedFrom.authorName}</p>}
             <div className="flex flex-wrap gap-2">
               {isOwner && <Badge tone={itinerary.visibility === 'PUBLIC' ? 'info' : 'neutral'}>{visibilityLabels[itinerary.visibility]}</Badge>}
               {itinerary.isHidden && <Badge tone="warning">Hidden by an administrator</Badge>}
@@ -45,7 +45,7 @@ export function ItineraryView({ itinerary, countryNames, isOwner, actions }: {
           </div>
         </div>
         <PdfExport itineraryId={itinerary.itineraryId} title={itinerary.title} />
-        {itinerary.description && <p className="m-0 max-w-prose whitespace-pre-line">{itinerary.description}</p>}
+        {itinerary.description && <p className="m-0 max-w-prose whitespace-pre-line [overflow-wrap:anywhere]">{itinerary.description}</p>}
       </header>
 
       {itinerary.days.length === 0 ? (
@@ -119,7 +119,7 @@ function ActivityItem({ activity }: { activity: Activity }) {
   const time = activity.startTime ? (activity.endTime ? `${activity.startTime}–${activity.endTime}` : activity.startTime) : null;
   return (
     <li className="grid gap-1 rounded-control border border-border p-3">
-      <p className="m-0 font-semibold text-ink">{activity.title}</p>
+      <p className="m-0 font-semibold text-ink [overflow-wrap:anywhere]">{activity.title}</p>
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted">
         {time && <span className="inline-flex items-center gap-1"><Clock size={14} aria-hidden="true" />{time}</span>}
         {activity.location && <span className="inline-flex items-center gap-1"><MapPin size={14} aria-hidden="true" />{activity.location}</span>}

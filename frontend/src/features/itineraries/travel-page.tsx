@@ -22,7 +22,7 @@ export function TravelPageShell({ itinerary, title, intro, children }: { itinera
   return (
     <div className="stack">
       <header>
-        <Link href={`/itineraries/${encodeURIComponent(itinerary.itineraryId)}`} className="text-sm">{itinerary.title}</Link>
+        <Link href={`/itineraries/${encodeURIComponent(itinerary.itineraryId)}`} className="text-sm [overflow-wrap:anywhere]">{itinerary.title}</Link>
         <h1 className="m-0 mt-3">{title}</h1>
         <p className="m-0 mt-2 max-w-prose text-muted">{intro}</p>
       </header>

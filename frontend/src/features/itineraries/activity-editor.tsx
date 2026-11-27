@@ -107,13 +107,13 @@ export function ActivityEditor({ itineraryId, day, cityId, attractions, currenci
               <>
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="grid min-w-0 flex-1 gap-1">
-                    <p className="m-0 font-semibold text-ink">{activity.title}</p>
+                    <p className="m-0 font-semibold text-ink [overflow-wrap:anywhere]">{activity.title}</p>
                     <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted">
                       {activity.startTime && <span className="inline-flex items-center gap-1"><Clock size={14} aria-hidden="true" />{activity.startTime}{activity.endTime && `–${activity.endTime}`}</span>}
                       {(activity.location || activity.attractionId) && <span className="inline-flex items-center gap-1"><MapPin size={14} aria-hidden="true" />{[attractionName(activity.attractionId), activity.location].filter(Boolean).join(' · ')}</span>}
                       {activity.cost !== undefined && activity.currency && <span>{money(activity.cost, activity.currency)}</span>}
                     </div>
-                    {activity.description && <p className="m-0 whitespace-pre-line text-sm">{activity.description}</p>}
+                    {activity.description && <p className="m-0 whitespace-pre-line text-sm [overflow-wrap:anywhere]">{activity.description}</p>}
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <Button variant="secondary" disabled={busy} onClick={() => setEditing(activity.activityId)} aria-label={`Edit activity ${activity.title}`}>Edit</Button>

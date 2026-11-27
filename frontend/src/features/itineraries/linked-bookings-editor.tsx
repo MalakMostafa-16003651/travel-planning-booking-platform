@@ -105,7 +105,7 @@ function LinkedRow({ link, day, itineraryId, busy, mutate }: { link: LinkedBooki
     <li className="grid gap-2 rounded-control border border-border bg-card p-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="grid min-w-0 gap-1">
-          <p className="m-0 flex items-center gap-2 font-semibold text-ink"><Icon size={16} aria-hidden="true" />{link.label ?? (link.type === 'FLIGHT' ? 'Flight booking' : 'Hotel booking')}</p>
+          <p className="m-0 flex min-w-0 items-center gap-2 font-semibold text-ink [overflow-wrap:anywhere]"><Icon size={16} aria-hidden="true" />{link.label ?? (link.type === 'FLIGHT' ? 'Flight booking' : 'Hotel booking')}</p>
           <p className="m-0 text-sm text-muted">
             {day ? `Day ${day.dayNumber} · ${formatDayDate(day.date)}` : 'Day removed'}
             {link.bookingReference && ` · Ref ${link.bookingReference}`}

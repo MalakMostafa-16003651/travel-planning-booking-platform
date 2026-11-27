@@ -199,7 +199,7 @@ function DayRow({ day, busy, isFirst, isLast, onDragStart, onDragEnd, onMove, on
       <div className="min-w-0 flex-1">
         <p className="m-0 font-heading font-bold text-ink">Day {day.dayNumber} · {formatDayDate(day.date)}</p>
         <p className="m-0 text-sm text-muted">{day.city}</p>
-        {day.notes && <p className="m-0 mt-2 whitespace-pre-line text-sm">{day.notes}</p>}
+        {day.notes && <p className="m-0 mt-2 whitespace-pre-line text-sm [overflow-wrap:anywhere]">{day.notes}</p>}
       </div>
       <div className="flex flex-wrap gap-2">
         <button type="button" className={iconButton} disabled={busy || isFirst} onClick={() => onMove(-1)} aria-label={`Move day ${day.dayNumber} earlier`}><ArrowUp size={18} aria-hidden="true" /></button>

@@ -80,8 +80,8 @@ export function ItineraryEditor({ initial, notice }: { initial: Itinerary; notic
       <header className="grid gap-3">
         <Link href="/itineraries" className="text-sm">Your itineraries</Link>
         <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="grid gap-2">
-            <h1 className="m-0 break-words">{itinerary.title}</h1>
+          <div className="grid min-w-0 gap-2">
+            <h1 className="m-0 [overflow-wrap:anywhere]">{itinerary.title}</h1>
             <p className="m-0 text-muted">
               {itinerary.countries.map(code => countryNames[code] ?? code).join(', ')}
               {' · '}{formatDateRange(itinerary.startDate, itinerary.endDate)}
@@ -134,7 +134,7 @@ export function ItineraryEditor({ initial, notice }: { initial: Itinerary; notic
             }}
           />
         ) : (
-          itinerary.description ? <p className="m-0 whitespace-pre-line">{itinerary.description}</p> : <p className="m-0 text-muted">No description.</p>
+          itinerary.description ? <p className="m-0 whitespace-pre-line [overflow-wrap:anywhere]">{itinerary.description}</p> : <p className="m-0 text-muted">No description.</p>
         )}
       </Card>
 

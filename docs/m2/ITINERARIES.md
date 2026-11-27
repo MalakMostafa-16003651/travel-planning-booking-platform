@@ -78,13 +78,21 @@ Browser proof (`tests-itineraries`, now 5/5): one journey adds an attraction act
 import { ItineraryPicker } from '@/features/itineraries/itinerary-picker';
 import { ItineraryPreview } from '@/features/itineraries/itinerary-preview';
 
-<ItineraryPicker value={itineraryId} onChange={(id, summary) => { /* id: string | null */ }} disabled={saving} />
-<ItineraryPreview itinerary={post.itinerary /* ItinerarySummary | null from the blog API */} />
+<ItineraryPicker
+  value={itineraryId}                     // string | null
+  selected={post?.itinerary ?? null}      // keeps the saved choice visible when it is on another page
+  error={errors.itineraryId}              // backend 400 message; the picker re-reads its page
+  onChange={(id, summary) => { /* id: string | null */ }}
+  disabled={saving}
+/>
+{post.itinerary && <ItineraryPreview itinerary={post.itinerary} />}
 ```
 
-- Picker reads `GET /api/itineraries?page=n` (the author's own, server-paginated). Only `visibility: PUBLIC` and not `isHidden` are selectable, which mirrors `BlogService.assertAttachableItinerary`; private/hidden rows are shown disabled with the reason.
-- Send the chosen id as `itineraryId` on create/update; `null` detaches. The backend re-checks and returns 400 `errors.itineraryId` if it became private or hidden meanwhile: show that error and let the author pick again.
-- Preview renders the post's `itinerary` field exactly as returned (`ItinerarySummaryDto` or `null`). `null` (made private, hidden, deleted, author deactivated) shows "Itinerary not available" and nothing else. It links to `/explore/itineraries/[id]`.
+- Picker reads `GET /api/itineraries?page=n` (the author's own, server-paginated). Only `visibility: PUBLIC` and not `isHidden` are selectable, which mirrors `BlogService.assertAttachableItinerary`; private/hidden rows are shown disabled with the reason. "No itinerary" is always available, also while loading or after a load error; paging shows a busy state.
+- `selected` (optional): the summary of the current choice. If it is not on the visible page, a checked "Current choice, on another page" row is shown, so the author always sees what is attached.
+- `error` (optional): show the backend's 400 `errors.itineraryId` here. It appears under the legend (linked with `aria-describedby`) and the picker re-reads the current page, so a trip that just became private or hidden is no longer offered.
+- Send the chosen id as `itineraryId` on create/update; `null` detaches.
+- **Preview:** the blog API returns `itinerary: null` both for posts that never had one and for one that is no longer available, so render the preview only when `post.itinerary` is set (as above). Pass `null` explicitly only where you know one was attached; it then shows "Itinerary not available" and nothing else. It links to `/explore/itineraries/[id]`.
 - Pages that show the preview must stay uncached or revalidate on the same basis as the post, since visibility can change after attachment.
 
 ### Rendering decision for public pages
@@ -123,6 +131,10 @@ Browser proof (suite now 11/11):
 - New browser test: the server revokes the session while the editor is open. The next save shows "Your session has ended…", unsaved form text stays on the page, and the shared header switches to "Sign in". A refresh goes to sign-in and returns to the editor; nothing was half-saved and the same edit then succeeds. Suite now 12/12.
 - Teammates' suites run unchanged against this branch: account/auth `playwright.config.ts` 26/26, flight bookings `playwright.bookings.config.ts` 21/21. The browser came from a local Chromium via a temporary `PLAYWRIGHT_BROWSERS_PATH`; no repository files were changed for that.
 - Open teammate PRs relevant to Person 7, checked on 2026-11-25: Arwa's `ReportAction` (#153) has the `targetType`/`targetId` props in the registry, ready to mount at the marked spot on `/explore/itineraries/[id]` once merged. Hicham's blog (#158) links to `/explore/itineraries/[id]` and plans to swap its select for `ItineraryPicker` after #148 merges. Arwa's shared `Pagination` (#152) can replace the local `Pager` after it merges.
+
+## Peer review follow-up (Hicham, 2026-11-25; Ismail, 2026-11-27)
+
+Hicham approved #148 with four requested fixes, all done: the picker shows a selected itinerary that is on another page (`selected` prop); the preview docs no longer suggest passing `post.itinerary` unguarded; the picker takes an `error` prop and re-reads after a 400; long unbroken titles wrap (`min-w-0` + `overflow-wrap:anywhere`) on the picker and every itinerary page. His optional notes were also taken: busy state while paging, "No itinerary" stays available on error, the create link opens in a new tab so an unsaved post is not lost, and the card's icon-only labels now have screen-reader text. Ismail confirmed the ITN-27 flight-booking fields, the `FlightSelection` hand-off and the `/bookings/flights/[id]` detail link.
 
 ## Remaining Person 7 work
 
