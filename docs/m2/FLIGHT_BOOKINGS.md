@@ -73,9 +73,13 @@ Co-verifiers: Osama (hotel holds) and Hicham (payments and refunds).
 | Pending to Confirmed | Verified webhook only | Ticket page appears by itself | Browser test with a signed webhook | Pending | Pending |
 | Pending to Expired | 10 minutes without payment | Timer ends, payment link removed, seats released | Browser test | Pending | Pending |
 | Confirmed to Cancelled (traveler) | Confirmed before departure | Quote, confirmation, refund status | Browser test | Pending | Pending |
-| Confirmed to Cancelled (airline) | Gamila's FLT-06 | "The airline cancelled this flight" and full refund | Browser test through the real moderator endpoint | Not applicable | Pending |
-| Confirmed to Completed | Last flight departed | Moves to Past, ticket stays | Browser test | Pending | Not applicable |
+| Confirmed to Cancelled (airline) | Gamila's FLT-06 | "The airline cancelled this flight" and refund | Backend test only | Not applicable | Pending |
+| Confirmed to Completed | Last flight departed | Moves to Past, ticket stays | Backend test only | Pending | Not applicable |
 | Any other change | Not allowed | Actions hidden, server refuses | Browser test after departure | Pending | Pending |
+
+Since 25 November the airline cancellation (through the real moderator endpoint, with the
+full refund) and the move to Completed also have flight browser tests in
+`tests-bookings/search-to-booking.spec.ts`.
 
 Booking status and refund status are separate: a Cancelled booking can have a Pending,
 Refunded or Failed refund.
