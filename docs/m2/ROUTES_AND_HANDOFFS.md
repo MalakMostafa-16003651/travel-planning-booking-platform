@@ -26,13 +26,11 @@ the other owner routes for their respective implementations.
 
 The development-only component gallery belongs to Malak at `/dev/ui`. Do not add
 domain pages or duplicate fetching logic to make navigation appear complete.
-The foundation's role landing destinations are shared integration shells:
-`/workspace/traveler` (USER), `/workspace/admin` (ADMIN),
-`/workspace/airline` (AIRLINE_MODERATOR), and `/workspace/hotel`
-(HOTEL_MODERATOR). A mismatched role shows Access denied. These shells belong to
-Malak and do not implement the named owners' dashboards. Moving role landings to
-their final domain pages remains an integration change with the relevant owner.
-Backend guards remain the authority.
+Hotel moderators land on Lama's dashboard at `/moderator/hotel`. Bookmarks to
+`/workspace/hotel` still work, and a valid explicit return path takes precedence
+at sign-in. The other role landing destinations are the shared integration
+shells at `/workspace/traveler` (USER), `/workspace/admin` (ADMIN), and
+`/workspace/airline` (AIRLINE_MODERATOR). Backend guards enforce role access.
 
 `/admin/providers` has one page owner: Arwa. Gamila supplies the airline-create
 form/API adapter and Lama supplies the hotel-create form/API adapter; Arwa hosts

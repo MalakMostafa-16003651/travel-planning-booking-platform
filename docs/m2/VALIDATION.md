@@ -121,3 +121,17 @@ The separate shared environment probe authenticated to the Atlas replica set
 and Mailtrap over TLS. It performed read-only database commands and SMTP
 authentication. Teammate access, delivery to the inbox and Stripe test mode
 need their own checks.
+
+## Hotel moderator sign-in and reservations — 27 November 2026
+
+The production frontend build and TypeScript check passed. At 360 px, Chrome
+used the compiled Nest application and a disposable local MongoDB replica set.
+An assigned hotel moderator landed on `/moderator/hotel` after ordinary
+sign-in. Both the home and account menu workspace links used the same
+destination. A bookmarked `/workspace/hotel` URL and its query survived
+sign-in.
+
+The hotel dashboard showed the assigned profile. Its reservations page
+rendered a pending hold created through the real booking API, including its
+room, status and $375.00 total after reload. A traveler was denied on both
+moderator pages and received 403 from the reservations endpoint.

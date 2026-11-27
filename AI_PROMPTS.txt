@@ -452,3 +452,21 @@ message. Added a development preview and docs/m2/REPORTS.md for Osama, Kiki and 
 Checked in Chromium with sample data: every answer above, Escape and focus return, and no
 sideways scroll at 360 px. typecheck passes. The real-backend check is recorded separately.
 ================================================
+
+Date: 2026-11-27
+Student: 16003651 (Malak, Person 1)
+Tool: Codex (OpenAI)
+Related requirements: ACC-04, ACC-10, ACC-11, HTL-22
+
+Prompt summary:
+Review the M2 integration and check whether the merged hotel moderator dashboard
+is ready to become the default destination after sign-in.
+
+How the output was used:
+Pointed hotel moderator sign-in and workspace links to /moderator/hotel. The
+existing bookmarked /workspace/hotel path still takes precedence when supplied
+as an explicit return. Updated the role regression test and integration docs.
+The isolated frontend production build passed TypeScript. Chrome at 360 px used
+compiled Nest and a disposable local MongoDB replica set to check the default,
+links, explicit return, a pending reservation after reload, and traveler denial.
+================================================

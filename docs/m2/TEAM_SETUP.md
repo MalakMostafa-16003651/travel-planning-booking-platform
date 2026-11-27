@@ -54,10 +54,11 @@ Use the same loopback hostname throughout local testing; do not alternate
 frontend and API need a correctly configured HTTPS same-origin setup before
 claiming deployment readiness.
 
-For the foundation smoke, login leads to `/workspace/traveler`, `/workspace/admin`,
-`/workspace/airline`, or `/workspace/hotel`; those are shared integration shells,
-not completed domain dashboards. `/account/profile` displays the current
-session identity for every role; profile editing is a later Malak slice.
+Hotel moderator sign-in defaults to `/moderator/hotel`. A valid return path
+still takes precedence, including a direct bookmark to `/workspace/hotel`.
+The other role destinations are `/workspace/traveler`, `/workspace/admin`, and
+`/workspace/airline`. `/account/profile` displays the current session identity
+and profile editor for every role.
 The forced-password-change prompt lives at `/account/security?required=1`;
 it must still work after refresh,
 and the backend's restricted cookie is the actual authority.
