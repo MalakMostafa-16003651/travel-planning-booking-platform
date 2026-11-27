@@ -11,7 +11,6 @@ import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { MediaUploader, type MediaItem } from '@/features/media/media-uploader';
 import { ApiError, apiClient, uploadFile } from '@/lib/api/client';
-import { refreshPublicBlog } from './actions';
 import { useDropQueryParam } from './flash-notice';
 import { plural, postHref } from './format';
 import { BLOG_LIMITS, type AuthorProfile, type ItinerarySummary, type Post, type PostStatus } from './types';
@@ -137,7 +136,6 @@ export function PostEditor({ userId, post, notice }: { userId: string; post?: Po
       const result = await apiClient<Post>(saved ? `/posts/${encodeURIComponent(saved.postId)}` : '/posts', {
         method: saved ? 'PATCH' : 'POST', body: JSON.stringify(body),
       });
-      await refreshPublicBlog();
       if (!saved) {
         router.push(`${postHref(result.postId)}/edit?saved=${result.status === 'PUBLISHED' ? 'published' : 'draft'}`);
         return;
@@ -165,7 +163,6 @@ export function PostEditor({ userId, post, notice }: { userId: string; post?: Po
       throw cause;
     }
     setSaved(result);
-    void refreshPublicBlog();
     const added = result.images.find(image => !before.has(image.imageId)) ?? result.images[result.images.length - 1];
     return { id: added.imageId, url: added.url };
   }
@@ -173,7 +170,6 @@ export function PostEditor({ userId, post, notice }: { userId: string; post?: Po
   async function removeImage(item: MediaItem) {
     if (!saved) return;
     setSaved(await apiClient<Post>(`/posts/${encodeURIComponent(saved.postId)}/images/${encodeURIComponent(item.id)}`, { method: 'DELETE' }));
-    void refreshPublicBlog();
   }
 
   const titleLength = title.trim().length;

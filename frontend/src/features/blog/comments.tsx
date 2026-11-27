@@ -10,7 +10,6 @@ import { ErrorAlert } from '@/components/ui/error-alert';
 import { loginHref } from '@/config/routes';
 import { useSession } from '@/features/auth/session-provider';
 import { ApiError, apiClient } from '@/lib/api/client';
-import { refreshPublicBlog } from './actions';
 import { formatDate, plural, postHref } from './format';
 import { Pager } from './pager';
 import { AuthorName } from './post-card';
@@ -170,7 +169,6 @@ export function Comments({ postId, initialPage, open }: { postId: string; initia
     try {
       await apiClient<Comment>(base, { method: 'POST', body: JSON.stringify({ content: text }) });
       setText('');
-      void refreshPublicBlog();
       // Oldest first: the new comment is on the last page.
       setBusy(false);
       await load(Math.max(1, Math.ceil((data.total + 1) / data.pageSize)));
@@ -181,7 +179,6 @@ export function Comments({ postId, initialPage, open }: { postId: string; initia
   }
 
   async function afterDelete(note?: string) {
-    void refreshPublicBlog();
     const remaining = data.total - 1;
     await load(Math.min(data.page, Math.max(1, Math.ceil(remaining / data.pageSize))));
     if (note) setNotice(note);

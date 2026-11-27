@@ -6,10 +6,6 @@ import type { AuthorProfile, MyPostItem, Page, PostDetail, PostListItem } from '
 
 const TIMEOUT_MS = 15_000;
 
-/** Public lists are cached for at most this long and tagged so an author's own change can expire them at once. */
-export const PUBLIC_REVALIDATE_SECONDS = 60;
-export const BLOG_CACHE_TAG = 'blog-public';
-
 export type Loaded<T> =
   | { kind: 'ok'; data: T }
   | { kind: 'unauthenticated' }
@@ -33,20 +29,10 @@ async function settle<T>(request: Promise<Response>): Promise<Loaded<T>> {
 }
 
 /**
- * Public reads send NO cookies, so the cached response is the same for everyone and can never hold a draft,
- * a hidden post or the viewer's like. Changes expire it at once through refreshPublicBlog (actions.ts);
- * the 60-second revalidation is only the fallback when nobody called it.
+ * Public reads send NO cookies and are never cached. A post can stop being public at any moment without a
+ * blog change we see: a moderator hides it (GEN-10) or its author deactivates their account (ACC-12). Only a
+ * fresh read guarantees the next list, tag page, home preview or author page no longer shows it.
  */
-const MAX_CACHED_PAGE = 3;
-
-function publicGet<T>(path: string): Promise<Loaded<T>> {
-  return settle<T>(fetch(new URL(`/api${path}`, backendUrl()), {
-    next: { revalidate: PUBLIC_REVALIDATE_SECONDS, tags: [BLOG_CACHE_TAG] },
-    signal: AbortSignal.timeout(TIMEOUT_MS),
-  }));
-}
-
-/** Public but must reflect visibility changes at once (a deactivated author's page is 404 immediately, ACC-12). */
 function freshPublicGet<T>(path: string): Promise<Loaded<T>> {
   return settle<T>(fetch(new URL(`/api${path}`, backendUrl()), { cache: 'no-store', signal: AbortSignal.timeout(TIMEOUT_MS) }));
 }
@@ -66,10 +52,7 @@ export function loadPublicPosts({ q, tag, page }: { q?: string; tag?: string; pa
   const query = new URLSearchParams({ page: String(page) });
   if (q) query.set('q', q);
   if (tag) query.set('tag', tag);
-  // Only the plain list's first pages (and the home previews) are cached. Searches, tags and deep pages are
-  // free-form URLs: caching each one would fill the server's disk, so they are read fresh.
-  const cacheable = !q && !tag && page <= MAX_CACHED_PAGE;
-  return cacheable ? publicGet(`/posts?${query}`) : freshPublicGet(`/posts?${query}`);
+  return freshPublicGet(`/posts?${query}`);
 }
 
 /**

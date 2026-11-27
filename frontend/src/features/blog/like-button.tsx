@@ -7,7 +7,6 @@ import { buttonClassName } from '@/components/ui/button';
 import { loginHref } from '@/config/routes';
 import { useSession } from '@/features/auth/session-provider';
 import { ApiError, apiClient } from '@/lib/api/client';
-import { refreshPublicBlog } from './actions';
 import { plural, postHref } from './format';
 import type { LikeState, PostDetail } from './types';
 
@@ -52,7 +51,6 @@ export function LikeButton({ postId, initialLiked, initialCount }: { postId: str
     try {
       const next = await apiClient<LikeState>(`/posts/${encodeURIComponent(postId)}/like`, { method: state.liked ? 'DELETE' : 'POST' });
       setState(next);
-      void refreshPublicBlog();
     } catch (cause) {
       // 409: already liked in another tab. 404 on DELETE: the like was already removed. Show the real state.
       if (cause instanceof ApiError && (cause.status === 409 || (cause.status === 404 && state.liked))) await reload();

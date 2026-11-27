@@ -533,6 +533,34 @@ test.describe('BLG-12, GEN-10, ACC-12: author page and visibility', () => {
     await reader.context.close();
   });
 
+  // GEN-10 and ACC-12 apply to the lists too. Each list is opened first, so a cached copy would exist if the
+  // reads were cached; the next request after hiding or deactivating must already leave the post out.
+  test('the plain list and tag pages drop a post on the next request after hiding and after deactivating', async ({ browser }) => {
+    const author = await fixture<Account>('user', { name: 'Leaving Soon' });
+    const tag = unique('gone');
+    const title = unique('Vanishing ');
+    const [postId] = await seedPosts(author.userId, { title, tags: tag, daysAgo: 0 });
+    const guest = await otherPerson(browser);
+    const lists = ['/blog', `/blog?tag=${tag}`];
+    const expectListed = async (count: number) => {
+      for (const path of lists) {
+        await guest.page.goto(path);
+        await expect(main(guest.page).getByRole('heading', { level: 1 })).toBeVisible();
+        await expect(cards(guest.page).getByRole('heading', { name: title })).toHaveCount(count);
+      }
+    };
+
+    await expectListed(1);
+    await fixture('hide', { post: postId });
+    await expectListed(0);
+
+    await fixture('hide', { post: postId, hidden: 'false' });
+    await expectListed(1);
+    await fixture('deactivate', { user: author.userId });
+    await expectListed(0);
+    await guest.context.close();
+  });
+
   test('blog pages fit 360, 768, 1024 and 1440 px widths without sideways scrolling', async ({ page }) => {
     const author = await fixture<Account>('user');
     const longTitle = `Narrow${'a'.repeat(90)}`;

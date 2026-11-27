@@ -3,7 +3,6 @@
 import { useRouter } from 'next/navigation';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { ApiError, apiClient } from '@/lib/api/client';
-import { refreshPublicBlog } from './actions';
 
 /** BLG-04 with GEN-03: deleting a post asks first, and also removes its comments, likes and images. */
 /** afterDelete: 'mine' goes to My posts, 'refresh' re-reads the current page, a path goes there (e.g. the previous page). */
@@ -23,7 +22,6 @@ export function DeletePostButton({ postId, title, afterDelete = 'mine' }: { post
           // Already gone (another tab): the goal is reached, so carry on to the list.
           if (!(cause instanceof ApiError && cause.status === 404)) throw cause;
         }
-        await refreshPublicBlog();
         if (afterDelete === 'mine') router.push('/blog/mine?deleted=1');
         else if (afterDelete === 'refresh') router.refresh();
         else router.push(afterDelete);
