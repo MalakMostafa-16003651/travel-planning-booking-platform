@@ -26,7 +26,7 @@ export function GroupTabs({ current }: { current: BookingGroup }) {
           key={group}
           href={listHref(group)}
           aria-current={group === current ? 'page' : undefined}
-          className={`-mb-px inline-flex min-h-11 items-center border-b-2 px-4 text-sm no-underline ${group === current ? 'border-primary font-semibold text-ink!' : 'border-transparent text-muted! hover:text-ink!'}`}
+          className={`-mb-px inline-flex min-h-11 items-center border-b-2 px-4 text-sm no-underline ${group === current ? 'border-primary font-semibold text-ink' : 'border-transparent text-muted hover:text-ink'}`}
         >
           {label}
         </Link>
@@ -51,7 +51,7 @@ export function BookingRow({ booking, airports, serverNow }: { booking: FlightBo
           {(status === 'CONFIRMED' || status === 'PENDING') && <span className="text-sm text-muted">{daysUntil(outbound.departureAt, serverNow)}</span>}
         </div>
         <h2 className="m-0 flex flex-wrap items-center gap-x-3">
-          <Link href={`/bookings/flights/${booking.flightBookingId}`} className="text-ink! no-underline after:absolute after:inset-0 after:rounded-card group-hover:underline">
+          <Link href={`/bookings/flights/${booking.flightBookingId}`} className="text-ink no-underline after:absolute after:inset-0 after:rounded-card group-hover:underline">
             <span className="sr-only">{city(outbound.departureAirportCode)} to {city(outbound.arrivalAirportCode)}, view booking</span>
             <span aria-hidden="true" className="inline-flex items-center gap-2 tracking-tight">
               {outbound.departureAirportCode}<ArrowRight size={20} className="text-primary" />{outbound.arrivalAirportCode}
