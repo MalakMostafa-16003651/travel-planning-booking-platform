@@ -1,0 +1,197 @@
+// Browser mutations for ITN-01/05/07/08/20. Every itinerary mutation returns the full,
+// freshly recomputed ItineraryDto (day numbers, dates, city groups), so callers replace
+// their state with the response instead of patching it locally.
+import { apiClient, uploadFile } from '@/lib/api/client';
+import type { BudgetCategory, BudgetSummary, Itinerary, ItineraryVisibility, TransportMode } from './types';
+
+const base = (id: string) => `/itineraries/${encodeURIComponent(id)}`;
+const json = (method: string, body: unknown): RequestInit => ({ method, body: JSON.stringify(body) });
+
+export interface ItineraryDetailsInput {
+  title: string;
+  description?: string;
+  countries: string[];
+  startDate: string;
+  visibility?: ItineraryVisibility;
+}
+
+export function createItinerary(input: ItineraryDetailsInput): Promise<Itinerary> {
+  return apiClient<Itinerary>('/itineraries', json('POST', input));
+}
+
+/** ITN-01/ITN-20. An empty description string clears it. */
+export function updateItinerary(id: string, input: Partial<ItineraryDetailsInput>): Promise<Itinerary> {
+  return apiClient<Itinerary>(base(id), json('PATCH', input));
+}
+
+export function deleteItinerary(id: string): Promise<void> {
+  return apiClient<void>(base(id), { method: 'DELETE' });
+}
+
+export interface DayInput {
+  city: string;
+  countryCode?: string;
+  notes?: string;
+}
+
+/** ITN-05: appends, or inserts at `position` (1-based). */
+export function addDay(id: string, input: DayInput & { position?: number }): Promise<Itinerary> {
+  return apiClient<Itinerary>(`${base(id)}/days`, json('POST', input));
+}
+
+/** ITN-05: an empty notes string clears the notes. */
+export function updateDay(id: string, dayId: string, input: Partial<DayInput>): Promise<Itinerary> {
+  return apiClient<Itinerary>(`${base(id)}/days/${encodeURIComponent(dayId)}`, json('PATCH', input));
+}
+
+/** ITN-07: later days are renumbered and their dates move back. */
+export function deleteDay(id: string, dayId: string): Promise<Itinerary> {
+  return apiClient<Itinerary>(`${base(id)}/days/${encodeURIComponent(dayId)}`, { method: 'DELETE' });
+}
+
+/** ITN-08: every dayId, in the new order. */
+export function reorderDays(id: string, dayIds: string[]): Promise<Itinerary> {
+  return apiClient<Itinerary>(`${base(id)}/days/reorder`, json('PATCH', { dayIds }));
+}
+
+// ---------------------------------------------------------------- ITN-10/12 activities
+
+export interface ActivityInput {
+  title: string;
+  description?: string;
+  location?: string;
+  attractionId?: string | null;
+  startTime?: string | null;
+  endTime?: string | null;
+  cost?: number | null;
+  currency?: string | null;
+}
+
+export function addActivity(id: string, dayId: string, input: ActivityInput): Promise<Itinerary> {
+  return apiClient<Itinerary>(`${base(id)}/days/${encodeURIComponent(dayId)}/activities`, json('POST', input));
+}
+
+/** Empty strings clear optional text; `cost: null` removes the cost and its currency. */
+export function updateActivity(activityId: string, input: Partial<ActivityInput>): Promise<Itinerary> {
+  return apiClient<Itinerary>(`/activities/${encodeURIComponent(activityId)}`, json('PATCH', input));
+}
+
+export function deleteActivity(activityId: string): Promise<Itinerary> {
+  return apiClient<Itinerary>(`/activities/${encodeURIComponent(activityId)}`, { method: 'DELETE' });
+}
+
+/** ITN-12/GEN-08: multipart field `image`, JPEG/PNG up to 5 MB, five per activity. */
+export function uploadActivityImage(activityId: string, file: File, onProgress?: (percent: number) => void): Promise<Itinerary> {
+  return uploadFile<Itinerary>(`/activities/${encodeURIComponent(activityId)}/images`, 'image', file, onProgress);
+}
+
+export function deleteActivityImage(activityId: string, imageId: string): Promise<Itinerary> {
+  return apiClient<Itinerary>(`/activities/${encodeURIComponent(activityId)}/images/${encodeURIComponent(imageId)}`, { method: 'DELETE' });
+}
+
+// ---------------------------------------------------------------- ITN-14 budget entries
+
+export interface BudgetInput {
+  category: BudgetCategory;
+  amount: number;
+  currency: string;
+  description?: string;
+}
+
+export function addBudget(id: string, dayId: string, input: BudgetInput): Promise<Itinerary> {
+  return apiClient<Itinerary>(`${base(id)}/days/${encodeURIComponent(dayId)}/budgets`, json('POST', input));
+}
+
+export function updateBudget(budgetId: string, input: Partial<BudgetInput>): Promise<Itinerary> {
+  return apiClient<Itinerary>(`/budgets/${encodeURIComponent(budgetId)}`, json('PATCH', input));
+}
+
+export function deleteBudget(budgetId: string): Promise<Itinerary> {
+  return apiClient<Itinerary>(`/budgets/${encodeURIComponent(budgetId)}`, { method: 'DELETE' });
+}
+
+// ---------------------------------------------------------------- ITN-16 intercity transport
+
+export interface TransportInput {
+  fromCity: string;
+  toCity: string;
+  mode: TransportMode;
+  amount: number;
+  currency: string;
+  dayId: string;
+  notes?: string;
+}
+
+export function addTransportCost(id: string, input: TransportInput): Promise<Itinerary> {
+  return apiClient<Itinerary>(`${base(id)}/transport-costs`, json('POST', input));
+}
+
+export function updateTransportCost(transportCostId: string, input: Partial<TransportInput>): Promise<Itinerary> {
+  return apiClient<Itinerary>(`/transport-costs/${encodeURIComponent(transportCostId)}`, json('PATCH', input));
+}
+
+export function deleteTransportCost(transportCostId: string): Promise<Itinerary> {
+  return apiClient<Itinerary>(`/transport-costs/${encodeURIComponent(transportCostId)}`, { method: 'DELETE' });
+}
+
+// ---------------------------------------------------------------- ITN-14/18 budget summary
+
+/** Without `currency` the backend uses the viewer's preferred currency (guests: itinerary currency). */
+export function getBudgetSummary(id: string, currency?: string, signal?: AbortSignal): Promise<BudgetSummary> {
+  const query = currency ? `?currency=${encodeURIComponent(currency)}` : '';
+  return apiClient<BudgetSummary>(`${base(id)}/budget-summary${query}`, { signal });
+}
+
+// ---------------------------------------------------------------- ITN-25/26 travel search reuse
+
+/** ITN-25: the backend derives city, check-in (stop's first day) and check-out (day after its last). */
+export interface StayHotelSearch<T> {
+  itineraryId: string;
+  criteria: { city: string; countryCode?: string; checkIn: string; checkOut: string; guests: number; rooms: number; page?: number };
+  results: T;
+}
+
+export function searchStayHotels<T>(id: string, query: { dayId: string; guests: number; rooms: number; page: number }, signal?: AbortSignal): Promise<StayHotelSearch<T>> {
+  const params = new URLSearchParams({ dayId: query.dayId, guests: String(query.guests), rooms: String(query.rooms), page: String(query.page) });
+  return apiClient<StayHotelSearch<T>>(`${base(id)}/hotels?${params}`, { signal });
+}
+
+/** ITN-26: destination airports come from the first day's city; dates default to the trip's first/last day. */
+export interface TripFlightSearch<T> {
+  itineraryId: string;
+  criteria: {
+    departureAirportCode: string; arrivalAirportCodes: string[]; roundTrip: boolean; departureDate: string; returnDate?: string;
+    adults: number; children: number; infants: number; cabinClass?: string; page?: number;
+  };
+  results: T;
+}
+
+export interface TripFlightQuery {
+  departureAirportCode: string;
+  roundTrip: boolean;
+  departureDate?: string;
+  returnDate?: string;
+  adults: number;
+  children: number;
+  infants: number;
+  cabinClass?: string;
+  page: number;
+}
+
+export function searchTripFlights<T>(id: string, query: TripFlightQuery, signal?: AbortSignal): Promise<TripFlightSearch<T>> {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) if (value !== undefined && value !== '') params.set(key, String(value));
+  return apiClient<TripFlightSearch<T>>(`${base(id)}/flights?${params}`, { signal });
+}
+
+// ---------------------------------------------------------------- ITN-27 linked bookings (bonus)
+
+/** Your own CONFIRMED/COMPLETED booking on a day it covers; the backend re-checks ownership and dates. */
+export function linkBooking(id: string, input: { type: 'FLIGHT' | 'HOTEL'; bookingId: string; dayId: string }): Promise<Itinerary> {
+  return apiClient<Itinerary>(`${base(id)}/bookings`, json('POST', input));
+}
+
+/** Removes only the link; the booking itself is not changed or cancelled. */
+export function unlinkBooking(id: string, linkedBookingId: string): Promise<Itinerary> {
+  return apiClient<Itinerary>(`${base(id)}/bookings/${encodeURIComponent(linkedBookingId)}`, { method: 'DELETE' });
+}

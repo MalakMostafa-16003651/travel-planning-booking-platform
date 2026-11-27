@@ -1,6 +1,6 @@
 import { readBookingId } from '../src/payments/booking-ref';
 import assert from 'node:assert/strict';
-import { after, before, beforeEach, describe, it } from 'node:test';
+import { after, before, beforeEach, describe, it, type TestContext } from 'node:test';
 import { Types } from 'mongoose';
 import { FlightBookingChangesService } from '../src/flight-bookings/flight-booking-changes.service';
 import { FlightBookingChangesStore } from '../src/flight-bookings/flight-booking-changes.store';
@@ -202,6 +202,49 @@ describe('FLT-27 replacement holds, Stripe differences and refund receipts', { c
     assert.equal((await getBooking())!.segments[0].flightId.toString(),original.segments[0].flightId.toString());
     const cabin=(await col('cabininventories').findOne({_id:objectId(selection.cabinId)}))!;assert.equal(cabin.heldSeats,1);assert.equal(cabin.bookedSeats,0);
     await service().sweep();assert.equal((await stored(cid))!.status,'EXPIRED');
+  });
+  /** The original leg departs while the transaction waits on `method`, after the earlier checks passed. */
+  async function departDuring(context:TestContext,method:'reserveSeats'|'convertHeldToBooked') {
+    const departureAt=new Date(Date.now()+1000),inventory=f.app.get<any>('FLIGHT_INVENTORY'),call=inventory[method].bind(inventory);
+    await col('flights').updateOne({_id:original.segments[0].flightId},{$set:{departureAt}});
+    return context.mock.method(inventory,method,async(...args:any[])=>{
+      assert.ok(Date.now()<departureAt.getTime(),'the flight departed before the database check was reached');
+      const result=await call(...args);
+      await new Promise(r=>setTimeout(r,departureAt.getTime()-Date.now()+100));
+      return result;
+    });
+  }
+  it('never holds a replacement when an original leg departs during the request (#143)',async context=>{
+    const selection=await replacement();
+    const delay=await departDuring(context,'reserveSeats');
+    const response=await post('flight-bookings/'+id+'/changes',{segments:[selection]}).expect(409);
+    assert.equal(delay.mock.calls.length,1);delay.mock.restore();
+    assert.equal(response.body.message,'Original booking is no longer changeable');
+    assert.equal(await col('flightbookingchanges').countDocuments({}),0);
+    assert.equal((await col('cabininventories').findOne({_id:objectId(selection.cabinId)}))!.heldSeats,0);
+    assert.deepEqual(await getBooking(),original);
+  });
+  it('never applies a replacement when an original leg departs during confirmation (#143)',async context=>{
+    const {cid,selection}=await proposal(15000);
+    await post('bookings/flight-change/'+cid+'/accept-policies',{accepted:true}).expect(200);
+    const before=await getBooking();
+    const delay=await departDuring(context,'convertHeldToBooked');
+    const response=await confirm(cid).expect(409);
+    assert.equal(delay.mock.calls.length,1);delay.mock.restore();
+    assert.equal(response.body.message,'Booking or change deadline ended');
+    assert.deepEqual(await getBooking(),before);assert.equal((await stored(cid))!.status,'PENDING');
+    const next=(await col('cabininventories').findOne({_id:objectId(selection.cabinId)}))!;assert.equal(next.heldSeats,1);assert.equal(next.bookedSeats,0);
+    assert.equal((await col('cabininventories').findOne({_id:original.segments[0].cabinId}))!.bookedSeats,1);
+  });
+  it('compensates a paid difference when an original leg departs during confirmation (#143)',async context=>{
+    const {cid,selection}=await proposal(20000),pay=await payment('flight-change',cid);
+    const before=await getBooking();
+    const delay=await departDuring(context,'convertHeldToBooked');
+    await event('payment_intent.succeeded',stripe.succeed(pay.stripePaymentIntentId));
+    assert.equal(delay.mock.calls.length,1);delay.mock.restore();
+    assert.deepEqual(await getBooking(),before);assert.notEqual((await stored(cid))!.status,'CONFIRMED');
+    assert.equal((await col('cabininventories').findOne({_id:objectId(selection.cabinId)}))!.bookedSeats,0);
+    assert.equal([...stripe.refunds.values()].reduce((sum,r)=>sum+r.amount,0),5000);
   });
   it('retries a lower-fare refund after lost Stripe response without paying twice',async()=>{
     const {cid}=await proposal(10000);

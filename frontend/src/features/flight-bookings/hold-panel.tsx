@@ -8,12 +8,13 @@ import { money } from './format';
 import { LinkButton } from './link-button';
 
 /** A live Pending Payment hold (FLT-22). Hicham's checkout owns policies and payment. */
-export function HoldPanel({ bookingId, expiresAt, serverNow, totalAmount, currency }: {
+export function HoldPanel({ bookingId, expiresAt, serverNow, totalAmount, currency, searchAgain }: {
   bookingId: string;
   expiresAt: string;
   serverNow: string;
   totalAmount: number;
   currency: string;
+  searchAgain: string;
 }) {
   const router = useRouter();
   const [ended, setEnded] = useState(false);
@@ -28,7 +29,7 @@ export function HoldPanel({ bookingId, expiresAt, serverNow, totalAmount, curren
         onExpire={() => { setEnded(true); router.refresh(); }}
       />
       {ended ? (
-        <LinkButton href="/flights">Search flights again</LinkButton>
+        <LinkButton href={searchAgain}>Search flights again</LinkButton>
       ) : (
         <>
           <BookingEmailGate returnTo={`/bookings/flights/${bookingId}`}>

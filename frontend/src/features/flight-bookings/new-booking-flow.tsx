@@ -15,7 +15,7 @@ import { LinkButton } from './link-button';
 import { PassengerFields, fieldId } from './passenger-fields';
 import { emptyPassengers, readServerErrors, toPassengerInput, validatePassengers, type BaggageRules, type FieldErrors, type PassengerDraft } from './passenger-rules';
 import { RequestError } from './request-error';
-import { selectionHref } from './selection';
+import { searchHref, selectionHref } from './selection';
 import type { BookingRequest, BookingSummary, FlightBooking, FlightBookingPage, FlightSelection, OfferedCabin, OfferedFlight } from './types';
 
 export interface SelectedOffer {
@@ -26,9 +26,9 @@ export interface SelectedOffer {
 const legLabels = ['Outbound', 'Return'];
 const MAX_HOLD_PAGES = 5;
 
-function bookingSteps() {
+function bookingSteps(flightsHref: string) {
   return [
-    { id: 'flights', label: 'Flights', href: '/flights' },
+    { id: 'flights', label: 'Flights', href: flightsHref },
     { id: 'passengers', label: 'Travelers' },
     { id: 'review', label: 'Review' },
     { id: 'payment', label: 'Payment' },
@@ -84,6 +84,7 @@ export function NewBookingFlow({ selection, offers, today, liveHoldId }: {
   const shortOfSeats = offers.filter(({ cabin }) => cabin.seatsRemaining < seatsNeeded);
   const step = summary ? 'review' : 'passengers';
   const here = selectionHref(selection);
+  const backToFlights = searchHref(offers.map(({ flight, cabin }) => segmentFromOffer(flight, cabin)), emptyPassengers(selection));
   const dirty = drafts.some(draft => draft.fullName || draft.dateOfBirth || draft.documentNumber);
 
   // Travel documents stay in memory only, so warn before a refresh throws them away.
@@ -190,7 +191,7 @@ export function NewBookingFlow({ selection, offers, today, liveHoldId }: {
 
   return (
     <div className="stack">
-      <BookingStepper steps={bookingSteps()} current={step} />
+      <BookingStepper steps={bookingSteps(backToFlights)} current={step} />
       <h1 ref={heading} tabIndex={-1} className="m-0 outline-none">{summary ? 'Check your trip' : 'Who is travelling?'}</h1>
 
       {liveHoldId && !summary && (
@@ -205,7 +206,7 @@ export function NewBookingFlow({ selection, offers, today, liveHoldId }: {
           {failure != null && <RequestError error={failure} title={seatConflict ? 'This trip is no longer available as chosen' : undefined} />}
           {seatConflict && (
             <div className="flex flex-wrap gap-3">
-              <LinkButton href="/flights" variant="secondary">Choose other flights</LinkButton>
+              <LinkButton href={backToFlights} variant="secondary">Choose other flights</LinkButton>
             </div>
           )}
           {general.map(message => <ErrorAlert key={message} title="Check the traveler details" message={message} />)}
@@ -233,7 +234,7 @@ export function NewBookingFlow({ selection, offers, today, liveHoldId }: {
                 />
               )}
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <LinkButton href="/flights" variant="secondary">Back to flights</LinkButton>
+                <LinkButton href={backToFlights} variant="secondary">Back to flights</LinkButton>
                 <Button type="submit" disabled={busy || shortOfSeats.length > 0}>{busy ? 'Pricing your trip…' : 'Review trip'}</Button>
               </div>
             </form>
