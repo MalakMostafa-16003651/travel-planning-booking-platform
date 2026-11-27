@@ -162,6 +162,20 @@ browser suite on the real backend (21/21). Answered the open handoffs and raised
 for the integrations that depend on teammates. Details: docs/work-logs/16002979.md
 section 5 and docs/m2/FLIGHT_BOOKINGS.md.
 ================================================
+Date: 2026-11-25
+Student: 16002979 (Person 4)
+Tool: Claude Code (Anthropic)
+Related Requirement: FLT-27, FLT-19, GEN-11
+
+Prompt:
+Okay now check the issues and check everything implemented and check if we can continue
+finishing what we must finish, some of my colleges worked yesterday
+
+How the output was used:
+Fixed the two flight-change departure guards from issue #143 with three regression tests,
+and, on a second branch, joined the booking pages with the merged flight search and added
+browser tests. Details: docs/work-logs/16002979.md sections 5 and 6.
+================================================
 Date: 2026-11-20
 Student: 16001313 (Person 7)
 Tool: Claude Code (Anthropic)
@@ -298,6 +312,24 @@ full flow - profile/photos/amenities/policy match the real data, room totals com
 correctly, the booking-link JSON matches the agreed contract exactly, the no-dates path
 shows only the check-availability form, and an unknown hotel ID 404s through the shared
 not-found page. `npm run typecheck`/`build` pass clean; no test files committed.
+================================================
+Date: 2026-11-25
+Student: 16002290 (Omar Hicham, Person 8)
+Tool: Claude Code (Anthropic), Claude project thread with separate writer and tester agents
+Related Requirement: PAY-01, PAY-02, PAY-03, PAY-04, FLT-27, BLG-01 to BLG-10, BLG-12, BLG-13
+
+Prompt (summary):
+I am still Person 8. Do all my Milestone 2 work with the same steps and guidelines as
+Milestone 1, go through what the team added to the repo for the AIs to communicate, do
+everything correctly and don't stop until it is finished.
+
+How the output was used:
+Two PRs into develop: feature/PAY-01-checkout (shared checkout for flights, hotels and
+flight changes, payment result checked only from the backend, PaymentRefundStatus and
+the PAY-04 money map, issue #140) and feature/BLG-01-blog-frontend (blog list/search,
+post page, editor, my posts, author page, story previews). A tester agent reviewed each
+branch; its findings were fixed before the PRs. Details and checks:
+docs/work-logs/16002290.md entries 18 and 19.
 ================================================
 Date: 2026-11-24
 Student: 16001313 (Person 7)
