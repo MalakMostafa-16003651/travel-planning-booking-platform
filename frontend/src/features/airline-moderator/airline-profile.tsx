@@ -22,9 +22,11 @@ export function AirlineProfile() {
   const [logoVersion, setLogoVersion] = useState(0);
 
   useEffect(() => {
+    let alive = true; // ignore a response that arrives after the view was reset for another account
     apiClient<Airline>('/airlines/me')
-      .then(a => { setAirline(a); setName(a.name); setCode(a.code); })
-      .catch(e => setError(e instanceof Error ? e.message : 'Could not load your airline.'));
+      .then(a => { if (alive) { setAirline(a); setName(a.name); setCode(a.code); } })
+      .catch(e => { if (alive) setError(e instanceof Error ? e.message : 'Could not load your airline.'); });
+    return () => { alive = false; };
   }, []);
 
   async function save(event: FormEvent) {
