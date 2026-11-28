@@ -470,3 +470,19 @@ The isolated frontend production build passed TypeScript. Chrome at 360 px used
 compiled Nest and a disposable local MongoDB replica set to check the default,
 links, explicit return, a pending reservation after reload, and traveler denial.
 ================================================
+Date: 2026-11-28
+Student: 16002483 (Arwa, Person 2)
+Tool: Claude Code (Anthropic)
+Related requirements: GEN-09
+
+Prompt summary:
+Fix the team leader's review finding on #170: the shared ReportAction kept the first traveler's
+open dialog and draft after another traveler signed in.
+
+How the output was used:
+ReportAction now renders its inner component keyed by the signed-in userId, so the dialog,
+draft, errors and "Reported" state reset on an account switch, and late responses after the
+switch are ignored. Props are unchanged for Kiki, Hicham and Osama. A browser check with two
+test travelers reproduced the problem on the old code and passed on the new code in next dev.
+typecheck and build pass; docs/m2/REPORTS.md updated.
+================================================
