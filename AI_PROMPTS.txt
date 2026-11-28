@@ -357,3 +357,19 @@ states). No deep links, because NotificationDto has no target. Wrote docs/m2/NOT
 Checked in Chromium with sample data: counts, both mark actions updating the bell without a
 reload, filters, paging, guest return and 360 px layout. typecheck and build pass.
 ================================================
+Date: 2026-11-28
+Student: 16002483 (Arwa, Person 2)
+Tool: Claude Code (Anthropic)
+Related requirements: GEN-01
+
+Prompt summary:
+Fix the team leader's review finding on #154: the bell kept the previous account's unread count
+after an account switch, including when the new request failed.
+
+How the output was used:
+NotificationBell now stores the count together with its userId and shows it only for the
+signed-in user; the newest request wins. A browser check with a slow failing request reproduced
+the problem on the old code ("4 unread" stayed) and passed on the new code (cleared while pending
+and after failure, correct after switching back, none for an account with zero). typecheck and
+build pass. docs/m2/NOTIFICATIONS.md updated.
+================================================

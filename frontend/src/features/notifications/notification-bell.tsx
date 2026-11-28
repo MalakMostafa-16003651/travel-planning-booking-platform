@@ -16,7 +16,9 @@ import { NOTIFICATIONS_CHANGED } from './types';
 export function NotificationBell() {
   const { user } = useSession();
   const pathname = usePathname();
-  const [unread, setUnread] = useState<number | null>(null);
+  // The count is stored with the account it belongs to, and only shown for that account. After an
+  // account switch the previous count disappears at once, even if the new request is slow or fails.
+  const [unread, setUnread] = useState<{ userId: string; count: number } | null>(null);
   const latest = useRef(0);
   const userId = user?.userId;
 
@@ -25,15 +27,18 @@ export function NotificationBell() {
     const request = ++latest.current;
     try {
       const { unreadCount } = await apiClient<{ unreadCount: number }>('/notifications/unread-count');
-      if (request === latest.current) setUnread(unreadCount);
+      if (request === latest.current) setUnread({ userId, count: unreadCount });
     } catch {
-      // Keep the last known count; the inbox page shows the full error if the user opens it.
+      // Keep this account's last known count, if any; the inbox page shows the full error.
     }
   }, [userId]);
 
+  // Re-read on sign-in, account switch and navigation. A response that arrives for an earlier
+  // request or another account is never shown: the newest request wins, and the stored count is
+  // only displayed while its userId matches the signed-in user.
   useEffect(() => {
-    if (!userId) { latest.current += 1; setUnread(null); return; }
-    void load();
+    if (userId) void load();
+    else latest.current += 1;
   }, [userId, pathname, load]);
 
   useEffect(() => {
@@ -45,7 +50,7 @@ export function NotificationBell() {
 
   if (!user) return null;
 
-  const count = unread ?? 0;
+  const count = unread && unread.userId === user.userId ? unread.count : 0;
   const label = count > 0 ? `Notifications, ${count} unread` : 'Notifications';
   const active = pathname === '/notifications';
 
