@@ -15,6 +15,14 @@ export function enumParam<T extends string>(params: SearchParams, key: string, a
   return value && (allowed as readonly string[]).includes(value) ? (value as T) : undefined;
 }
 
+/** A real calendar date in YYYY-MM-DD form (from a date filter), or undefined. */
+export function dateParam(params: SearchParams, key: string): string | undefined {
+  const value = firstParam(params, key);
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
+  const date = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().startsWith(value) ? value : undefined;
+}
+
 /** The requested page as a whole number from 1. Anything else reads as page 1. */
 export function readPage(params: SearchParams, key = 'page'): number {
   const value = firstParam(params, key);

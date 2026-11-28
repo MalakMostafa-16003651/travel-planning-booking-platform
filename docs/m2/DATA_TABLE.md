@@ -7,8 +7,8 @@ Import everything from `@/components/data-table`.
 | --- | --- |
 | `DataTable` | Presentation-only table for one server page of rows |
 | `Pagination` | Previous / "Page 2 of 6" / Next, plus "Showing 11–20 of 57" |
-| `TableFilters`, `FilterSearch`, `FilterSelect` | Filter bar as a plain GET form, so filters live in the URL |
-| `readPage`, `firstParam`, `enumParam`, `pageCount`, `pageHref`, `SearchParams` | URL helpers for server pages |
+| `TableFilters`, `FilterSearch`, `FilterSelect`, `FilterDate` | Filter bar as a plain GET form, so filters live in the URL |
+| `readPage`, `firstParam`, `enumParam`, `dateParam`, `pageCount`, `pageHref`, `SearchParams` | URL helpers for server pages (`dateParam` accepts only real `YYYY-MM-DD` dates) |
 
 A live example with sample rows is at `/dev/ui/data-table` in `npm run dev`. The first real
 consumer is `/admin/accounts` (`frontend/src/app/admin/accounts/page.tsx`).

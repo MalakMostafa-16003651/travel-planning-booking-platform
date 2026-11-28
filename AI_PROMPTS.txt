@@ -394,3 +394,20 @@ first, click-only actions, delete confirmation, clear 404 message). No content p
 because content owners supply them per the registry. Updated docs/m2/ADMIN.md. Checked in
 Chromium with sample data at 360, 768 and 1440 px; typecheck and build pass.
 ================================================
+Date: 2026-11-25
+Student: 16002483 (Arwa, Person 2)
+Tool: Claude Code (Anthropic)
+Related requirements: ACC-17, GEN-07, GEN-05
+
+Prompt summary:
+Continue with the admin pages that do not need the provider list: bookings and the audit log.
+
+How the output was used:
+Added /admin/bookings (flights and hotels together or by type, status and travel-date filters,
+totals from integer cents with formatMoneyMinorUnits) and /admin/audit-logs (backend-recorded
+entries only, action, record type and date filters, UTC times). Added FilterDate and dateParam
+to the shared table module; date filters are sent as whole UTC days and a reversed range is
+caught first. Updated docs/m2/ADMIN.md and DATA_TABLE.md. Checked in Chromium with sample data
+at 360, 768, 1024 and 1440 px; a stretched type badge was found and fixed. typecheck and build
+pass.
+================================================

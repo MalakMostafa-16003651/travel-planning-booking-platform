@@ -6,6 +6,7 @@ import { authCookies, backendUrl } from '@/lib/api/upstream';
 import { getServerSession } from '@/lib/api/server-session';
 import type { AuthenticatedUser } from '@/types/auth';
 import type { ReportPage, ReportStatus, TargetType } from './moderation-types';
+import type { AdminBooking, AuditAction, AuditEntry, AuditTarget, BookingStatus, BookingType, Page } from './records-types';
 import type { AccountFilters, AdminAccountPage, Loaded } from './types';
 
 /**
@@ -57,4 +58,30 @@ export function loadReports(filters: { page: number; status?: ReportStatus; targ
   if (filters.status) query.set('status', filters.status);
   if (filters.targetType) query.set('targetType', filters.targetType);
   return adminGet<ReportPage>(`/api/admin/reports${query.size ? `?${query}` : ''}`, returnTo);
+}
+
+/** Date-only filters cover the whole day: from = 00:00:00Z, to = 23:59:59.999Z (UTC). */
+function setRange(query: URLSearchParams, from?: string, to?: string) {
+  if (from) query.set('from', `${from}T00:00:00.000Z`);
+  if (to) query.set('to', `${to}T23:59:59.999Z`);
+}
+
+/** ACC-17: GET /api/admin/bookings, flights and hotels together unless a type is chosen. Read-only. */
+export function loadBookings(filters: { page: number; type?: BookingType; status?: BookingStatus; from?: string; to?: string }, returnTo: string): Promise<Loaded<Page<AdminBooking>>> {
+  const query = new URLSearchParams();
+  if (filters.page > 1) query.set('page', String(filters.page));
+  if (filters.type) query.set('type', filters.type);
+  if (filters.status) query.set('status', filters.status);
+  setRange(query, filters.from, filters.to);
+  return adminGet<Page<AdminBooking>>(`/api/admin/bookings${query.size ? `?${query}` : ''}`, returnTo);
+}
+
+/** GEN-07: GET /api/admin/audit-logs, newest first, append-only records from the backend. */
+export function loadAuditLogs(filters: { page: number; action?: AuditAction; targetType?: AuditTarget; from?: string; to?: string }, returnTo: string): Promise<Loaded<Page<AuditEntry>>> {
+  const query = new URLSearchParams();
+  if (filters.page > 1) query.set('page', String(filters.page));
+  if (filters.action) query.set('action', filters.action);
+  if (filters.targetType) query.set('targetType', filters.targetType);
+  setRange(query, filters.from, filters.to);
+  return adminGet<Page<AuditEntry>>(`/api/admin/audit-logs${query.size ? `?${query}` : ''}`, returnTo);
 }

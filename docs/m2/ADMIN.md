@@ -10,6 +10,8 @@ send guests to sign in and back, and show "Access denied" to other roles. The ba
 | `/admin/accounts` | ACC-14, ACC-16, ACC-07a | `GET /api/admin/accounts`, `PATCH /api/admin/accounts/:id/suspend` and `/reactivate`, `POST /api/admin/users/:userId/reset-password` |
 | `/admin/reports` | GEN-09, GEN-10 | `GET /api/admin/reports?page=&status=&targetType=`, `PATCH /api/admin/reports/:id` `{ action }` |
 | `/admin/content` | GEN-10 | `PATCH /api/admin/content/:type/:id/hide` and `/unhide`, `DELETE /api/admin/content/:type/:id` |
+| `/admin/bookings` | ACC-17 | `GET /api/admin/bookings?page=&type=&status=&from=&to=` (read-only) |
+| `/admin/audit-logs` | GEN-07 | `GET /api/admin/audit-logs?page=&action=&targetType=&from=&to=` (read-only) |
 
 New admin pages add themselves to `adminSections`, so the menu never links to a page that does
 not exist yet.
@@ -51,6 +53,21 @@ not exist yet.
   (Hicham `/blog/[id]`, Kiki `/explore/itineraries/[id]`, Osama reviews). The list shows the type
   and ID until those routes are agreed; no links are guessed.
 
+## Bookings and audit log (ACC-17, GEN-07)
+
+- `/admin/bookings` lists flights and hotels together (one total, newest first) unless a type is
+  chosen. Columns: reference ("No reference yet" before confirmation), Flight/Hotel, traveler
+  name and email, airline or hotel, travel dates, total and status. No passenger details, as the
+  backend promises.
+- `totalAmount` is integer minor units (the registry's amount table), shown with
+  `formatMoneyMinorUnits(totalAmount, currency)`: `15050` is $150.50.
+- `/admin/audit-logs` shows only what the backend recorded (append-only): time (UTC), action,
+  administrator, record type and ID, and details. Filters: action, record type and dates. Nothing
+  on the page creates audit entries.
+- Date filters are calendar days in the URL (`?from=2026-12-01&to=2026-12-31`) and are sent as the
+  whole UTC day (`T00:00:00.000Z` to `T23:59:59.999Z`). A "from" after "to" is caught before any
+  request. The shared `FilterDate` and `dateParam` helpers were added for this.
+
 ## Moderators and providers
 
 `/admin/moderators` and `/admin/providers` wait for issue #156: the backend has no admin list of
@@ -63,6 +80,12 @@ airlines and hotels to choose from.
 (issue #127).
 
 ## Checked
+
+Bookings and audit log, in Chromium with sample data: ten of fourteen bookings, cents shown as
+dollars, pending booking without a reference, type and date filters sent as whole UTC days, a
+reversed date range caught, status filter, audit filter and empty state, menu with all six
+sections, travelers denied, no sideways scroll at 360, 768, 1024 and 1440 px.
+
 
 Reports and content, in Chromium with sample data: ten open reports per page, dismiss, hide
 (both reports about the item close), the status filter and its empty state, the prefilled

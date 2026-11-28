@@ -8,6 +8,8 @@ export const adminSections = [
   { href: '/admin/accounts', label: 'Accounts', description: 'Search every account, suspend or reactivate users and moderators, and set temporary passwords.', ids: 'ACC-14, ACC-16, ACC-07a' },
   { href: '/admin/reports', label: 'Reports', description: 'Review what travelers reported, then dismiss the report or hide or delete the content.', ids: 'GEN-09, GEN-10' },
   { href: '/admin/content', label: 'Content', description: 'Hide, unhide or delete any post, comment, review or public itinerary, with or without a report.', ids: 'GEN-10' },
+  { href: '/admin/bookings', label: 'Bookings', description: 'Read-only list of every flight and hotel booking, with type, status and travel-date filters.', ids: 'ACC-17' },
+  { href: '/admin/audit-logs', label: 'Audit log', description: 'Every recorded admin action: who did what, to which record, and when.', ids: 'GEN-07' },
 ] as const;
 
 export function AdminNav({ current }: { current?: string }) {

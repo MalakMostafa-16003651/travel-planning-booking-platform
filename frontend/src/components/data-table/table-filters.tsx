@@ -63,3 +63,14 @@ export function FilterSelect({ name, label, value, options, anyLabel = 'All' }: 
     </div>
   );
 }
+
+/** A date-only filter (YYYY-MM-DD in the URL). The page decides how the date maps to the API. */
+export function FilterDate({ name, label, value, min, max }: { name: string; label: string; value?: string; min?: string; max?: string }) {
+  const id = `filter-${name}`;
+  return (
+    <div className="grid gap-2">
+      <label htmlFor={id} className="text-sm font-semibold text-ink">{label}</label>
+      <Input id={id} name={name} type="date" defaultValue={value ?? ''} min={min} max={max} />
+    </div>
+  );
+}
