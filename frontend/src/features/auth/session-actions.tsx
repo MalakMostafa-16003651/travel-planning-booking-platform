@@ -27,6 +27,7 @@ export function SessionActions() {
   if (!user) return null;
   const links = [
     { href: roleWorkspaces[user.role], label: 'Workspace' },
+    ...(user.role === 'USER' ? [{ href: '/bookings', label: 'Bookings' }] : []),
     { href: '/account/profile', label: 'Profile' },
     { href: '/account/security', label: 'Security' },
     { href: '/verify-email', label: 'Email verification' },

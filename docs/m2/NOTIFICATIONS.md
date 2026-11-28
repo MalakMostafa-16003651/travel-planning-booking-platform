@@ -18,6 +18,10 @@ count/list/read state and mounts one bell in the slot").
 - Reads `GET /api/notifications/unread-count` on sign-in, on every navigation, when the window
   regains focus and after the inbox changes. There is deliberately no timer: the README forbids
   polling that silently keeps an idle session alive.
+- The count is stored with the `userId` it belongs to and shown only while that user is signed in.
+  After an account switch (for example another sign-in in a second tab) the old count disappears
+  at once, even if the new account's request is slow or fails; a late answer for an earlier request
+  is ignored.
 - Anything that changes the inbox in the browser can refresh it with
   `window.dispatchEvent(new Event(NOTIFICATIONS_CHANGED))`.
 
@@ -44,6 +48,12 @@ are not clickable. If an event owner adds a target field to the backend, the inb
 after that change is agreed.
 
 ## Checked
+
+Account switch (review on #154): signed in with 4 unread, switched to an account whose count
+request fails: the badge cleared while the request was pending and stayed clear after it failed;
+switching back showed 4 again; switching to an account with 0 unread showed no badge. The same
+check on the previous code kept "4 unread" for the second account.
+
 
 In Chromium against a sample-data stand-in for the API (`next build` + `next start`): bell count
 and accessible name, opening the inbox, ten per page and page 2, mark one and mark all (bell

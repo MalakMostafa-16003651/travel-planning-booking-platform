@@ -1,4 +1,6 @@
-import type { FlightSelection, SegmentChoice } from './types';
+import { criteriaToParams } from '@/lib/flights/format';
+import { localIsoDate } from './format';
+import type { BookingSegment, FlightSelection, PassengerType, SegmentChoice } from './types';
 
 const OBJECT_ID = /^[0-9a-f]{24}$/i;
 const MAX_PASSENGERS = 50;
@@ -34,4 +36,21 @@ export function parseSelection(raw: string | undefined): FlightSelection | null 
 
 export function selectionHref(selection: FlightSelection): string {
   return `/bookings/flights/new?selection=${encodeURIComponent(JSON.stringify(selection))}`;
+}
+
+type Leg = Pick<BookingSegment, 'departureAirportCode' | 'arrivalAirportCode' | 'departureAt' | 'departureTimeZone'>;
+
+/** Back to the search results for the same trip and travelers, so nobody types the route again. */
+export function searchHref(segments: Leg[], passengers: { type: PassengerType }[]): string {
+  const [outbound, inbound] = segments;
+  if (!outbound) return '/flights';
+  const amount = (type: PassengerType) => passengers.filter(passenger => passenger.type === type).length;
+  return `/flights?${criteriaToParams({
+    departureAirportCode: outbound.departureAirportCode,
+    arrivalAirportCode: outbound.arrivalAirportCode,
+    departureDate: localIsoDate(outbound.departureAt, outbound.departureTimeZone),
+    roundTrip: Boolean(inbound),
+    returnDate: inbound && localIsoDate(inbound.departureAt, inbound.departureTimeZone),
+    adults: amount('ADULT'), children: amount('CHILD'), infants: amount('INFANT'),
+  })}`;
 }
