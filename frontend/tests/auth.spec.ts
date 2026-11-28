@@ -46,6 +46,9 @@ for (const account of roles) {
     await expect(page).toHaveURL(account.landing);
     await expect(page.getByRole('heading', { name: account.heading, exact: true })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Workspace', exact: true })).toHaveAttribute('href', account.landing);
+    if (account.role !== 'USER') {
+      await expect(page.getByRole('link', { name: 'My itineraries', exact: true })).toHaveCount(0);
+    }
     const identity = await currentIdentity(page);
     expect(identity.status).toBe(200);
     expect(identity.body.role).toBe(account.role);
@@ -106,23 +109,35 @@ test('a traveler cannot read administrator or hotel moderator pages', async ({ p
   await expect(page.getByRole('heading', { name: 'Access denied', exact: true })).toBeVisible();
 });
 
-test('home discovery and traveler Bookings work at mobile width', async ({ page }) => {
+test('home discovery, traveler bookings and personal itineraries work at mobile width', async ({ page }) => {
   await page.setViewportSize({ width: 360, height: 900 });
   await page.goto('/');
   await expect(page.getByRole('region', { name: 'Find a flight' }).locator('form')).toBeVisible();
   await expect(page.getByRole('region', { name: 'Find a stay' }).locator('form')).toBeVisible();
   await expect(page.getByRole('link', { name: 'Explore all itineraries' })).toHaveAttribute('href', '/explore/itineraries');
   await expect(page.getByRole('link', { name: 'Read all stories' })).toHaveAttribute('href', '/blog');
+  await expect(page.getByRole('link', { name: 'My itineraries', exact: true })).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 
   await page.goto('/login');
   await signIn(page, 'traveler');
   const shortcuts = page.getByRole('navigation', { name: 'Workspace shortcuts' });
   await expect(shortcuts.getByRole('link', { name: 'Bookings' })).toHaveAttribute('href', '/bookings');
-  await page.getByRole('button', { name: 'Account menu' }).click();
-  await page.getByRole('navigation', { name: 'Account navigation' }).getByRole('link', { name: 'Bookings' }).click();
+  await expect(shortcuts.getByRole('link', { name: 'My itineraries', exact: true })).toHaveAttribute('href', '/itineraries');
+  const accountMenu = page.getByRole('button', { name: 'Account menu' });
+  const accountNav = page.getByRole('navigation', { name: 'Account navigation' });
+  await accountMenu.click();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await accountNav.getByRole('link', { name: 'Bookings', exact: true }).click();
   await expect(page).toHaveURL(/\/bookings$/);
   await expect(page.getByRole('link', { name: 'All flight bookings' })).toBeVisible();
+  await accountMenu.click();
+  await accountNav.getByRole('link', { name: 'My itineraries', exact: true }).click();
+  await expect(page).toHaveURL('/itineraries');
+  const itineraries = page.getByRole('main');
+  await expect(itineraries.getByRole('heading', { name: 'Your itineraries', exact: true })).toBeVisible();
+  await expect(itineraries.getByRole('link', { name: 'New itinerary', exact: true })).toBeVisible();
+  await expect(itineraries.getByRole('alert')).toHaveCount(0);
 });
 
 test('admin accounts returns to its filter after sign-in and renders the table', async ({ page }) => {
