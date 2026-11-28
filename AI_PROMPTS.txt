@@ -176,6 +176,20 @@ Fixed the two flight-change departure guards from issue #143 with three regressi
 and, on a second branch, joined the booking pages with the merged flight search and added
 browser tests. Details: docs/work-logs/16002979.md sections 5 and 6.
 ================================================
+Date: 2026-11-28
+Student: 16002979 (Person 4)
+Tool: Claude Code (Anthropic)
+Related Requirement: FLT-25, FLT-26, PAY-03, GEN-05
+
+Prompt:
+okay whats left for me ... Yes, do both ... and remind gamila about the seat selector in issues
+
+How the output was used:
+Booking pages now use Hicham's PaymentRefundStatus and Arwa's shared Pagination; a
+cancelled booking keeps its own refund total, which covers two Stripe refunds after a paid
+change. Resolved issues were closed and Gamila was reminded on #131. Details:
+docs/work-logs/16002979.md section 7.
+================================================
 Date: 2026-11-20
 Student: 16001313 (Person 7)
 Tool: Claude Code (Anthropic)

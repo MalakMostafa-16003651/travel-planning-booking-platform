@@ -19,6 +19,7 @@ import { formatMoneyMajorUnits } from '@/lib/format/money';
 import { FlightTicket } from './flight-ticket';
 import { cabinName, count, duration, localClock, localDay, localIsoDate, money, tierLines, zoneName } from './format';
 import { LinkButton } from './link-button';
+import { PaymentRefundStatus } from '@/features/payments';
 import { RefundSummary } from './refund-status';
 import { RequestError } from './request-error';
 import type { Airport, BookingSegment, ChangePolicies, FlightBooking, FlightBookingChange, OfferedCabin, OfferedFlight, OfferedFlightPage, SegmentChoice } from './types';
@@ -347,7 +348,9 @@ export function ChangeReview({ booking, change, policies, airports, serverNow }:
                 <dd className="m-0 font-heading text-2xl font-bold tabular-nums text-ink">{money(change.amountToPay || change.refundAmount, currency)}</dd>
               </div>
             </dl>
-            {applied && change.refundAmount > 0 && <RefundSummary refund={change.refund} refundAmount={change.refundAmount} currency={currency} />}
+            {applied && change.refundAmount > 0 && (change.refund?.refundId
+              ? <PaymentRefundStatus refundId={change.refund.refundId} currency={currency} />
+              : <RefundSummary refund={change.refund} refundAmount={change.refundAmount} currency={currency} />)}
             {applied && (
               <div className="grid gap-3">
                 <LinkButton href={`/bookings/flights/${bookingId}/ticket`}>View your new ticket</LinkButton>

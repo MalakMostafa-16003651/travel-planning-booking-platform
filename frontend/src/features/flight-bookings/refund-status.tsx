@@ -9,8 +9,10 @@ const meta: Record<RefundStatus['status'], { label: string; tone: BadgeTone; tex
 };
 
 /**
- * PAY-03 on booking pages, read from the booking itself. Hicham's PaymentRefundStatus replaces this once
- * it is available. Amounts are minor units.
+ * PAY-03 for a cancelled booking, read from the booking itself. A cancellation after a paid fare
+ * difference refunds two charges, and the booking's refund is their total, while Hicham's
+ * PaymentRefundStatus shows one Refund record. It is also shown before the refund record exists
+ * (a retry is due). Amounts are minor units.
  */
 export function RefundSummary({ refund, refundAmount, currency }: { refund?: RefundStatus; refundAmount?: number; currency: string }) {
   if (!refund && !refundAmount) return <p className="m-0 text-sm text-muted">No refund applies to this booking.</p>;

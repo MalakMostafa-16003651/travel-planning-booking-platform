@@ -27,8 +27,9 @@ denied; another traveler's booking is Not found (ACC-11).
 | Gamila, selection | `/bookings/flights/new?selection=<encoded JSON>` with `{ segments: [{ flightId, cabinId }], adults, children, infants }` (issue #131) | Joined and tested with the merged results page: search, selection, sign-in return, family round trip and sell-out |
 | Gamila, search | `searchHref` builds `/flights?…` with her `criteriaToParams`, so Back to flights and Search flights again restore the trip and travelers | Ready |
 | Gamila, SeatSelector | `SeatSelectorProps` in `seat-selection.tsx`: her proposed props, presentation only. `SeatSelection` loads the map and saves | Data layer ready; not mounted until her component exists |
-| Hicham, checkout | Links to `/checkout/flight/{flightBookingId}` and `/checkout/flight-change/{flightBookingChangeId}`. After payment send the traveler to `/bookings/flights/{id}/ticket` or the change page | Links ready; route pending |
-| Hicham, refund status | `refund-status.tsx` shows the booking's own refund until `PaymentRefundStatus` exists | Pending |
+| Hicham, checkout | Links to `/checkout/flight/{flightBookingId}` and `/checkout/flight-change/{flightBookingChangeId}`. After payment send the traveler to `/bookings/flights/{id}/ticket` or the change page | Integrated (#159); joined journeys checked in the #159 peer review |
+| Hicham, refund status | `PaymentRefundStatus` shows the payment on booking details and a lower-fare change refund. A cancellation keeps the booking's own refund total, because after a paid fare difference it covers two Stripe refunds | Integrated |
+| Arwa, pagination | Shared `Pagination` with page links on `/bookings/flights` | Integrated |
 | Osama, Hicham | `BookingStepper`, `HoldTimer`, `BookingStatusBadge`, `BookingLifecycle` from `@/components/booking` | Ready, examples at `/dev/ui/booking` |
 | Osama, hub | Hotel summary below the flight groups on `/bookings` | Pending |
 | Malak | `BookingEmailGate` around hold, payment and change actions (issue #127) | Integrated |
@@ -109,9 +110,7 @@ signed and verified.
 
 ## Known limits
 
-- The payment pages are Hicham's. Until they are merged, the payment links lead to Not found.
 - A pending change has no "find my change" endpoint. Its id is kept in the URL and in this
   tab. If both are lost, the replacement hold ends by itself within 10 minutes.
 - Flight, airport and selection types and the airport-time formatters come from Gamila's
   `lib/flights`. `features/flight-bookings/types.ts` keeps only the booking responses.
-- Arwa's shared pagination will replace the previous/next links.

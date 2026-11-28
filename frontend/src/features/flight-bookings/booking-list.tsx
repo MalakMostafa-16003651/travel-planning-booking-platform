@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { ArrowRight } from 'lucide-react';
 import { BookingStatusBadge, effectiveStatus } from '@/components/booking/booking-status';
+import { Pagination } from '@/components/data-table';
 import { EmptyState } from '@/components/ui/empty-state';
 import { cabinName, count, daysUntil, localClock, localDay, money } from './format';
 import { LinkButton } from './link-button';
@@ -81,17 +82,10 @@ export function BookingList({ group, data, airports, serverNow }: { group: Booki
 
   return (
     <div className="grid gap-5">
-      <p className="m-0 text-sm text-muted">{count(data.total, 'booking')}</p>
       <ul className="m-0 grid list-none gap-4 p-0">
         {data.items.map(booking => <li key={booking.flightBookingId}><BookingRow booking={booking} airports={airports} serverNow={serverNow} /></li>)}
       </ul>
-      {pages > 1 && (
-        <nav aria-label="Pages" className="flex items-center justify-between gap-3">
-          {data.page > 1 ? <LinkButton variant="secondary" href={listHref(group, data.page - 1)}>Previous</LinkButton> : <span />}
-          <span className="text-sm text-muted">Page {data.page} of {pages}</span>
-          {data.page < pages ? <LinkButton variant="secondary" href={listHref(group, data.page + 1)}>Next</LinkButton> : <span />}
-        </nav>
-      )}
+      <Pagination page={data.page} totalPages={pages} total={data.total} pageSize={data.pageSize} label="Booking pages" hrefForPage={target => listHref(group, target)} />
     </div>
   );
 }
