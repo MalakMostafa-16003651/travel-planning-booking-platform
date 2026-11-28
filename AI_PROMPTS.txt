@@ -470,6 +470,22 @@ The isolated frontend production build passed TypeScript. Chrome at 360 px used
 compiled Nest and a disposable local MongoDB replica set to check the default,
 links, explicit return, a pending reservation after reload, and traveler denial.
 ================================================
+
+Date: 2026-11-28
+Student: 16003651 (Malak, Person 1)
+Tool: Codex (OpenAI)
+Related requirements: ITN-01, GEN-14, GEN-15
+
+Prompt summary:
+Resume the M2 integration work after checking recent merges, pull requests and
+teammate replies. Update the individual and team checklists from the latest code.
+
+How the output was used:
+Added My itineraries to the traveler workspace and account menu using the existing
+private itinerary route. Extended the browser coverage for staff and guest
+visibility and traveler access at 360 px. Typecheck, production build and five
+focused Chrome checks passed using a disposable local backend and database.
+================================================
 Date: 2026-11-28
 Student: 16002483 (Arwa, Person 2)
 Tool: Claude Code (Anthropic)
