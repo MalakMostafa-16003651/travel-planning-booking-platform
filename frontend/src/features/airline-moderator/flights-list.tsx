@@ -1,9 +1,8 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
-import { Button, buttonClassName } from '@/components/ui/button';
+import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ErrorAlert } from '@/components/ui/error-alert';
 import { FormField } from '@/components/ui/form-field';
@@ -40,7 +39,6 @@ export function FlightsList() {
     <div className="stack">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <h1 className="m-0">Your flights</h1>
-        <Link href="/moderator/airline/flights/new" className={buttonClassName('primary')}>Create flight</Link>
       </div>
       <div className="max-w-xs">
         <FormField id="status" label="Status">
@@ -51,7 +49,7 @@ export function FlightsList() {
       </div>
       {loading && <LoadingState label="Loading flights…" />}
       {error && <ErrorAlert message={error} />}
-      {!loading && !error && data?.items.length === 0 && <EmptyState title="No flights yet" description="Create your first flight to start selling seats." />}
+      {!loading && !error && data?.items.length === 0 && <EmptyState title="No flights yet" description="No flights have been created for your airline yet." />}
       {!loading && !error && data && data.items.length > 0 && (
         <ul className="m-0 grid list-none gap-3 p-0">
           {data.items.map(f => (
@@ -66,10 +64,6 @@ export function FlightsList() {
               <p className="m-0 text-sm text-muted">
                 {f.cabins.length === 0 ? 'No cabins yet' : f.cabins.map(c => `${c.cabinClass}: ${c.seatsRemaining} left, ${formatPrice(c.price)}`).join(' · ')}
               </p>
-              <div className="flex flex-wrap gap-3 text-sm font-semibold">
-                <Link href={`/moderator/airline/flights/${f.flightId}`}>Manage</Link>
-                <Link href={`/moderator/airline/passengers?flightId=${f.flightId}`}>Passengers</Link>
-              </div>
             </li>
           ))}
         </ul>

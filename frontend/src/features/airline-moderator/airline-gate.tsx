@@ -7,7 +7,6 @@ import { RequireSession } from '@/features/auth/require-session';
 const LINKS = [
   { href: '/moderator/airline', label: 'Airline' },
   { href: '/moderator/airline/flights', label: 'Flights' },
-  { href: '/moderator/airline/policies', label: 'Policies' },
 ];
 
 /** Session + role guard and the small section nav shared by every airline-moderator page. */
