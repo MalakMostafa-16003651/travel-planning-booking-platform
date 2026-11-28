@@ -452,7 +452,6 @@ message. Added a development preview and docs/m2/REPORTS.md for Osama, Kiki and 
 Checked in Chromium with sample data: every answer above, Escape and focus return, and no
 sideways scroll at 360 px. typecheck passes. The real-backend check is recorded separately.
 ================================================
-
 Date: 2026-11-27
 Student: 16003651 (Malak, Person 1)
 Tool: Codex (OpenAI)
@@ -469,4 +468,92 @@ as an explicit return. Updated the role regression test and integration docs.
 The isolated frontend production build passed TypeScript. Chrome at 360 px used
 compiled Nest and a disposable local MongoDB replica set to check the default,
 links, explicit return, a pending reservation after reload, and traveler denial.
+================================================
+Date: 2026-11-25
+Student: 16002483 (Arwa, Person 2)
+Tool: Claude Code (Anthropic)
+Related requirements: GEN-01, GEN-05
+
+Prompt summary:
+Continue with the notification bell and the /notifications page, following the registry
+contract for the header slot.
+
+How the output was used:
+Added @/features/notifications: NotificationBell (no props) mounted once in the header's
+notificationSlot, reading GET /api/notifications/unread-count on sign-in, navigation, focus and
+inbox changes with no polling timer; and the /notifications inbox (ten per page with the shared
+Pagination, Unread filter in the URL, mark one and mark all, local-time dates, empty and error
+states). No deep links, because NotificationDto has no target. Wrote docs/m2/NOTIFICATIONS.md.
+Checked in Chromium with sample data: counts, both mark actions updating the bell without a
+reload, filters, paging, guest return and 360 px layout. typecheck and build pass.
+================================================
+Date: 2026-11-28
+Student: 16002483 (Arwa, Person 2)
+Tool: Claude Code (Anthropic)
+Related requirements: GEN-01
+
+Prompt summary:
+Fix the team leader's review finding on #154: the bell kept the previous account's unread count
+after an account switch, including when the new request failed.
+
+How the output was used:
+NotificationBell now stores the count together with its userId and shows it only for the
+signed-in user; the newest request wins. A browser check with a slow failing request reproduced
+the problem on the old code ("4 unread" stayed) and passed on the new code (cleared while pending
+and after failure, correct after switching back, none for an account with zero). typecheck and
+build pass. docs/m2/NOTIFICATIONS.md updated.
+================================================
+Date: 2026-11-25
+Student: 16002483 (Arwa, Person 2)
+Tool: Claude Code (Anthropic)
+Related requirements: ACC-16, ACC-07a, ACC-14
+
+Prompt summary:
+Build the /admin landing page and the account actions on the accounts list, using only the
+existing backend endpoints and rules.
+
+How the output was used:
+Added /admin (cards and a menu that only lists built sections) and an Actions column on
+/admin/accounts: Suspend and Reactivate with an optional 3-500 character audit reason, and
+Reset password with a temporary password checked against the shared password rule. No actions
+for administrators; deactivated accounts can only get a temporary password. A shared admin
+ActionDialog confirms each action, blocks double submission and keeps server errors in the
+dialog; 409 asks the admin to reload. Wrote docs/m2/ADMIN.md. Checked in Chromium with sample
+data at 360, 768, 1024 and 1440 px; a stretched menu on short pages was found and fixed.
+typecheck and build pass.
+================================================
+Date: 2026-11-25
+Student: 16002483 (Arwa, Person 2)
+Tool: Claude Code (Anthropic)
+Related requirements: GEN-09, GEN-10, ACC-13, ACC-15
+
+Prompt summary:
+Continue with the moderator page. When the assistant found that no admin endpoint lists
+airlines and hotels, I chose to ask the team leader first (issue #156) and build the reports
+and content moderation pages meanwhile.
+
+How the output was used:
+Added /admin/reports (open by default, status and type filters in the URL, Dismiss, Hide and
+Delete with confirmations, 409 handling, "Moderate directly" link) and /admin/content (hide,
+unhide or delete any post, comment, review or public itinerary by type and ID, ID checked
+first, click-only actions, delete confirmation, clear 404 message). No content preview links,
+because content owners supply them per the registry. Updated docs/m2/ADMIN.md. Checked in
+Chromium with sample data at 360, 768 and 1440 px; typecheck and build pass.
+================================================
+Date: 2026-11-25
+Student: 16002483 (Arwa, Person 2)
+Tool: Claude Code (Anthropic)
+Related requirements: ACC-17, GEN-07, GEN-05
+
+Prompt summary:
+Continue with the admin pages that do not need the provider list: bookings and the audit log.
+
+How the output was used:
+Added /admin/bookings (flights and hotels together or by type, status and travel-date filters,
+totals from integer cents with formatMoneyMinorUnits) and /admin/audit-logs (backend-recorded
+entries only, action, record type and date filters, UTC times). Added FilterDate and dateParam
+to the shared table module; date filters are sent as whole UTC days and a reversed range is
+caught first. Updated docs/m2/ADMIN.md and DATA_TABLE.md. Checked in Chromium with sample data
+at 360, 768, 1024 and 1440 px; a stretched type badge was found and fixed. typecheck and build
+pass.
 ================================================
