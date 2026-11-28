@@ -4,7 +4,7 @@ import { ErrorAlert } from '@/components/ui/error-alert';
 
 export function AdminAccessDenied() {
   return (
-    <div className="page-container page-content stack">
+    <div className="page-container page-content stack content-start">
       <h1>Access denied</h1>
       <p>Only administrators can open this page.</p>
       <Link href="/">Back to home</Link>
