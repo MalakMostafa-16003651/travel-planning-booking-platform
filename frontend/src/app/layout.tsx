@@ -11,6 +11,7 @@ import { Footer } from '@/components/layout/footer';
 import { SessionProvider } from '@/features/auth/session-provider';
 import { SessionActions } from '@/features/auth/session-actions';
 import { HeaderAccount } from '@/features/auth/header-account';
+import { NotificationBell } from '@/features/notifications';
 
 export const metadata: Metadata = { title: { default: 'Travel Planning & Booking', template: '%s | Travel Planning' }, description: 'Plan thoughtful journeys with the Travel Planning and Booking Platform.' };
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
@@ -18,7 +19,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="en">
       <body>
         <SessionProvider>
-          <AppHeader accountSlot={<HeaderAccount />} />
+          <AppHeader notificationSlot={<NotificationBell />} accountSlot={<HeaderAccount />} />
           <SessionActions />
           <main id="main-content" className="page-container page-content">
             <Suspense fallback={<p role="status">Loading...</p>}>{children}</Suspense>

@@ -6,6 +6,8 @@ import { buttonClassName } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ErrorAlert } from '@/components/ui/error-alert';
 import { roleLabels } from '@/config/routes';
+import { AccountActions } from '@/features/admin/account-actions';
+import { AdminNav } from '@/features/admin/admin-nav';
 import { AdminAccessDenied, AdminLoadFailed } from '@/features/admin/page-states';
 import { loadAccounts, requireAdmin } from '@/features/admin/server';
 import { ACCOUNT_STATUSES, USER_ROLES, type AdminAccount } from '@/features/admin/types';
@@ -28,6 +30,7 @@ const columns: DataTableColumn<AdminAccount>[] = [
   { id: 'role', header: 'Role', cell: account => roleLabels[account.role] ?? account.role },
   { id: 'status', header: 'Status', cell: account => <Badge tone={statusTones[account.status]}>{statusLabels[account.status] ?? account.status}</Badge> },
   { id: 'registered', header: 'Registered', cell: account => registered.format(new Date(account.createdAt)) },
+  { id: 'actions', header: 'Actions', cell: account => <AccountActions account={account} /> },
 ];
 
 export default async function AdminAccountsPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
@@ -46,12 +49,13 @@ export default async function AdminAccountsPage({ searchParams }: { searchParams
   if (result.kind === 'forbidden') return <AdminAccessDenied />;
 
   return (
-    <div className="page-container page-content stack">
+    <div className="page-container page-content stack content-start">
       <div>
         <p className="eyebrow">Administration</p>
         <h1 className="m-0">Accounts</h1>
         <p className="muted mb-0">Every registered account, newest first. Search by name or email, or filter by role and status.</p>
       </div>
+      <AdminNav current={PATH} />
 
       <TableFilters action={PATH} label="Filter accounts">
         <FilterSearch label="Name or email" value={filters.search} placeholder="For example nour" />
