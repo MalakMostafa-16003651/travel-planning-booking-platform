@@ -141,6 +141,18 @@ Hicham approved #148 with four requested fixes, all done: the picker shows a sel
 - **GEN-09:** Arwa's `ReportAction` (`targetType="ITINERARY"`) is mounted next to "Clone" on `/explore/itineraries/[id]`, and on `/itineraries/[id]` when a public trip is viewed by someone else. Her component hides itself for admins/moderators and sends guests to sign in; the owner never sees it. The backend allows one report per person per item.
 - **GEN-05:** Arwa's shared `Pagination` replaces the local `Pager` everywhere in this domain. Link mode is used for `/itineraries` and `/explore/itineraries` (URL pages, "Showing 1–10 of N"); callback mode is used for the picker, hotel results, flight results and the booking-link list (disabled while a page loads). `features/itineraries/pager.tsx` is removed.
 
+## Admin preview routes for moderation (GEN-10, for Arwa's #157)
+
+| Route | Admin can open it? | Notes |
+| --- | --- | --- |
+| `/itineraries/[id]` | **Yes, for any PUBLIC itinerary**, including hidden ones and ones whose author is deactivated | Use this for moderation links. Read-only: days, activities, photos, budget entries, transport, budget panel and PDF export. Hidden trips show "Hidden by an administrator". No edit, clone or report controls for admins. Linked bookings (ITN-27) are owner-only and never shown. |
+| `/explore/itineraries/[id]` | No (404 when hidden or the author is deactivated) | Anonymous public view, so it is not a preview route. |
+| `/itineraries/[id]/edit` | No (404) | Owner only. |
+| Any PRIVATE itinerary | No (404), on every route | ACC-11: private trips are owner-only, admins included. Reports are accepted only for PUBLIC itineraries, but if the owner later makes a reported trip private, the admin link returns 404 ("not found") and the admin page should say so. |
+| API: `GET /api/itineraries/hidden?page=n` | Yes (ADMIN only) | Hidden public itineraries, most recently updated first, 10 per page. |
+
+Backend source: `ItinerariesService.canRead`. Browser proof: "admins preview hidden public itineraries at /itineraries/[id] only; private ones stay owner-only" (admin sees the hidden trip, the flag and its content with no traveler actions; `/explore` and `/edit` are 404 for the admin; the author still sees it; another traveler gets 404 and it leaves search; after the owner makes it private, the admin gets 404). The deactivated-author case follows the same backend rule but has no separate browser test here.
+
 ## Remaining Person 7 work
 
 1. Mount Osama's FavoriteButton (BON-02) next to Clone/Report when it reaches develop.
