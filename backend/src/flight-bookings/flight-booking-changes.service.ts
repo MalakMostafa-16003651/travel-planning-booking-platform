@@ -107,7 +107,7 @@ export class FlightBookingChangesService {
             segments:proposed.segments.map(s=>({flightId:s.flightId.toString(),cabinId:s.cabinId.toString(),departureAt:s.departureAt}))} };
         proposed.passengers = proposed.passengers.map((p,i)=>({...p,_id:booking.passengers[i]._id}));
         const touched = await this.bookings.updateOne({ _id:booking._id,status:BookingStatus.CONFIRMED,
-          $expr:{$and:originalFlights.map(f=>({$gt:[{$literal:f.departureAt},'$NOW']}))} },{$set:{updatedAt:new Date()}},{session}).exec();
+          $expr:{$and:originalFlights.map(f=>({$gt:[{$literal:f.departureAt},'$$NOW']}))} },{$set:{updatedAt:new Date()}},{session}).exec();
         if (touched.matchedCount!==1) throw new ConflictException('Original booking is no longer changeable');
         const [created] = await this.store.changes.create([{ userId:booking.userId,flightBookingId:booking._id,
           baseFingerprint:bookingChangeFingerprint(booking),previousSegments:booking.segments.map(s=>({airlineId:s.airlineId,fare:s.fare})),proposed,policies,holds,previousAmount:booking.totalAmount,
@@ -170,7 +170,7 @@ export class FlightBookingChangesService {
       const infants=proposed.passengers.filter((p:any)=>p.type===PassengerType.INFANT).map((p:any)=>p._id);
       await this.seats.assignments.deleteMany({flightBookingId:booking._id,$or:[{flightId:{$nin:kept}},{passengerId:{$in:infants}}]},{session}).exec();
       const updated=await this.bookings.updateOne({_id:booking._id,status:BookingStatus.CONFIRMED,
-        $expr:{$and:[...originalFlights.map(f=>({$gt:[{$literal:f.departureAt},'$NOW']})),{$gt:[{$literal:change.holdExpiresAt},'$$NOW']},...proposed.segments.map((s:any)=>({$gt:[{$literal:s.departureAt},'$$NOW']}))]}},
+        $expr:{$and:[...originalFlights.map(f=>({$gt:[{$literal:f.departureAt},'$$NOW']})),{$gt:[{$literal:change.holdExpiresAt},'$$NOW']},...proposed.segments.map((s:any)=>({$gt:[{$literal:s.departureAt},'$$NOW']}))]}},
         {$set:{segments:proposed.segments,passengers:proposed.passengers,seatCount:proposed.seatCount,baggageFee:proposed.baggageFee,totalAmount:proposed.totalAmount,currency:proposed.currency,lastDepartureAt:proposed.segments.at(-1).departureAt}},{session}).exec();
       if(updated.matchedCount!==1)throw new ConflictException('Booking or change deadline ended');
       await this.store.changes.updateOne({_id:change._id,status:BookingStatus.PENDING},{$set:{status:BookingStatus.CONFIRMED,appliedAt:new Date(),...(paymentId?{paymentId:new Types.ObjectId(paymentId)}:{}),refundDue:change.differenceAmount<0,proposed}},{session}).exec();

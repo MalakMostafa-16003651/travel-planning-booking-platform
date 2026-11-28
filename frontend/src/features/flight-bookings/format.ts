@@ -1,14 +1,10 @@
 import { formatMoneyMinorUnits } from '@/lib/format/money';
-import type { CabinClass, CancellationTier, PassengerType } from './types';
+import type { CancellationTier, PassengerType } from './types';
 
-const cabins: Record<CabinClass, string> = {
-  ECONOMY: 'Economy', PREMIUM_ECONOMY: 'Premium economy', BUSINESS: 'Business', FIRST: 'First',
-};
+// GEN-06: every flight time is shown in the zone of the airport it happens at (Person 3's formatters).
+export { cabinLabel as cabinName, formatAirportClock as localClock, formatAirportDate as localDay, zoneLabel as zoneName } from '@/lib/flights/format';
+
 const passengers: Record<PassengerType, string> = { ADULT: 'Adult', CHILD: 'Child', INFANT: 'Infant' };
-
-export function cabinName(cabin: CabinClass): string {
-  return cabins[cabin] ?? cabin;
-}
 
 export function passengerTypeName(type: PassengerType): string {
   return passengers[type] ?? type;
@@ -16,20 +12,6 @@ export function passengerTypeName(type: PassengerType): string {
 
 export function money(minorUnits: number, currency = 'USD'): string {
   return formatMoneyMinorUnits(minorUnits, currency);
-}
-
-// GEN-06: every flight time is shown in the zone of the airport it happens at.
-export function localClock(iso: string, timeZone: string): string {
-  return new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(iso));
-}
-
-export function localDay(iso: string, timeZone: string): string {
-  return new Intl.DateTimeFormat('en-GB', { timeZone, weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(iso));
-}
-
-export function zoneName(iso: string, timeZone: string): string {
-  return new Intl.DateTimeFormat('en-GB', { timeZone, timeZoneName: 'short' })
-    .formatToParts(new Date(iso)).find(part => part.type === 'timeZoneName')?.value ?? timeZone;
 }
 
 /** YYYY-MM-DD on the airport's own calendar, for date inputs and flight search. */
