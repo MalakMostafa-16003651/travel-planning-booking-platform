@@ -2,7 +2,7 @@
 
 import { Check, Flag } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useId, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { Button, buttonClassName } from '@/components/ui/button';
 import { ErrorAlert } from '@/components/ui/error-alert';
 import { loginHref } from '@/config/routes';
@@ -32,8 +32,17 @@ const nouns: Record<ReportTargetType, string> = { POST: 'post', COMMENT: 'commen
  * directly from /admin). The backend decides what can be reported and enforces one report per
  * person per item.
  */
-export function ReportAction({ targetType, targetId, onReported }: ReportActionProps) {
+export function ReportAction(props: ReportActionProps) {
   const { user, loading } = useSession();
+  if (loading) return null;
+  if (user && user.role !== 'USER') return null;
+  // Keyed by the signed-in account: when another account signs in (for example in a second tab),
+  // React replaces this instance, so an open dialog, a typed draft, errors and the "Reported" state
+  // of the previous account are all discarded at once.
+  return <ReportActionFor key={user?.userId ?? 'guest'} signedIn={Boolean(user)} {...props} />;
+}
+
+function ReportActionFor({ targetType, targetId, onReported, signedIn }: ReportActionProps & { signedIn: boolean }) {
   const router = useRouter();
   const id = useId();
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -45,9 +54,9 @@ export function ReportAction({ targetType, targetId, onReported }: ReportActionP
   const [error, setError] = useState('');
   const [done, setDone] = useState<'' | 'reported' | 'already'>('');
   const noun = nouns[targetType];
-
-  if (loading) return null;
-  if (user && user.role !== 'USER') return null;
+  // A request that finishes after the account changed belongs to the previous instance: ignore it.
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
 
   if (done) {
     return (
@@ -59,7 +68,7 @@ export function ReportAction({ targetType, targetId, onReported }: ReportActionP
   }
 
   function open() {
-    if (!user) {
+    if (!signedIn) {
       router.push(loginHref(window.location.pathname + window.location.search + window.location.hash));
       return;
     }
@@ -88,10 +97,12 @@ export function ReportAction({ targetType, targetId, onReported }: ReportActionP
     setFieldError('');
     try {
       await apiClient('/reports', { method: 'POST', body: JSON.stringify({ targetType, targetId, reason: trimmed }) });
+      if (!alive.current) return;
       dialogRef.current?.close();
       setDone('reported');
       onReported?.();
     } catch (cause) {
+      if (!alive.current) return;
       if (cause instanceof ApiError && cause.status === 409) {
         dialogRef.current?.close();
         setDone('already');
@@ -102,7 +113,7 @@ export function ReportAction({ targetType, targetId, onReported }: ReportActionP
       }
     } finally {
       submitting.current = false;
-      setPending(false);
+      if (alive.current) setPending(false);
     }
   }
 
@@ -111,7 +122,7 @@ export function ReportAction({ targetType, targetId, onReported }: ReportActionP
 
   return (
     <>
-      <button type="button" onClick={open} aria-haspopup={user ? 'dialog' : undefined} className="inline-flex min-h-11 items-center gap-1.5 rounded-control px-2 text-sm font-semibold text-muted hover:text-danger">
+      <button type="button" onClick={open} aria-haspopup={signedIn ? 'dialog' : undefined} className="inline-flex min-h-11 items-center gap-1.5 rounded-control px-2 text-sm font-semibold text-muted hover:text-danger">
         <Flag size={16} aria-hidden="true" />
         Report<span className="sr-only"> this {noun}</span>
       </button>

@@ -39,6 +39,11 @@ After sending:
 The dialog keeps the typed reason on errors, blocks double submission, closes with Cancel or
 Escape and returns focus to the button.
 
+The component is keyed by the signed-in `userId`. When another account signs in (for example in
+a second tab, picked up when the first tab regains focus), the open dialog, the typed draft,
+any error and the "Reported" result of the previous account are discarded, and a request that
+finishes after the switch is ignored. Consumers keep the same props.
+
 ## Where to mount it (consumer checklist)
 
 - Show it only on content the viewer can see. Do not show it to the item's own author if your
@@ -50,6 +55,13 @@ Escape and returns focus to the button.
 A development preview is at `/dev/ui/report-action` in `npm run dev` (placeholder IDs).
 
 ## Checked
+
+Account switch (review on #170): traveler A opened the dialog and typed a draft, traveler B
+signed in: the dialog closed and the draft was gone; B reopened an empty dialog and reported
+successfully (in `next dev`, so React's development double effects are covered); switching back
+to A cleared B's "Reported" result; an admin saw no buttons. The same check on the previous code
+left A's dialog and draft open for B.
+
 
 In Chromium with a sample-data stand-in for the API (`next dev`): guest sign-in return, the
 traveler dialog, short-reason error without a request, success, 404 and 409 messages, an
