@@ -1,36 +1,98 @@
-# M2 itineraries frontend (Person 7, Kiki — 16001313)
+# Itineraries frontend (Kiki, Person 7 — 16001313)
 
-Status of the itinerary domain UI on this branch. Backend contracts are unchanged from M1:
-`backend/src/itineraries` (controllers, DTOs) and Swagger at `/api/docs`.
+Requirements: ITN-01, ITN-03, ITN-05, ITN-07, ITN-08, ITN-09, ITN-10, ITN-12, ITN-14, ITN-16, ITN-18, ITN-20,
+ITN-21, ITN-25, ITN-26, bonuses ITN-27 and ITN-28; the itinerary side of ACC-10, ACC-11, GEN-02 to GEN-05,
+GEN-08 to GEN-10 and GEN-16. Feature folder: `frontend/src/features/itineraries`. Backend contracts:
+`backend/src/itineraries` and `backend/src/itinerary-exports` (controllers, DTOs, `ItinerariesService`).
+Merged in #148; shared ReportAction/Pagination adoption in #170.
 
-## Slice 1 — trip and day editor (this PR)
+## Setup
 
-| Requirement | Where | Notes |
+No extra setup beyond the [frontend README](../../frontend/README.md): the real Nest API on `localhost:3000`, the
+frontend on `localhost:3001`, the official reference data seeded (`seed:references`, `seed:currencies`,
+`seed:airports`). ITN-18 conversion needs `FXRATES_API_KEY` in the backend `.env`; without it, totals in another
+currency show the clear "rates unavailable" state unless rates were cached earlier. No frontend environment values
+or packages were added.
+
+## Routes and rendering
+
+| Route | Purpose | Rendering and why |
 | --- | --- | --- |
-| ITN-01 | `/itineraries/new`, editor "Trip details", "Delete itinerary" | Title 1–100, catalog countries (≥1), start date, private by default. Delete needs confirmation. Countries already used by a day are locked (the backend rejects removing them). |
-| ITN-03 | `/itineraries`, `/itineraries/[id]` | Server pages, most recently updated first, page size 10 from the API's own `page`/`totalPages`. |
-| ITN-05 | editor "Add a day", day "Edit" | City select offers only official catalog cities of the selected countries; optional insert position; notes. Dates come from the backend. |
-| ITN-07 | day "Delete day N" | Confirmation explains removed activities/budgets/transport/linked bookings and renumbering. |
-| ITN-08 | ↑/↓ buttons (keyboard and screen-reader accessible), drag handle as a pointer shortcut | Both send `PATCH /days/reorder` with every dayId. |
-| ITN-09 | city groups in editor and view | Rendered from the backend `cityGroups` (never recomputed client-side). Group budget subtotals arrive with the budget slice. |
-| ITN-20 | editor "Visibility" | Confirmed toggle; making it private removes other users' access immediately (proved in the browser suite). |
-| ACC-11, GEN-02/03/04/16 | all pages | Others' private trips → 404; owner-only edit (server check + backend). Inline field errors (client + backend `errors`), confirmations, empty states, saving/saved/error live region, 409 "reload latest version". |
+| `/itineraries?page=` | Own itineraries, most recently updated first, pages of 10 (ITN-03) | Dynamic SSR with the viewer's cookies, `no-store`: private to the signed-in traveler. Guests go to sign in and come back |
+| `/itineraries/new` | Create: title, catalog countries, start date, private by default (ITN-01) | Static shell + client form behind `RequireSession role="USER"`; the backend enforces the role again |
+| `/itineraries/[id]` | Read view: days by city stop, activities, photos, budget entries, transport, budget panel, PDF. Owner sees Edit; others see Clone/Report on public trips; admins preview public trips, hidden ones included | Dynamic SSR with the viewer's cookies, `no-store`: the same URL serves a private trip to its owner and a public one to anyone, so it can never be shared-cached |
+| `/itineraries/[id]/edit` | Owner editor: details, visibility, days (add/insert/edit/delete/reorder), activities, photos, budget entries, transport, linked bookings, budget side panel | Dynamic SSR shell with the owner's itinerary, then a Client Component. Every mutation returns the full recomputed itinerary, which replaces client state: day numbers, dates, city groups and totals are always the server's |
+| `/itineraries/[id]/hotels?dayId=&guests=&rooms=&page=` | ITN-25 hotels for one city stop | Dynamic SSR shell + client search; criteria in the URL for refresh/back |
+| `/itineraries/[id]/flights?departureAirportCode=&roundTrip=&…` | ITN-26 flights to the first day's city | Dynamic SSR shell + client search; criteria in the URL |
+| `/explore/itineraries?q=&country=&city=&minDays=&maxDays=&sort=&page=` | ITN-21 public search | Dynamic SSR from the anonymous public endpoint, `no-store`; a plain GET form, so it works before JavaScript loads |
+| `/explore/itineraries/[id]` | ITN-21 public read view with author, Clone and Report | Dynamic SSR from the anonymous public endpoint, `no-store` |
+| `/dev/ui/itineraries` | Picker/preview examples | Development only |
 
-### Rendering choices
+**Why no ISR for public itineraries.** Description section 9 suggests static/ISR for suitable public pages, and it
+was considered here. It was rejected because an itinerary can stop being public through actions this domain cannot
+observe or invalidate: an administrator hiding it (GEN-10) or its author deactivating (ACC-12). A cached copy could
+keep exposing content that ITN-20 says must disappear immediately. Public reads therefore send no cookies (so they
+can never contain owner-only data such as linked bookings) and are never cached. Only the country, city and
+currency catalogs are cached, for 5 minutes. Hicham's blog makes the same choice for the same reasons.
 
-- `/itineraries`, `/itineraries/[id]`, `/itineraries/[id]/edit`: **dynamic SSR, `no-store`**, fetched with only the viewer's auth cookies (`features/itineraries/server.ts`). The same `[id]` URL serves a private trip to its owner and a public trip to anyone, so it must never be shared-cached.
-- The editor is a Client Component seeded with the server response. Every itinerary mutation returns the full recomputed `ItineraryDto`, which replaces local state — day numbers, dates and groups are always the server's.
-- `/itineraries/new`: static shell + client form behind `RequireSession role="USER"` (the backend allows only USER to create).
-- Public static/ISR discovery (`/explore/itineraries`) is the next slice; its invalidation on privacy change will be documented there.
+## Data and contracts
 
-### Reused shared pieces (no new shared infrastructure)
+| Data | Source | Notes |
+| --- | --- | --- |
+| Itinerary, days, city groups, activities, budget entries, transport | `GET/POST/PATCH/DELETE /api/itineraries/**`, `/api/activities/:id`, `/api/budgets/:id`, `/api/transport-costs/:id` | Field names as in `itinerary-response.dto.ts`. Optional text is cleared with `""`; an activity cost with `cost: null`; an activity time with `null` (the DTO rejects `""` for times) |
+| Activity photos (ITN-12, GEN-08) | `POST /api/activities/:id/images` (field `image`), `DELETE …/images/:imageId` | Lama's `MediaUploader`; JPG/PNG ≤ 5 MB, 5 per activity; image URLs follow the itinerary's visibility |
+| Budget summary (ITN-14, ITN-18) | `GET /api/itineraries/:id/budget-summary?currency=` | Re-read after every saved change; FX only in the backend with daily cached rates; shows `rateDate`, the `ratesStale` notice, 503 "no rates" and 422 "no rate for a currency" |
+| Public search and clone (ITN-21) | `GET /api/itineraries/public/search`, `GET /api/itineraries/public/:id`, `POST /api/itineraries/:id/clone` | Clone is USER only, creates a private copy crediting the author |
+| Hotels / flights from a trip (ITN-25, ITN-26) | `GET /api/itineraries/:id/hotels`, `GET /api/itineraries/:id/flights` | The backend derives city and dates; results use Lama's `HotelCard` and Gamila's `FlightCard`; flight selections go to Ismail's `/bookings/flights/new` as `FlightSelection` |
+| Linked bookings (ITN-27) | `POST /api/itineraries/:id/bookings`, `DELETE …/bookings/:linkedBookingId`; candidates from `GET /api/flight-bookings` and `GET /api/hotel-bookings` | Only own CONFIRMED/COMPLETED bookings on covered days (hotel nights; flight local departure date). Owner-only: never in public views or clones |
+| PDF (ITN-28) | `GET /api/itineraries/:itineraryId/pdf` | Signed-in users, same visibility as viewing; streamed through the proxy with progress |
+| Reports (GEN-09) | Arwa's `ReportAction` → `POST /api/reports` | Public trips, non-owners, once per person |
 
-Malak's Button/Input/Select/FormField/Card/Badge/ConfirmDialog/Empty/Loading/Error, `apiClient`,
-`getServerSession`, `loginHref`; Lama's `DateOnlyInput`/`date-only` helpers and the
-`useDestinations` country/city catalog hook. A small local `Pager` stands in until Arwa's
-shared Pagination lands on develop. Money uses `formatMoneyMajorUnits` (itinerary amounts are major units).
+**Money units (PAY-04).** Itinerary activity costs, budget entries, transport costs, budget summaries and the
+itinerary API's linked-booking `amount` are major units in their own currency (`formatMoneyMajorUnits`). Booking
+list prices shown in the ITN-27 picker are cents (`formatMoneyMinorUnits`). Booking prices are never converted to
+the itinerary display currency except inside the backend's budget summary.
 
-### Checks
+**Dates.** Day dates are backend `YYYY-MM-DD` values, formatted in UTC so they never shift a day. Flight times use
+each airport's IANA zone through Gamila's card (GEN-06).
+
+## Shared components I supply
+
+```tsx
+import { ItineraryPicker } from '@/features/itineraries/itinerary-picker';
+import { ItineraryPreview } from '@/features/itineraries/itinerary-preview';
+import { PublicItinerariesTeaser } from '@/features/itineraries/public-itineraries-teaser';
+
+<ItineraryPicker
+  value={itineraryId}                     // string | null
+  selected={post?.itinerary ?? null}      // keeps the saved choice visible when it is on another page
+  error={errors.itineraryId}              // backend 400 message; the picker re-reads its page (clear it in onChange)
+  onChange={(id, summary) => { /* id: string | null, null = detach */ }}
+  disabled={saving}
+/>
+{post.itinerary && <ItineraryPreview itinerary={post.itinerary} />}
+<HomeContent itineraries={<PublicItinerariesTeaser />} />
+```
+
+- The picker reads `GET /api/itineraries?page=n` (server pages, no client merging). Only own PUBLIC, not hidden
+  itineraries are selectable, mirroring `BlogService.assertAttachableItinerary`; private/hidden rows are shown
+  disabled with the reason. "No itinerary" is always available; paging uses Arwa's `Pagination`.
+- The blog API returns `itinerary: null` both for posts that never had one and for one that is no longer public, so
+  render the preview only when there is one. Passing `null` shows "Itinerary not available" and nothing else.
+
+## Admin preview routes (GEN-10, for Arwa's moderation pages)
+
+| Route | Admin can open it? | Notes |
+| --- | --- | --- |
+| `/itineraries/[id]` | Yes, for any PUBLIC itinerary, hidden ones and deactivated authors included | Use for moderation links. Read-only with a "Hidden by an administrator" flag; no edit, clone or report controls; linked bookings never shown |
+| `/explore/itineraries/[id]` | No (404 when hidden or the author is deactivated) | Anonymous public view |
+| `/itineraries/[id]/edit` | No (404) | Owner only |
+| Any PRIVATE itinerary | No (404), every route | ACC-11. Reports accept only PUBLIC trips, but an owner can make a reported trip private later |
+| `GET /api/itineraries/hidden?page=n` | Yes (ADMIN only) | Hidden public itineraries, 10 per page |
+
+Source of truth: `ItinerariesService.canRead`.
+
+## Checks
 
 ```bash
 cd frontend
@@ -40,103 +102,33 @@ npm --prefix ../backend run build
 npx playwright test -c playwright.itineraries.config.ts
 ```
 
-The suite starts the real compiled Nest app on a disposable Mongo replica set (port 3120)
-with the official catalog seeded, and the production Next build on 3121. To use an already
-installed Chromium set `PLAYWRIGHT_EXECUTABLE_PATH`. Journeys: guest redirect to sign-in;
-create validation; add/group/reorder/edit/delete days with date recalculation; start-date
-change; private/public/private access as a second traveler; owner-only edit; delete
-itinerary; no horizontal overflow at 360/768/1024/1440 (screenshots in ignored `test-results/`).
+The suite (16 journeys, all passing on the real backend) starts the compiled Nest app on a disposable Mongo replica
+set with the official catalog, airports, an airline, flights and bookable hotels (port 3120), and the production Next
+build (port 3121). Only the external FXRatesAPI client is replaced (always unavailable) and the backend's own rate
+cache is seeded, so the real cache, stale and 503 logic runs. Real hotel and flight holds are created through the
+booking APIs and marked paid in the disposable database, as the verified webhook would. To use an installed
+Chromium, set `PLAYWRIGHT_EXECUTABLE_PATH`. `playwright.checkout.config.ts` uses the same ports: run them one after
+the other.
 
-## Slice 2 — activities, photos, budgets, transport and FX totals
+Covered: guest redirect and return; create validation; day add/group/reorder/edit/delete with recalculated dates;
+start-date change; private → public → private as a second traveler; owner-only edit; delete; activities with
+attraction, time order, cost, photo upload/remove and non-image refusal; budget entries, transport and exact backend
+totals in USD, EGP and EUR including the stale notice and the 503 message; public search with keyword/country/
+length/sort and an invalid range; sign in to clone, independent private copy with attribution, revoked access;
+ITN-25 stop dates, validation, reload and hand-off; ITN-26 trip-date defaults, infant rule, matching returns only
+and the exact `FlightSelection`; ITN-27 covered days only, budget once, owner-only, unlink; ITN-28 real `%PDF`
+download and error states; an expired session mid-edit (message, unsaved text kept, recovery after sign-in); a
+100-character unbroken title at 360 px on every page; reporting once and the owner not seeing it; shared pagination
+by URL; admin preview routes and their limits. No horizontal overflow at 360/768/1024/1440. Teammates' suites still
+pass with this code (on 2026-11-28: login/account 29/29, flight bookings 34/34).
 
-| Requirement | Where | Notes |
-| --- | --- | --- |
-| ITN-10 | day panel "Activities and budget for day N" → Activities | Title ≤120, optional time range (end not before start), location, official attraction limited to the day's city, optional cost + catalog currency. On edit an emptied cost sends `cost: null` (removed from totals); an emptied time sends `null` (the DTO rejects `""` for times). |
-| ITN-12, GEN-08 | photos under each activity | Lama's `MediaUploader` with the activity endpoint (`POST /activities/:id/images`, field `image`), JPG/PNG ≤5 MB, five per activity, progress and remove. Images load through the same-origin proxy with the itinerary's visibility. |
-| ITN-14 | day panel → Budget entries | Food/Accommodation/Activities/Local transport, non-negative, ≤2 decimals, catalog currency, description ≤500. |
-| ITN-16 | "Intercity transport" | Any official catalog city (backend rule), mode, amount/currency, required travel day, notes. |
-| ITN-18 | Budget side panel (editor) and read view | `GET /budget-summary` re-read after every saved change; "Show totals in" any catalog currency (default: viewer's preferred currency). Shows grand/category/daily/transport totals, per-day table, per-stop totals, amounts as entered, rate date, a stale-rate notice (`ratesStale`) and clear 503/422 errors with retry. No conversion happens in the browser. |
-| ITN-09 | city group headers | "Subtotal" from the summary's `byCity`, matched by the group's first day. |
-| ITN-21 (read part) | `/itineraries/[id]` | Public viewers see activities, photos, budget entries, transport and the budget panel; no edit controls. Linked bookings stay owner-only (backend). |
+## Known limits
 
-Layout follows the team rule "day/city hierarchy and side budget": on ≥1024 px the budget is a sticky side column; on phones it stacks under the days.
-
-Browser proof (`tests-itineraries`, now 5/5): one journey adds an attraction activity (with time-order validation), uploads and removes a photo (non-image refused), adds EGP and USD entries and a London→Cairo flight, and checks the backend totals: $435.50, then $410.00 after clearing the activity cost/times, EGP 20,500.00 and €328.00 with the stale-rate notice, the 503 message for a currency with no rates, $310.00 after deleting an entry, and the same figures in a second traveler's read-only view. The harness replaces **only** the external FXRatesAPI client (always "down") and seeds the backend's own rate cache, so the real caching/fallback code runs.
-
-## Slice 3 — public discovery, clone and shared components
-
-| Requirement | Where | Notes |
-| --- | --- | --- |
-| ITN-21 search | `/explore/itineraries` | Plain GET form, so the URL is the state (shareable, survives refresh/back, works before JS): keyword, country, city, min/max days (min ≤ max checked before the request), sort (newest, oldest, title, shortest, longest), server pages of 10. Friendly empty states for "no matches" and "none yet". |
-| ITN-21 view + clone | `/explore/itineraries/[id]` (also offered on a public `/itineraries/[id]` for non-owners) | Read-only with author, days, activities, photos, budget. Guests get "Sign in to clone" and return to the trip after login (ACC-10). Non-traveler roles are told only travelers can clone. Clone → your private copy's editor with a notice; "Cloned from … by …" attribution. The owner sees "Edit your itinerary" instead. |
-| BLG-13 handoff → Hicham | `ItineraryPicker`, `isAttachable`, `ItineraryPreview` in `features/itineraries/` | See the contract below. Live example at `/dev/ui/itineraries` (development only). |
-| Home slot → Malak | `PublicItinerariesTeaser` (Server Component) | For `<HomeContent itineraries={<PublicItinerariesTeaser />} />`. Not placed by Person 7: the landing page owns placement. |
-
-### Handoff contract for Hicham (BLG-13)
-
-```tsx
-import { ItineraryPicker } from '@/features/itineraries/itinerary-picker';
-import { ItineraryPreview } from '@/features/itineraries/itinerary-preview';
-
-<ItineraryPicker
-  value={itineraryId}                     // string | null
-  selected={post?.itinerary ?? null}      // keeps the saved choice visible when it is on another page
-  error={errors.itineraryId}              // backend 400 message; the picker re-reads its page
-  onChange={(id, summary) => { /* id: string | null */ }}
-  disabled={saving}
-/>
-{post.itinerary && <ItineraryPreview itinerary={post.itinerary} />}
-```
-
-- Picker reads `GET /api/itineraries?page=n` (the author's own, server-paginated). Only `visibility: PUBLIC` and not `isHidden` are selectable, which mirrors `BlogService.assertAttachableItinerary`; private/hidden rows are shown disabled with the reason. "No itinerary" is always available, also while loading or after a load error; paging shows a busy state.
-- `selected` (optional): the summary of the current choice. If it is not on the visible page, a checked "Current choice, on another page" row is shown, so the author always sees what is attached.
-- `error` (optional): show the backend's 400 `errors.itineraryId` here. It appears under the legend (linked with `aria-describedby`) and the picker re-reads the current page, so a trip that just became private or hidden is no longer offered.
-- Send the chosen id as `itineraryId` on create/update; `null` detaches.
-- **Preview:** the blog API returns `itinerary: null` both for posts that never had one and for one that is no longer available, so render the preview only when `post.itinerary` is set (as above). Pass `null` explicitly only where you know one was attached; it then shows "Itinerary not available" and nothing else. It links to `/explore/itineraries/[id]`.
-- Pages that show the preview must stay uncached or revalidate on the same basis as the post, since visibility can change after attachment.
-
-### Rendering decision for public pages
-
-`/explore/itineraries` and `/explore/itineraries/[id]` are **dynamic SSR, anonymous (no cookies forwarded), never cached**. ISR was considered (description section 9) and rejected for itineraries: a trip can stop being public through actions this domain cannot observe or invalidate (an admin hiding it via GEN-10, the author's account being deactivated via ACC-12), so any cached copy could keep exposing content that must disappear "immediately" (ITN-20). Only the country/city catalogs are cached (5 minutes). The team's static/ISR example is better placed on content whose invalidation the owner fully controls.
-
-Browser proof added (suite now 7/7): guest keyword/country/length/sort search where private trips never appear and an invalid range is explained; guest → sign in → returned → clone → independent private copy with attribution; author makes the original private → its public page 404s and it leaves search while the clone survives. Picker verified in `next dev` against the same disposable backend (private disabled, emitted `{"itineraryId": …}` matches the chosen trip).
-
-## Slice 4 — travel search reuse (ITN-25, ITN-26)
-
-| Requirement | Where | Notes |
-| --- | --- | --- |
-| ITN-25 | `/itineraries/[id]/hotels?dayId=&guests=&rooms=&page=`; "Find hotels for {city}" on each city group (editor and view) | Calls `GET /api/itineraries/:id/hotels`; the backend derives city, check-in (stop's first day) and check-out (day after its last day), which are displayed, never recomputed. Results use Lama's `HotelCard`, which continues into her room selection with the same dates/guests/rooms. "Open in hotel search" uses her `criteriaToParams` for price/rating filters. Guests/rooms validated (1–20, at least one guest per room); a stop in the past shows a clear message (HTL-11 rejects past check-in). |
-| ITN-26 | `/itineraries/[id]/flights?departureAirportCode=&roundTrip=&…`; "Find flights to {first city}" in the editor and view | Calls `GET /api/itineraries/:id/flights`. Departure/return dates prefill from the trip's first/last day; destination airports are every airport of day 1's city (origins in that city are not offered). Results use Gamila's `FlightCard` (airport-local times, cents prices). A return is selectable only if it leaves from where the chosen outbound lands, after it lands, back to the origin (same rule as the backend's ITN-26 R2 filter and booking check). "Continue to booking" passes Ismail's agreed `FlightSelection` to `/bookings/flights/new`. Passenger rules: ≥1 adult, infants ≤ adults (backend re-validates). |
-
-Rendering: both are dynamic SSR shells (readable itinerary, viewer cookies, no cache) with a Client Component for the interactive search; criteria are kept in the URL for refresh/back. Bug found by the suite and fixed: the return-flight heading and the "Return date" field shared an HTML id, which broke the section's accessible name.
-
-Browser proof (suite now 9/9): ITN-25 two-stop trip (two Cairo nights, one Dubai night), validation, reload keeps the search, card opens Lama's hotel page with the stop dates. ITN-26 LHR→Cairo round trip with prefilled dates, infant rule, only the return that departs after the chosen late outbound is offered, the emitted `FlightSelection` equals the chosen flights/cabins, no overflow at 360/1440, and the link opens Ismail's booking page.
-
-## Slice 5 — bonuses ITN-27 and ITN-28
-
-| Requirement | Where | Notes |
-| --- | --- | --- |
-| ITN-27 | editor section "Your booked flights and hotels" | "Link a booking" lists your own bookings from Ismail's `GET /api/flight-bookings` and Osama's `GET /api/hotel-bookings` (Upcoming/Past, server pages). Only CONFIRMED/COMPLETED, not-yet-linked bookings are selectable; the day list offers only covered days (hotel: check-in ≤ day < check-out; flight: first segment's local departure date), and the backend re-checks ownership, status and dates. Linked rows show live status/amount (major units from the itinerary API), "Counts in budget", a warning when reordering moved the day off the booking dates, and a confirmed **unlink** that never touches the booking. The budget panel lists linked bookings in its breakdown. Links are owner-only (never in public views or clones). |
-| ITN-28 | "Download PDF" and "Print" on the trip view, public view and editor | Uses the existing `GET /api/itineraries/:itineraryId/pdf` (PR #58, signed-in, same visibility as viewing). Download streams through the proxy with progress (percentage, or KB when no length is sent) and keeps the backend filename; Print loads the same PDF into a hidden frame and opens the print dialog. Guests see "Sign in to download PDF". 401 ends the session cleanly; 404 says the trip is no longer available. |
-
-Hand-off notes: hotel "View booking" links go to the `/bookings` hub until Osama's `/bookings/hotels/[id]` is on develop (one-line switch in `linked-bookings-editor.tsx`). Booking-list prices in the picker are cents (`formatMoneyMinorUnits`); linked-booking amounts from the itinerary API are major units.
-
-Browser proof (suite now 11/11):
-- **ITN-27:** real hotel and flight holds are created through the booking APIs, then marked paid in the disposable DB the way the payment webhook does. Checked: a pending hold is shown but disabled; the hotel offers only days 2–3 (2 nights × $90 → $180.00); the flight offers only day 1 (→ $330.00); already-linked bookings are not offered twice; reordering shows the mismatch badge; another traveler viewing the public trip sees no linked bookings; unlinking → $150.00 while the hotel booking stays CONFIRMED.
-- **ITN-28:** the download is a real `%PDF` file named `itinerary-<id>.pdf`; a guest sees the sign-in link; another user is told clearly once the trip becomes private.
-- **Not automated:** the browser print dialog (headless Chromium cannot show it).
-
-## Session expiry and regression checks (2026-11-25)
-
-- New browser test: the server revokes the session while the editor is open. The next save shows "Your session has ended…", unsaved form text stays on the page, and the shared header switches to "Sign in". A refresh goes to sign-in and returns to the editor; nothing was half-saved and the same edit then succeeds. Suite now 12/12.
-- Teammates' suites run unchanged against this branch: account/auth `playwright.config.ts` 26/26, flight bookings `playwright.bookings.config.ts` 21/21. The browser came from a local Chromium via a temporary `PLAYWRIGHT_BROWSERS_PATH`; no repository files were changed for that.
-- Open teammate PRs relevant to Person 7, checked on 2026-11-25: Arwa's `ReportAction` (#153) has the `targetType`/`targetId` props in the registry, ready to mount at the marked spot on `/explore/itineraries/[id]` once merged. Hicham's blog (#158) links to `/explore/itineraries/[id]` and plans to swap its select for `ItineraryPicker` after #148 merges. Arwa's shared `Pagination` (#152) can replace the local `Pager` after it merges.
-
-## Peer review follow-up (Hicham, 2026-11-25; Ismail, 2026-11-27)
-
-Hicham approved #148 with four requested fixes, all done: the picker shows a selected itinerary that is on another page (`selected` prop); the preview docs no longer suggest passing `post.itinerary` unguarded; the picker takes an `error` prop and re-reads after a 400; long unbroken titles wrap (`min-w-0` + `overflow-wrap:anywhere`) on the picker and every itinerary page. His optional notes were also taken: busy state while paging, "No itinerary" stays available on error, the create link opens in a new tab so an unsaved post is not lost, and the card's icon-only labels now have screen-reader text. Ismail confirmed the ITN-27 flight-booking fields, the `FlightSelection` hand-off and the `/bookings/flights/[id]` detail link.
-
-## Remaining Person 7 work
-
-1. Mount Arwa's ReportAction (GEN-09, PR #153) and Osama's FavoriteButton (BON-02, not yet pushed) on public itineraries when they reach develop (mount point marked in `/explore/itineraries/[id]`); swap the local `Pager` for Arwa's Pagination (PR #152).
-2. Switch the hotel "View booking" link to Osama's detail route when it lands.
+- **Hotel booking detail link.** Linked hotel bookings link to the `/bookings` hub until Osama's
+  `/bookings/hotels/[id]` is on develop (one-line change in `linked-bookings-editor.tsx`).
+- **Favourites (BON-02).** Osama's `FavoriteButton` is not on develop yet; it goes next to Clone/Report on public
+  trips.
+- **Report button account switch.** Arwa is resetting the shared `ReportAction` when the signed-in user changes;
+  #170 is re-checked with two traveler accounts once her fix lands.
+- **Not verified here:** the team's shared Atlas database, the real FXRatesAPI and real Stripe payments before
+  linking (the disposable backend covers the same code paths), and the browser print dialog (headless).

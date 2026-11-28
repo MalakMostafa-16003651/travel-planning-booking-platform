@@ -660,3 +660,91 @@ test('a 100-character title without spaces wraps on every itinerary page at 360 
     expect(overflow, `horizontal overflow on ${path}`).toBeLessThanOrEqual(0);
   }
 });
+
+// ---------------------------------------------------------------- follow-up: Arwa's ReportAction and Pagination
+
+test('GEN-09: other travelers can report a public itinerary once; the owner cannot', async ({ page, browser }) => {
+  await newTraveler(page, 'Reported Author');
+  const id = await seedTrip(page, 'Report me trip', ['EG'], ['Cairo'], 'PUBLIC');
+  await page.goto(`/explore/itineraries/${id}`);
+  await expect(page.getByRole('link', { name: 'Edit your itinerary' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Report this itinerary' })).toHaveCount(0);
+
+  const reader = await browser.newPage();
+  await newTraveler(reader, 'Careful Reader');
+  await reader.goto(`/explore/itineraries/${id}`);
+  await reader.getByRole('button', { name: 'Report this itinerary' }).click();
+  const dialog = reader.getByRole('dialog', { name: 'Report this itinerary' });
+  await dialog.getByLabel('Reason').fill('bad');
+  await dialog.getByRole('button', { name: 'Send report' }).click();
+  await expect(dialog.getByText('Reason must be 5 to 500 characters.')).toBeVisible();
+  await dialog.getByLabel('Reason').fill('Contains misleading safety advice.');
+  await dialog.getByRole('button', { name: 'Send report' }).click();
+  await expect(reader.getByRole('main').getByText('Reported. Thank you.')).toBeVisible();
+
+  // The same trip seen through /itineraries/[id]: a second report is refused politely (once per item).
+  await reader.goto(`/itineraries/${id}`);
+  await reader.getByRole('button', { name: 'Report this itinerary' }).click();
+  await reader.getByRole('dialog', { name: 'Report this itinerary' }).getByLabel('Reason').fill('Reporting it a second time.');
+  await reader.getByRole('dialog', { name: 'Report this itinerary' }).getByRole('button', { name: 'Send report' }).click();
+  await expect(reader.getByRole('main').getByText('You already reported this itinerary.')).toBeVisible();
+  await reader.close();
+});
+
+test('GEN-05: the shared Pagination pages the own-itinerary list by URL', async ({ page }) => {
+  await newTraveler(page, 'Many Trips');
+  for (let index = 1; index <= 11; index += 1) await seedTrip(page, `Paged trip ${String(index).padStart(2, '0')}`, ['EG'], ['Cairo'], 'PRIVATE');
+  await page.goto('/itineraries');
+  const pages = page.getByRole('navigation', { name: 'Itinerary pages' });
+  await expect(pages.getByText('Page 1 of 2')).toBeVisible();
+  await expect(pages.getByText('Showing 1–10 of 11')).toBeVisible();
+  await pages.getByRole('link', { name: 'Next' }).click();
+  await expect(page).toHaveURL(/\/itineraries\?page=2$/);
+  await expect(page.getByRole('main').getByRole('link', { name: 'Paged trip 01' })).toBeVisible();
+  await expect(pages.getByText('Showing 11–11 of 11')).toBeVisible();
+});
+
+// ---------------------------------------------------------------- GEN-10 hand-off to Arwa: admin preview routes
+
+test('admins preview hidden public itineraries at /itineraries/[id] only; private ones stay owner-only', async ({ page, browser }) => {
+  await newTraveler(page, 'Hidden Author');
+  const id = await seedTrip(page, 'Moderated Cairo', ['EG'], ['Cairo'], 'PUBLIC');
+  const dayId = (await call<{ days: { dayId: string }[] }>(page, 'GET', `/itineraries/${id}`)).days[0].dayId;
+  await call(page, 'POST', `/itineraries/${id}/days/${dayId}/activities`, { title: 'Reported activity text' });
+
+  const adminPage = await browser.newPage();
+  const admin = await fixture<Account>('user', { name: 'Site Admin', role: 'ADMIN' });
+  await signIn(adminPage, admin);
+  await call(adminPage, 'PATCH', `/admin/content/itinerary/${id}/hide`);
+
+  // The admin preview route: full read-only content, flagged as hidden, with no traveler actions.
+  await adminPage.goto(`/itineraries/${id}`);
+  await expect(adminPage.getByRole('heading', { level: 1, name: 'Moderated Cairo' })).toBeVisible();
+  await expect(adminPage.getByRole('main').getByText('Hidden by an administrator')).toBeVisible();
+  await expect(adminPage.getByRole('main').getByText('Reported activity text')).toBeVisible();
+  await expect(adminPage.getByRole('main').getByText('By Hidden Author')).toBeVisible();
+  await expect(adminPage.getByRole('main').getByRole('button', { name: /Clone|Report/ })).toHaveCount(0);
+  await expect(adminPage.getByRole('link', { name: /Edit/ })).toHaveCount(0);
+  // The anonymous public page and the editor are not admin preview routes.
+  await adminPage.goto(`/explore/itineraries/${id}`);
+  await expect(adminPage.getByRole('heading', { name: /not found/i })).toBeVisible();
+  await adminPage.goto(`/itineraries/${id}/edit`);
+  await expect(adminPage.getByRole('heading', { name: /not found/i })).toBeVisible();
+
+  // Hidden content: still visible to its author (with the flag), not to other travelers or in search.
+  await page.goto(`/itineraries/${id}`);
+  await expect(page.getByRole('main').getByText('Hidden by an administrator')).toBeVisible();
+  const other = await browser.newPage();
+  await newTraveler(other, 'Other Reader');
+  await other.goto(`/itineraries/${id}`);
+  await expect(other.getByRole('heading', { name: /not found/i })).toBeVisible();
+  await other.goto('/explore/itineraries?q=Moderated');
+  await expect(other.getByRole('main').getByText('No itineraries match these filters')).toBeVisible();
+
+  // Once the owner makes it private, admins cannot open it either (ACC-11).
+  await call(page, 'PATCH', `/itineraries/${id}`, { visibility: 'PRIVATE' });
+  await adminPage.goto(`/itineraries/${id}`);
+  await expect(adminPage.getByRole('heading', { name: /not found/i })).toBeVisible();
+  await adminPage.close();
+  await other.close();
+});

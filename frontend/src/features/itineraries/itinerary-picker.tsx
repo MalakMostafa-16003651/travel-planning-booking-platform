@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useId, useState } from 'react';
+import { Pagination } from '@/components/data-table';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ErrorAlert } from '@/components/ui/error-alert';
@@ -115,13 +116,10 @@ export function ItineraryPicker({ value, selected = null, onChange, disabled = f
           </label>
         );
       })}
-      {data && data.totalPages > 1 && (
-        <div className="flex items-center justify-between gap-3">
-          <Button variant="secondary" disabled={loading || page <= 1} onClick={() => setPage(p => p - 1)}>Previous</Button>
-          <span className="text-sm text-muted" aria-live="polite">{loading ? 'Loading…' : `Page ${data.page} of ${data.totalPages}`}</span>
-          <Button variant="secondary" disabled={loading || page >= data.totalPages} onClick={() => setPage(p => p + 1)}>Next</Button>
-        </div>
+      {data && (
+        <Pagination page={data.page} totalPages={data.totalPages} onPageChange={setPage} disabled={loading} label="Your itinerary pages" />
       )}
+      {loading && data && <p role="status" className="m-0 text-sm text-muted">Loading…</p>}
     </fieldset>
   );
 }

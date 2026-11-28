@@ -3,6 +3,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { Plane, BedDouble } from 'lucide-react';
+import { Pagination } from '@/components/data-table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -219,13 +220,7 @@ function LinkForm({ itinerary, busy, onLink, onCancel }: {
               </label>
             );
           })}
-          {data.totalPages > 1 && (
-            <div className="flex items-center justify-between gap-3">
-              <Button variant="secondary" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>Previous</Button>
-              <span className="text-sm text-muted">Page {page} of {data.totalPages}</span>
-              <Button variant="secondary" disabled={page >= data.totalPages} onClick={() => setPage(p => p + 1)}>Next</Button>
-            </div>
-          )}
+          <Pagination page={page} totalPages={data.totalPages} onPageChange={setPage} label="Booking pages" />
         </fieldset>
       ))}
       {chosen && (

@@ -3,6 +3,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
+import { Pagination } from '@/components/data-table';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ErrorAlert } from '@/components/ui/error-alert';
@@ -116,13 +117,7 @@ export function StayHotelSearchPanel({ itineraryId, groups, initial }: {
           {page.items.map(hotel => (
             <HotelCard key={hotel.hotelId} hotel={hotel} checkIn={criteria.checkIn} checkOut={criteria.checkOut} guests={criteria.guests} rooms={criteria.rooms} />
           ))}
-          {page.totalPages > 1 && (
-            <nav aria-label="Hotel result pages" className="flex items-center justify-between gap-3">
-              <Button variant="secondary" disabled={query.page <= 1} onClick={() => setQuery({ ...query, page: query.page - 1 })}>Previous</Button>
-              <span className="text-sm text-muted">Page {page.page} of {page.totalPages}</span>
-              <Button variant="secondary" disabled={query.page >= page.totalPages} onClick={() => setQuery({ ...query, page: query.page + 1 })}>Next</Button>
-            </nav>
-          )}
+          <Pagination page={page.page} totalPages={page.totalPages} onPageChange={target => setQuery({ ...query, page: target })} disabled={loading} label="Hotel result pages" />
         </section>
       ))}
     </div>

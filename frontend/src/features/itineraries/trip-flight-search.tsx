@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
+import { Pagination } from '@/components/data-table';
 import { Button, buttonClassName } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ErrorAlert } from '@/components/ui/error-alert';
@@ -193,12 +194,8 @@ export function TripFlightSearchPanel({ itineraryId, firstCity, defaults, initia
             ))}
         </section>
       )}
-      {!loading && query && totalPages > 1 && (
-        <nav aria-label="Flight result pages" className="flex items-center justify-between gap-3">
-          <Button variant="secondary" disabled={query.page <= 1} onClick={() => setQuery({ ...query, page: query.page - 1 })}>Previous</Button>
-          <span className="text-sm text-muted">Page {query.page} of {totalPages}</span>
-          <Button variant="secondary" disabled={query.page >= totalPages} onClick={() => setQuery({ ...query, page: query.page + 1 })}>Next</Button>
-        </nav>
+      {!loading && query && (
+        <Pagination page={query.page} totalPages={totalPages} onPageChange={target => setQuery({ ...query, page: target })} label="Flight result pages" />
       )}
       {selection && (
         <div className="sticky bottom-4 flex flex-wrap items-center justify-between gap-3 rounded-card border border-primary bg-card p-4 shadow-lg">
