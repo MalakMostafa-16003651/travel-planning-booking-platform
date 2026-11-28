@@ -19,7 +19,12 @@ export interface MediaUploaderProps {
   maxCount: number;
   /** Caller owns the actual endpoint (hotel photos, post images, activity images, airline logo, ...). */
   onUpload: (file: File, onProgress: (percent: number) => void) => Promise<MediaItem>;
-  /** Omit for an uploader with no removal, e.g. a logo that a new upload simply replaces. */
+  /**
+   * Omit for an uploader with no removal, e.g. a logo that a new upload simply replaces -
+   * in that case the picker stays available at the limit (GEN-08) so the caller can upload
+   * a replacement; the caller's onUpload is expected to replace its value array's single
+   * entry rather than append to it.
+   */
   onRemove?: (item: MediaItem) => Promise<void>;
   helpText?: string;
   disabled?: boolean;
@@ -38,6 +43,9 @@ export function MediaUploader({ label, value, maxCount, onUpload, onRemove, help
   const inputRef = useRef<HTMLInputElement>(null);
   const uploading = progress !== null;
   const atLimit = value.length >= maxCount;
+  // A gallery stops at its limit until something is removed; a no-removal uploader (a logo)
+  // has no way to free a slot, so a new upload must be able to replace the existing one.
+  const canPickFile = !atLimit || !onRemove;
 
   async function handleFile(file: File) {
     const validationError = validate(file);
@@ -92,7 +100,7 @@ export function MediaUploader({ label, value, maxCount, onUpload, onRemove, help
             )}
           </div>
         ))}
-        {!atLimit && (
+        {canPickFile && (
           <label className={`flex aspect-[4/3] flex-col items-center justify-center gap-2 rounded-control border border-dashed border-border text-sm text-muted transition-colors ${disabled || uploading ? "cursor-not-allowed opacity-60" : "cursor-pointer hover:border-primary hover:text-primary"}`}>
             {uploading ? (
               <>
@@ -102,7 +110,7 @@ export function MediaUploader({ label, value, maxCount, onUpload, onRemove, help
             ) : (
               <>
                 <ImagePlus size={20} aria-hidden="true" />
-                <span>Add photo</span>
+                <span>{atLimit ? "Replace photo" : "Add photo"}</span>
               </>
             )}
             <input

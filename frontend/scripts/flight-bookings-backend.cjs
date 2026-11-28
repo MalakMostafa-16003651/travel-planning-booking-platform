@@ -79,11 +79,12 @@ async function main() {
   const controls = {
     async user({ name = 'Nour Hassan', role = 'USER', verified = 'true' }) {
       const email = `m2-${randomBytes(6).toString('hex')}@example.test`;
-      await connection.models.User.create({
+      const user = await connection.models.User.create({
         name, email, role, status: 'ACTIVE', mustChangePassword: false, termsAcceptedAt: new Date(),
         passwordHash: await app.get(PasswordService).hash(PASSWORD),
         ...(verified === 'true' ? { emailVerifiedAt: new Date() } : {}),
       });
+      if (role === 'AIRLINE_MODERATOR') await collection('moderatorassignments').insertOne({ moderatorId: user._id, airlineId });
       return { email, password: PASSWORD };
     },
     async flight({ from = 'CAI', to = 'DXB', days = '30', hour = '8', price = '15000', seats = '10', cabinClass = 'ECONOMY', number }) {

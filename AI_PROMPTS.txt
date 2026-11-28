@@ -162,6 +162,20 @@ browser suite on the real backend (21/21). Answered the open handoffs and raised
 for the integrations that depend on teammates. Details: docs/work-logs/16002979.md
 section 5 and docs/m2/FLIGHT_BOOKINGS.md.
 ================================================
+Date: 2026-11-25
+Student: 16002979 (Person 4)
+Tool: Claude Code (Anthropic)
+Related Requirement: FLT-27, FLT-19, GEN-11
+
+Prompt:
+Okay now check the issues and check everything implemented and check if we can continue
+finishing what we must finish, some of my colleges worked yesterday
+
+How the output was used:
+Fixed the two flight-change departure guards from issue #143 with three regression tests,
+and, on a second branch, joined the booking pages with the merged flight search and added
+browser tests. Details: docs/work-logs/16002979.md sections 5 and 6.
+================================================
 Date: 2026-11-20
 Student: 16001313 (Person 7)
 Tool: Claude Code (Anthropic)
@@ -235,6 +249,15 @@ Use: Checked open PRs and handoffs against the M2 references. Fixed the shared C
 ================================================
 
 ================================================
+Date: 2026-11-27
+Student: 16003651 (Malak, Person 1)
+Tool: OpenAI Codex desktop app
+Related requirements: ACC-10, ACC-11, ACC-12, GEN-16, GEN-17 and shared navigation
+Prompt summary: Review new M2 PRs and handoffs, reply to teammates, merge reviewed work, sync the VS Code checkout and test against the workbook and course labs. Prepare the private test setup with Arwa and Lama in steps.
+Use: Reviewed fourteen PRs and merged nine. Coordinated provider, checkout, hotel booking and public visibility handoffs. Wired the four home sections and the traveler Bookings links using the merged exports. Ran production builds, isolated Chrome journeys and flight-change regressions. Verified the existing Atlas and Mailtrap authentication without sharing credentials. The lab guidance informed the rendering decisions, role tests and review records.
+================================================
+
+================================================
 Date: 2026-11-24
 Student: 16002622 (Lama, Person 5)
 Tool: Claude Code (model: Claude Sonnet 5, via the Claude desktop app)
@@ -300,6 +323,96 @@ shows only the check-availability form, and an unknown hotel ID 404s through the
 not-found page. `npm run typecheck`/`build` pass clean; no test files committed.
 ================================================
 Date: 2026-11-25
+Student: 16002290 (Omar Hicham, Person 8)
+Tool: Claude Code (Anthropic), Claude project thread with separate writer and tester agents
+Related Requirement: PAY-01, PAY-02, PAY-03, PAY-04, FLT-27, BLG-01 to BLG-10, BLG-12, BLG-13
+
+Prompt (summary):
+I am still Person 8. Do all my Milestone 2 work with the same steps and guidelines as
+Milestone 1, go through what the team added to the repo for the AIs to communicate, do
+everything correctly and don't stop until it is finished.
+
+How the output was used:
+Two PRs into develop: feature/PAY-01-checkout (shared checkout for flights, hotels and
+flight changes, payment result checked only from the backend, PaymentRefundStatus and
+the PAY-04 money map, issue #140) and feature/BLG-01-blog-frontend (blog list/search,
+post page, editor, my posts, author page, story previews). A tester agent reviewed each
+branch; its findings were fixed before the PRs. Details and checks:
+docs/work-logs/16002290.md entries 18 and 19.
+================================================
+Date: 2026-11-24
+Student: 16001313 (Person 7)
+Tool: Claude Code (Anthropic)
+Related Requirement: ITN-01, ITN-03, ITN-05, ITN-07, ITN-08, ITN-09, ITN-20 (M2 frontend)
+
+Prompt:
+(with the 26-page optimized M2 split attached)
+hii bestiee remember milestone one now its time for milestone 2, in this pdf here it all
+everything you need im kiki person 7, lets start this project together
+
+How the output was used:
+First M2 slice: itinerary list, create form, read view and the day editor (add, edit,
+delete, accessible reorder, city groups, visibility), reusing the shared components and
+tested in Chromium against the real backend (4/4). Details: docs/work-logs/16001313.md,
+entry of 2026-11-24, and docs/m2/ITINERARIES.md.
+================================================
+Date: 2026-11-24
+Student: 16001313 (Person 7)
+Tool: Claude Code (Anthropic)
+Related Requirement: ITN-09, ITN-10, ITN-12, ITN-14, ITN-16, ITN-18 (M2 frontend)
+
+Prompt:
+yes please   (continue with slice 2: activities and budgets)
+
+How the output was used:
+Activities with photos, budget entries, intercity transport and a backend-converted budget
+side panel (currency choice, rate date, stale and unavailable states), plus budget and
+photos in the read view. Browser suite on the real backend 5/5. Details:
+docs/work-logs/16001313.md (slice 2) and docs/m2/ITINERARIES.md.
+================================================
+Date: 2026-11-24
+Student: 16001313 (Person 7)
+Tool: Claude Code (Anthropic)
+Related Requirement: ITN-21, BLG-13 handoff (M2 frontend)
+
+Prompt:
+do both   (open the PR for slices 1-2, then continue with slice 3)
+
+How the output was used:
+Opened PR #148. Built public itinerary search and detail pages, cloning with login-return,
+the ItineraryPicker/Preview handoff for Hicham, a home-page widget for Malak and a
+development-only gallery page. Chose uncached rendering for public trips and documented
+why. Browser suite 7/7. Details: docs/work-logs/16001313.md (slice 3), docs/m2/ITINERARIES.md.
+================================================
+Date: 2026-11-24
+Student: 16001313 (Person 7)
+Tool: Claude Code (Anthropic)
+Related Requirement: ITN-25, ITN-26 (M2 frontend)
+
+Prompt:
+both   (watch PR #148 and continue with slice 4: hotel and flight search from a trip)
+
+How the output was used:
+Hotel search for a city stop and flight search to the first city, using the itinerary
+endpoints with Lama's HotelCard and Gamila's FlightCard, handing off to their hotel page
+and Ismail's booking page. Browser suite 9/9. Details: docs/work-logs/16001313.md
+(slice 4) and docs/m2/ITINERARIES.md.
+================================================
+Date: 2026-11-24
+Student: 16001313 (Person 7)
+Tool: Claude Code (Anthropic)
+Related Requirement: ITN-27, ITN-28 (bonus, M2 frontend)
+
+Prompt:
+yes please   (start the bonuses: linked bookings and PDF export)
+
+How the output was used:
+Link/unlink of the user's own confirmed flight and hotel bookings to matching days with
+live budget totals, and PDF download/print using the existing export endpoint. Tested with
+real holds from the booking APIs; browser suite 11/11. Details: docs/work-logs/16001313.md
+(bonuses) and docs/m2/ITINERARIES.md.
+================================================
+Date: 2026-11-25
 Student: 16002483 (Arwa, Person 2)
 Tool: Claude Code (Anthropic)
 Related requirements: GEN-05, ACC-14
@@ -338,6 +451,23 @@ nothing, matching the backend role rule. 201, 409, 400, 404 and 401 answers each
 message. Added a development preview and docs/m2/REPORTS.md for Osama, Kiki and Hicham.
 Checked in Chromium with sample data: every answer above, Escape and focus return, and no
 sideways scroll at 360 px. typecheck passes. The real-backend check is recorded separately.
+================================================
+Date: 2026-11-27
+Student: 16003651 (Malak, Person 1)
+Tool: Codex (OpenAI)
+Related requirements: ACC-04, ACC-10, ACC-11, HTL-22
+
+Prompt summary:
+Review the M2 integration and check whether the merged hotel moderator dashboard
+is ready to become the default destination after sign-in.
+
+How the output was used:
+Pointed hotel moderator sign-in and workspace links to /moderator/hotel. The
+existing bookmarked /workspace/hotel path still takes precedence when supplied
+as an explicit return. Updated the role regression test and integration docs.
+The isolated frontend production build passed TypeScript. Chrome at 360 px used
+compiled Nest and a disposable local MongoDB replica set to check the default,
+links, explicit return, a pending reservation after reload, and traveler denial.
 ================================================
 Date: 2026-11-25
 Student: 16002483 (Arwa, Person 2)
