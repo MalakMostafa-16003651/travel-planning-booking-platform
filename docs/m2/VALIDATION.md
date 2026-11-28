@@ -99,3 +99,39 @@ white text on teal for the home registration link and login submit button,
 recovery link. The home and login pages fit at 360 and 1440 px with no
 horizontal overflow. The browser used a stubbed signed-out session because
 this check covers CSS.
+
+## Integrated checkout, discovery and account navigation — 27 November 2026
+
+The backend production build, backend test compilation and final frontend
+production build passed. Local Chrome used disposable MongoDB replica sets,
+with fake Stripe.js and signed webhooks for checkout. All 18 checkout and 13
+search-to-booking cases passed. The three focused departure guard regressions
+passed. The account run checked wrong-role denial and forced password change.
+
+The final home and admin smoke passed both cases. At 360 px the two search
+forms and the public itinerary and story links appeared without page overflow.
+The traveler reached the Bookings hub from the account menu, and the admin
+returned to the filtered accounts table after signing in.
+
+The integrated build also passed the blog regression for removing hidden
+posts and deactivated authors from public lists, and the itinerary check for
+sign-in, private cloning and revocation of public access.
+
+The separate shared environment probe authenticated to the Atlas replica set
+and Mailtrap over TLS. It performed read-only database commands and SMTP
+authentication. Teammate access, delivery to the inbox and Stripe test mode
+need their own checks.
+
+## Hotel moderator sign-in and reservations — 27 November 2026
+
+The production frontend build and TypeScript check passed. At 360 px, Chrome
+used the compiled Nest application and a disposable local MongoDB replica set.
+An assigned hotel moderator landed on `/moderator/hotel` after ordinary
+sign-in. Both the home and account menu workspace links used the same
+destination. A bookmarked `/workspace/hotel` URL and its query survived
+sign-in.
+
+The hotel dashboard showed the assigned profile. Its reservations page
+rendered a pending hold created through the real booking API, including its
+room, status and $375.00 total after reload. A traveler was denied on both
+moderator pages and received 403 from the reservations endpoint.

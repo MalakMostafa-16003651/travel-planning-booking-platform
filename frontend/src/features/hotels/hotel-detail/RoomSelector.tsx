@@ -100,10 +100,7 @@ export function RoomSelector({ hotelId, rooms, checkIn, checkOut, initialGuests,
               <p className="m-0 text-sm text-muted">{selectedRooms.length} room{selectedRooms.length === 1 ? "" : "s"} selected</p>
               <p className="m-0 text-xl font-semibold text-ink">{formatHotelPrice(total, currency)} total</p>
             </div>
-            {/* !text-white works around a site-wide bug: globals.css's unlayered `a { color }` rule beats
-                any Tailwind utility class on an <a>, including buttonClassName's text-white. Flagged to
-                Malak (globals.css owner) rather than fixed here. */}
-            <Link href={bookingUrl()} className={`${buttonClassName("primary")} !text-white`}>Continue to booking</Link>
+            <Link href={bookingUrl()} className={buttonClassName("primary")}>Continue to booking</Link>
           </div>
         </Card>
       )}

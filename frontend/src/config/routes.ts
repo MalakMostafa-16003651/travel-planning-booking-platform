@@ -4,7 +4,7 @@ export const roleWorkspaces: Record<UserRole, string> = {
   USER: '/workspace/traveler',
   ADMIN: '/workspace/admin',
   AIRLINE_MODERATOR: '/workspace/airline',
-  HOTEL_MODERATOR: '/workspace/hotel',
+  HOTEL_MODERATOR: '/moderator/hotel',
 };
 export const workspaceRoles: Record<string, UserRole | undefined> = {
   traveler: 'USER', admin: 'ADMIN', airline: 'AIRLINE_MODERATOR', hotel: 'HOTEL_MODERATOR',

@@ -9,6 +9,7 @@ import { calendarDate, count, daysUntil, maskDocument, passengerTypeName } from 
 import { HoldPanel } from './hold-panel';
 import { LinkButton } from './link-button';
 import { RefundSummary } from './refund-status';
+import { searchHref } from './selection';
 import { CopyReference, TicketActions } from './ticket-actions';
 import type { Airport, FlightBooking } from './types';
 
@@ -33,6 +34,7 @@ export function BookingDetails({ booking, airports, serverNow }: { booking: Flig
   const manageable = status === 'CONFIRMED' && beforeDeparture;
   const ticketable = (status === 'CONFIRMED' || status === 'COMPLETED') && !!booking.bookingReference;
   const id = booking.flightBookingId;
+  const searchAgain = searchHref(booking.segments, booking.passengers);
 
   return (
     <div className="stack">
@@ -82,12 +84,12 @@ export function BookingDetails({ booking, airports, serverNow }: { booking: Flig
             <h2 className="m-0">{status === 'PENDING' ? 'Amount to pay' : 'Price'}</h2>
             <FareSummary {...booking} totalLabel={status === 'PENDING' ? 'To pay' : 'Total'} />
             {status === 'PENDING' && booking.holdExpiresAt && (
-              <HoldPanel bookingId={id} expiresAt={booking.holdExpiresAt} serverNow={serverNow} totalAmount={booking.totalAmount} currency={booking.currency} />
+              <HoldPanel bookingId={id} expiresAt={booking.holdExpiresAt} serverNow={serverNow} totalAmount={booking.totalAmount} currency={booking.currency} searchAgain={searchAgain} />
             )}
             {status === 'EXPIRED' && (
               <div className="grid gap-3">
                 <p className="m-0 text-sm text-muted">This booking was not paid in time, so its seats were released and nothing was charged.</p>
-                <LinkButton href="/flights">Search flights again</LinkButton>
+                <LinkButton href={searchAgain}>Search flights again</LinkButton>
               </div>
             )}
           </Card>

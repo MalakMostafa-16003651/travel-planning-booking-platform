@@ -4,10 +4,10 @@ import { expect, test, type Page } from '@playwright/test';
 // They are unrelated to shared Atlas users or any developer's private .env.
 const smokePassword = 'M2SmokeOnly2026';
 const roles = [
-  { key: 'traveler', role: 'USER', slug: 'traveler' },
-  { key: 'administrator', role: 'ADMIN', slug: 'admin' },
-  { key: 'airline', role: 'AIRLINE_MODERATOR', slug: 'airline' },
-  { key: 'hotel', role: 'HOTEL_MODERATOR', slug: 'hotel' },
+  { key: 'traveler', role: 'USER', landing: '/workspace/traveler', heading: 'Your workspace' },
+  { key: 'administrator', role: 'ADMIN', landing: '/workspace/admin', heading: 'Your workspace' },
+  { key: 'airline', role: 'AIRLINE_MODERATOR', landing: '/workspace/airline', heading: 'Your workspace' },
+  { key: 'hotel', role: 'HOTEL_MODERATOR', landing: '/moderator/hotel', heading: 'Your hotel' },
 ] as const;
 
 async function signIn(page: Page, key: string, password = smokePassword) {
@@ -43,8 +43,9 @@ for (const account of roles) {
   test(`${account.role}: login, /me, protected role route, refresh and logout`, async ({ page, context }) => {
     await page.goto('/login');
     await signIn(page, account.key);
-    await expect(page).toHaveURL(new RegExp(`/workspace/${account.slug}(?:\\?|$)`));
-    await expect(page.getByRole('heading', { name: 'Your workspace', exact: true })).toBeVisible();
+    await expect(page).toHaveURL(account.landing);
+    await expect(page.getByRole('heading', { name: account.heading, exact: true })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Workspace', exact: true })).toHaveAttribute('href', account.landing);
     const identity = await currentIdentity(page);
     expect(identity.status).toBe(200);
     expect(identity.body.role).toBe(account.role);
@@ -69,17 +70,26 @@ for (const account of roles) {
     expect(visibleStorage).not.toMatch(/accessToken|refreshToken|passwordChangeToken|M2SmokeOnly2026|eyJ[A-Za-z0-9_-]+\./);
 
     await page.reload();
-    await expect(page.getByRole('heading', { name: 'Your workspace', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: account.heading, exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Sign out', exact: true }).click();
     await expect(page).toHaveURL(/\/login(?:\?|$)/);
     expect((await currentIdentity(page)).status).toBe(401);
     expect((await context.cookies()).filter((cookie) => cookie.name.startsWith('__Host-'))).toHaveLength(0);
-    await page.goto(`/workspace/${account.slug}`);
+    await page.goto(account.landing);
     await expect(page).toHaveURL(/\/login(?:\?|$)/);
   });
 }
 
-test('a traveler cannot read an administrator workspace', async ({ page }) => {
+test('a hotel moderator returns to a bookmarked workspace after sign-in', async ({ page }) => {
+  const bookmark = '/workspace/hotel?from=bookmark';
+  await page.goto(bookmark);
+  await expect(page).toHaveURL(url => url.pathname === '/login' && url.searchParams.get('returnTo') === bookmark);
+  await signIn(page, 'hotel');
+  await expect(page).toHaveURL(bookmark);
+  await expect(page.getByRole('heading', { name: 'Your workspace', exact: true })).toBeVisible();
+});
+
+test('a traveler cannot read administrator or hotel moderator pages', async ({ page }) => {
   await page.goto('/login');
   await signIn(page, 'traveler');
   await expect(page).toHaveURL(/\/workspace\/traveler(?:\?|$)/);
@@ -92,6 +102,37 @@ test('a traveler cannot read an administrator workspace', async ({ page }) => {
   });
   expect(adminResponse.status).toBe(403);
   expect(adminResponse.body).not.toHaveProperty('items');
+  await page.goto('/moderator/hotel');
+  await expect(page.getByRole('heading', { name: 'Access denied', exact: true })).toBeVisible();
+});
+
+test('home discovery and traveler Bookings work at mobile width', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 900 });
+  await page.goto('/');
+  await expect(page.getByRole('region', { name: 'Find a flight' }).locator('form')).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Find a stay' }).locator('form')).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Explore all itineraries' })).toHaveAttribute('href', '/explore/itineraries');
+  await expect(page.getByRole('link', { name: 'Read all stories' })).toHaveAttribute('href', '/blog');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+
+  await page.goto('/login');
+  await signIn(page, 'traveler');
+  const shortcuts = page.getByRole('navigation', { name: 'Workspace shortcuts' });
+  await expect(shortcuts.getByRole('link', { name: 'Bookings' })).toHaveAttribute('href', '/bookings');
+  await page.getByRole('button', { name: 'Account menu' }).click();
+  await page.getByRole('navigation', { name: 'Account navigation' }).getByRole('link', { name: 'Bookings' }).click();
+  await expect(page).toHaveURL(/\/bookings$/);
+  await expect(page.getByRole('link', { name: 'All flight bookings' })).toBeVisible();
+});
+
+test('admin accounts returns to its filter after sign-in and renders the table', async ({ page }) => {
+  await page.goto('/admin/accounts?role=ADMIN');
+  await expect(page).toHaveURL(/\/login\?/);
+  await signIn(page, 'administrator');
+  await expect(page).toHaveURL(/\/admin\/accounts\?role=ADMIN$/);
+  const table = page.getByRole('table', { name: 'Accounts' });
+  await expect(table.getByRole('columnheader', { name: 'Email' })).toBeVisible();
+  await expect(table.getByText('smoke-administrator@example.test')).toBeVisible();
 });
 
 test('wrong current password shows the backend error without ending a normal session', async ({ page }) => {
