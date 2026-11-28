@@ -8,6 +8,7 @@ import { FlightTicket } from './flight-ticket';
 import { calendarDate, count, daysUntil, maskDocument, passengerTypeName } from './format';
 import { HoldPanel } from './hold-panel';
 import { LinkButton } from './link-button';
+import { PaymentRefundStatus } from '@/features/payments';
 import { RefundSummary } from './refund-status';
 import { searchHref } from './selection';
 import { CopyReference, TicketActions } from './ticket-actions';
@@ -100,6 +101,14 @@ export function BookingDetails({ booking, airports, serverNow }: { booking: Flig
                 {booking.cancelledBy === 'AIRLINE' ? 'The airline cancelled this flight.' : 'You cancelled this booking.'}
               </p>
               <RefundSummary refund={booking.refund} refundAmount={booking.refundAmount} currency={booking.currency} />
+            </Card>
+          )}
+          {booking.paymentId && status !== 'PENDING' && (
+            <Card className="grid gap-4">
+              <h2 className="m-0">Payment</h2>
+              {/* Hicham's live status of the original payment. The refund above stays the booking's own total,
+                  which also covers a paid fare difference refunded on cancellation. */}
+              <PaymentRefundStatus paymentId={booking.paymentId} currency={booking.currency} />
             </Card>
           )}
           {ticketable && (

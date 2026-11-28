@@ -226,11 +226,12 @@ test.describe('FLT-23 and FLT-25: ticket and lists', () => {
     await fixture('copies', { booking: id, count: 11 });
 
     await page.goto('/bookings/flights');
-    await expect(main(page).getByText('12 bookings')).toBeVisible();
+    await expect(main(page).getByText('Showing 1–10 of 12')).toBeVisible();
     await expect(page.getByRole('article')).toHaveCount(10);
     await page.getByRole('link', { name: 'Next', exact: true }).click();
     await expect(page).toHaveURL(/group=UPCOMING&page=2/);
     await expect(page.getByRole('article')).toHaveCount(2);
+    await expect(main(page).getByText('Page 2 of 2')).toBeVisible();
     await page.reload();
     await expect(page.getByRole('article')).toHaveCount(2);
     await page.getByRole('navigation', { name: 'Booking groups' }).getByRole('link', { name: 'Past' }).click();
@@ -251,6 +252,10 @@ test.describe('FLT-26: cancellation', () => {
     await newTraveler(page);
     const id = await confirmed(page, [outbound, inbound]);
     await page.goto(`/bookings/flights/${id}`);
+    // PAY-01: Hicham's PaymentRefundStatus reads the payment itself (dollars from Payments).
+    const payment = main(page).getByRole('region', { name: 'Payment', exact: true });
+    await expect(payment).toContainText('Paid');
+    await expect(payment).toContainText('$300.00');
     await page.getByRole('button', { name: 'Check my refund' }).click();
     await expect(main(page).getByText('50% of $300.00')).toBeVisible();
     await page.getByRole('button', { name: 'Cancel booking' }).click();
@@ -351,6 +356,10 @@ test.describe('FLT-27: changing a flight', () => {
     await page.getByRole('checkbox').check();
     await page.getByRole('button', { name: 'Confirm change' }).click();
     await expect(main(page).getByText('Refund pending')).toBeVisible();
+    // The change's own Refund record, through Hicham's PaymentRefundStatus.
+    const refund = main(page).getByRole('region', { name: 'Refund', exact: true });
+    await expect(refund).toContainText('$60.00');
+    await expect(main(page).getByRole('button', { name: 'Check again' })).toBeVisible();
   });
 
   test('released or expired replacements leave the original booking untouched', async ({ page }) => {
